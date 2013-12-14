@@ -164,10 +164,12 @@ static ConnectPortAssigner CPA(48000, 49000);
 
 SocksClient::SocksClient(ba::io_service &io_service)
         : client_socket_(io_service), remote_socket_(io_service),
-          tcp_resolver_(io_service)
+          tcp_resolver_(io_service), markedForDeath_(false),
+          client_socket_reading_(false), remote_socket_reading_(false)
 #ifdef USE_SPLICE
           ,
           pToConn_init_(false), pToSock_init_(false),
+          pToConn_reading_(false), pToSock_reading_(false),
           pToConn_len_(0), pToSock_len_(0),
           sdToConn_(io_service), sdToSock_(io_service)
 #endif
@@ -190,26 +192,46 @@ SocksClient::~SocksClient()
 #endif
 }
 
-void SocksClient::terminate()
+void SocksClient::close_client_socket()
 {
+    markedForDeath_ = true;
 #ifdef USE_SPLICE
     try {
-        sdToConn_.close();
-        close(pToConn_[1]);
-        pToConn_init_ = false;
-    } catch (...) {}
-    try {
-        sdToSock_.close();
-        close(pToSock_[1]);
-        pToSock_init_ = false;
+        if (sdToSock_.is_open()) {
+            sdToSock_.close();
+            close(pToSock_[1]);
+            pToSock_init_ = false;
+        }
     } catch (...) {}
 #endif
     try {
-        client_socket_.close();
+        if (client_socket_.is_open())
+            client_socket_.close();
     } catch (...) {}
+}
+
+void SocksClient::close_remote_socket()
+{
+    markedForDeath_ = true;
+#ifdef USE_SPLICE
     try {
-        remote_socket_.close();
+        if (sdToConn_.is_open()) {
+            sdToConn_.close();
+            close(pToConn_[1]);
+            pToConn_init_ = false;
+        }
     } catch (...) {}
+#endif
+    try {
+        if (remote_socket_.is_open())
+            remote_socket_.close();
+    } catch (...) {}
+}
+
+void SocksClient::terminate()
+{
+    close_remote_socket();
+    close_client_socket();
     // XXX: Specialize
     conntracker_hs->remove(this);
     conntracker_connect.remove(this);
@@ -218,6 +240,14 @@ void SocksClient::terminate()
 
     state_ = STATE_DONE;
     std::cout << "Connection terminated.\n";
+}
+
+void SocksClient::conditional_terminate()
+{
+    bool rso = remote_socket_.is_open();
+    bool cso = client_socket_.is_open();
+    if (!rso && !cso)
+        terminate();
 }
 
 void SocksClient::do_read()
@@ -614,6 +644,9 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
 // Write data read from the client socket to the connect socket.
 void SocksClient::do_client_socket_connect_read()
 {
+    if (client_socket_reading_)
+        return;
+    client_socket_reading_ = true;
     client_socket_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::client_socket_read_handler,
@@ -624,6 +657,9 @@ void SocksClient::do_client_socket_connect_read()
 // Write data read from the connect socket to the client socket.
 void SocksClient::do_remote_socket_read()
 {
+    if (remote_socket_reading_)
+        return;
+    remote_socket_reading_ = true;
     remote_socket_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::remote_socket_read_handler,
@@ -633,6 +669,9 @@ void SocksClient::do_remote_socket_read()
 
 void SocksClient::do_sdToConn_read()
 {
+    if (pToConn_reading_)
+        return;
+    pToConn_reading_ = true;
     sdToConn_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToConn_read_handler,
@@ -642,6 +681,9 @@ void SocksClient::do_sdToConn_read()
 
 void SocksClient::do_sdToSock_read()
 {
+    if (pToSock_reading_)
+        return;
+    pToSock_reading_ = true;
     sdToSock_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToSock_read_handler,
@@ -676,13 +718,16 @@ void SocksClient::
 client_socket_read_handler(const boost::system::error_code &ec,
                            std::size_t bytes_xferred)
 {
+    client_socket_reading_ = false;
     if (ec) {
-        terminate();
+        close_client_socket();
+        conditional_terminate();
         return;
     }
     auto bytes = client_socket_.available();
     if (!bytes) {
-        terminate();
+        close_client_socket();
+        conditional_terminate();
         /* do_sdToConn_read(); */
         return;
     }
@@ -691,10 +736,13 @@ client_socket_read_handler(const boost::system::error_code &ec,
         pToConn_len_ += spliceit(client_socket_.native(), pToConn_[1], bytes);
     } catch (const std::runtime_error &e) {
         std::cerr << "client_socket_read_handler() TERMINATE: " << e.what() << "\n";
-        terminate();
+        close_client_socket();
+        conditional_terminate();
         return;
     }
-    do_sdToConn_read();
+    do_client_socket_connect_read();
+    if (pToConn_len_)
+        do_sdToConn_read();
 }
 
 // Remote server is trying to send data to the client.  Splice it to the
@@ -703,13 +751,16 @@ void SocksClient::
 remote_socket_read_handler(const boost::system::error_code &ec,
                            std::size_t bytes_xferred)
 {
+    remote_socket_reading_ = false;
     if (ec) {
-        terminate();
+        close_remote_socket();
+        conditional_terminate();
         return;
     }
     auto bytes = remote_socket_.available();
     if (!bytes) {
-        terminate();
+        close_remote_socket();
+        conditional_terminate();
         /* do_sdToSock_read(); */
         return;
     }
@@ -718,17 +769,23 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         pToSock_len_ += spliceit(remote_socket_.native(), pToSock_[1], bytes);
     } catch (const std::runtime_error &e) {
         std::cerr << "remote_socket_read_handler() TERMINATE: "<< e.what() << "\n";
-        terminate();
+        close_remote_socket();
+        conditional_terminate();
         return;
     }
-    do_sdToSock_read();
+    do_remote_socket_read();
+    if (pToSock_len_)
+        do_sdToSock_read();
 }
 
 // The pToConn_ pipe has data.  Splice it to remote_socket_.
 void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
                                         std::size_t bytes_xferred)
 {
+    pToConn_reading_ = false;
     if (ec) {
+        std::cerr << "crPIPE error: " << boost::system::system_error(ec).what()
+                  << "\n";
         terminate();
         return;
     }
@@ -741,14 +798,24 @@ void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
-    do_client_socket_connect_read();
+    if (markedForDeath_ && pToConn_len_ == 0) {
+        conditional_terminate();
+        return;
+    }
+    if (pToConn_len_ > 0)
+        do_sdToConn_read();
+    else if (markedForDeath_)
+        conditional_terminate();
 }
 
 // The pToSock_ pipe has data.  Splice it to client_socket_.
 void SocksClient::sdToSock_read_handler(const boost::system::error_code &ec,
                                         std::size_t bytes_xferred)
 {
+    pToSock_reading_ = false;
     if (ec) {
+        std::cerr << "rcPIPE error: " << boost::system::system_error(ec).what()
+                  << "\n";
         terminate();
         return;
     }
@@ -761,7 +828,10 @@ void SocksClient::sdToSock_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
-    do_remote_socket_read();
+    if (pToSock_len_ > 0)
+        do_sdToSock_read();
+    else if (markedForDeath_)
+        conditional_terminate();
 }
 #else
 // Write data read from the client socket to the connect socket.

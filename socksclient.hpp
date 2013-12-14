@@ -109,12 +109,18 @@ private:
     std::string outbuf_;
     ReplyCode sentReplyType_;
 
+    bool markedForDeath_;
+    bool client_socket_reading_;
+    bool remote_socket_reading_;
+
 #ifdef USE_SPLICE
     // Used for splice().
     int pToConn_[2];
     int pToSock_[2];
     bool pToConn_init_;
     bool pToSock_init_;
+    bool pToConn_reading_;
+    bool pToSock_reading_;
     size_t pToConn_len_;
     size_t pToSock_len_;
     boost::asio::posix::stream_descriptor sdToConn_;
@@ -167,6 +173,9 @@ private:
     bool create_reply();
     void write();
     void terminate();
+    void conditional_terminate();
+    void close_client_socket();
+    void close_remote_socket();
 
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
