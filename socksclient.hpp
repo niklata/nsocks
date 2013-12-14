@@ -37,6 +37,8 @@
 #include <boost/asio.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+#define USE_SPLICE 1
+
 class SocksClient
     : public std::enable_shared_from_this<SocksClient>
 {
@@ -114,6 +116,8 @@ private:
     int pToSock_[2];
     bool pToConn_init_;
     bool pToSock_init_;
+    size_t pToConn_len_;
+    size_t pToSock_len_;
     boost::asio::posix::stream_descriptor sdToConn_;
     boost::asio::posix::stream_descriptor sdToSock_;
     void do_sdToConn_read();

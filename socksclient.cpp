@@ -163,8 +163,8 @@ SocksClient::SocksClient(ba::io_service &io_service)
           tcp_resolver_(io_service)
 #ifdef USE_SPLICE
           ,
-          sdToConn_(io_service), sdToSock_(io_service),
-          pToConn_init_(false), pToSock_init_(false)
+          pToConn_init_(false), pToSock_init_(false),
+          sdToConn_(io_service), sdToSock_(io_service)
 #endif
 {
     state_ = STATE_WAITGREET;
@@ -572,22 +572,22 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
     conntracker_hs->remove(this);
 #ifdef USE_SPLICE
     int err;
-    err = pipe2(pToConn, O_NONBLOCK);
+    err = pipe2(pToConn_, O_NONBLOCK);
     if (err) {
         send_reply(RplFail);
         return;
     }
     pToConn_init_ = true;
-    err = pipe2(pToSock, O_NONBLOCK);
+    err = pipe2(pToSock_, O_NONBLOCK);
     if (err) {
         send_reply(RplFail);
         return;
     }
     pToSock_init_ = true;
-    sdToConn_.assign(pToConn[0]);
-    sdToSock_.assign(pToSock[0]);
-    do_sdToConn_read();
-    do_sdToSock_read();
+    sdToConn_.assign(pToConn_[0]);
+    sdToSock_.assign(pToSock_[0]);
+    //do_sdToConn_read();
+    //do_sdToSock_read();
 #endif
     std::cout << "Successful setup.  Starting to proxy.\n";
     send_reply(RplSuccess);
@@ -625,7 +625,7 @@ void SocksClient::do_sdToConn_read()
 
 void SocksClient::do_sdToSock_read()
 {
-    sdToConn_.async_read_some
+    sdToSock_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToSock_read_handler,
                      shared_from_this(), ba::placeholders::error,
@@ -635,68 +635,107 @@ void SocksClient::do_sdToSock_read()
 // Can throw std::runtime_error
 static void spliceit(int infd, int outfd, std::size_t len)
 {
+    std::cerr << "Splicing " << infd << "->" << outfd << " len=" << len << "\n";
     while (len > 0) {
         auto nbytes = splice(infd, NULL, outfd, NULL, len,
                              SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
-        if (nbytes == -1)
-            throw std::runtime_error("splice");
+        if (nbytes == -1) {
+            switch (errno) {
+            case EBADF: throw std::runtime_error("splice EBADF"); break;
+            case EINVAL: throw std::runtime_error("splice EINVAL"); break;
+            case ENOMEM: throw std::runtime_error("splice ENOMEM"); break;
+            case ESPIPE: throw std::runtime_error("splice ESPIPE"); break;
+            default: throw std::runtime_error("splice unknown"); break;
+            }
+        }
         len -= nbytes;
     }
 }
 
 // Client is trying to send data to the remote server.  Splice it to the
 // pToConn_ pipe.
-void SocksClient::client_socket_read_handler(const boost::system::error_code &ec,
-                                          std::size_t bytes_xferred)
-{
-    try {
-        spliceit(client_socket_.native(), pToConn[1], bytes_xferred);
-    } catch (const std::runtime_error &) {
-        terminate();
-        return;
-    }
-    do_client_socket_connect_read();
-}
-
-// Remote server is trying to send data to the client.  Splice it to the
-// pToSock_ pipe.
 void SocksClient::
-remote_socket_read_handler(const boost::system::error_code &ec,
-                                std::size_t bytes_xferred)
+client_socket_read_handler(const boost::system::error_code &ec,
+                           std::size_t bytes_xferred)
 {
-    try {
-        spliceit(remote_socket_.native(), pToSock[1], bytes_xferred);
-    } catch (const std::runtime_error &) {
+    if (ec) {
         terminate();
         return;
     }
-    do_remote_socket_read();
-}
-
-// The pToConn_ pipe has data.  Splice it to remote_socket_.
-void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
-                                        std::size_t bytes_xferred)
-{
     try {
-        spliceit(pToConn[0], remote_socket_.native(), bytes_xferred);
-    } catch (const std::runtime_error &) {
+        auto bytes = client_socket_.available();
+        pToConn_len_ = bytes;
+        std::cerr << "client->crPIPE: ";
+        spliceit(client_socket_.native(), pToConn_[1], bytes);
+    } catch (const std::runtime_error &e) {
+        std::cerr << "client_socket_read_handler() TERMINATE: " << e.what() << "\n";
         terminate();
         return;
     }
     do_sdToConn_read();
 }
 
-// The pToSock_ pipe has data.  Splice it to client_socket_.
-void SocksClient::sdToSock_read_handler(const boost::system::error_code &ec,
-                                        std::size_t bytes_xferred)
+// Remote server is trying to send data to the client.  Splice it to the
+// pToSock_ pipe.
+void SocksClient::
+remote_socket_read_handler(const boost::system::error_code &ec,
+                           std::size_t bytes_xferred)
 {
+    if (ec) {
+        terminate();
+        return;
+    }
     try {
-        spliceit(pToSock[0], client_socket_.native(), bytes_xferred);
-    } catch (const std::runtime_error &) {
+        auto bytes = remote_socket_.available();
+        pToSock_len_ = bytes;
+        std::cerr << "remote->rcPIPE: ";
+        spliceit(remote_socket_.native(), pToSock_[1], bytes);
+    } catch (const std::runtime_error &e) {
+        std::cerr << "remote_socket_read_handler() TERMINATE: "<< e.what() << "\n";
         terminate();
         return;
     }
     do_sdToSock_read();
+}
+
+//#define PIPE_READ_BLOCKSIZE (4096 * 16)
+
+// The pToConn_ pipe has data.  Splice it to remote_socket_.
+void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
+                                        std::size_t bytes_xferred)
+{
+    if (ec) {
+        terminate();
+        return;
+    }
+    try {
+        std::cerr << "crPIPE->remote: ";
+        spliceit(pToConn_[0], remote_socket_.native(), pToConn_len_);
+    } catch (const std::runtime_error &e) {
+        std::cerr << "sdToConn_read_handler() TERMINATE: "<< e.what() << "\n";
+        terminate();
+        return;
+    }
+    do_client_socket_connect_read();
+}
+
+// The pToSock_ pipe has data.  Splice it to client_socket_.
+void SocksClient::sdToSock_read_handler(const boost::system::error_code &ec,
+                                        std::size_t bytes_xferred)
+{
+    if (ec) {
+        terminate();
+        return;
+    }
+    try {
+        std::cerr << "rcPIPE->client: ";
+        spliceit(pToSock_[0], client_socket_.native(), pToSock_len_);
+    } catch (const std::runtime_error &e) {
+        std::cerr << "sdToSock_read_handler() TERMINATE: "<< e.what() << "\n";
+        terminate();
+        return;
+    }
+    do_remote_socket_read();
 }
 #else
 // Write data read from the client socket to the connect socket.
