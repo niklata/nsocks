@@ -187,6 +187,7 @@ private:
                         const boost::system::error_code &ec);
 };
 
-extern unsigned int max_client_bytes;
+void set_buffer_chunk_size(std::size_t size);
+void set_listen_queuelen(std::size_t len);
 
 #endif /* NK_SOCKSCLIENT_H */

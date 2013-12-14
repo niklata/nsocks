@@ -42,8 +42,6 @@ extern "C" {
 #include "log.h"
 }
 
-#define BUFFER_CHUNK_SIZE (4096)
-
 namespace ba = boost::asio;
 
 extern ba::io_service io_service;
@@ -52,7 +50,13 @@ extern bool gChrooted;
 
 bool g_prefer_ipv4 = false;
 
-unsigned int max_client_bytes = 128;
+static std::size_t listen_queuelen = 256;
+void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
+
+#ifdef USE_SPLICE
+static std::size_t buffer_chunk_size = 4096;
+void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
+#endif
 
 class ephConnTracker
 {
@@ -765,7 +769,7 @@ void SocksClient::do_client_socket_connect_read()
 {
     //std::cout << "do_client_socket_connect_read: start\n";
     ba::streambuf::mutable_buffers_type ibm
-        = client_buf_.prepare(BUFFER_CHUNK_SIZE);
+        = client_buf_.prepare(buffer_chunk_size);
     client_socket_.async_read_some
         (ba::buffer(ibm),
          boost::bind(&SocksClient::client_socket_read_handler,
@@ -778,7 +782,7 @@ void SocksClient::do_remote_socket_read()
 {
     //std::cout << "do_remote_socket_read: start\n";
     ba::streambuf::mutable_buffers_type ibm
-        = remote_buf_.prepare(BUFFER_CHUNK_SIZE);
+        = remote_buf_.prepare(buffer_chunk_size);
     remote_socket_.async_read_some
         (ba::buffer(ibm),
          boost::bind(&SocksClient::remote_socket_read_handler,
@@ -919,7 +923,7 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
     acceptor_.open(endpoint_.protocol());
     acceptor_.set_option(ba::ip::tcp::acceptor::reuse_address(true));
     acceptor_.bind(endpoint_);
-    acceptor_.listen(256);
+    acceptor_.listen(listen_queuelen);
     start_accept();
 }
 

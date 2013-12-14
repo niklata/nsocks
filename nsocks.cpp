@@ -179,6 +179,12 @@ int main(int ac, char *av[]) {
          "user name that nsocks should run as")
         ("group,g", po::value<std::string>(),
          "group name that nsocks should run as")
+#ifdef USE_SPLICE
+        ("chunksize,S", po::value<std::size_t>(),
+         "size of memory buffer used to proxy data between sockets")
+#endif
+        ("listenqueue,L", po::value<std::size_t>(),
+         "maximum number of pending client connections")
         ("help,h", "print help message")
         ("version,v", "print version information")
         ;
@@ -260,6 +266,16 @@ int main(int ac, char *av[]) {
             } else suicide("invalid gid specified");
         }
     }
+    if (vm.count("chunksize")) {
+        auto t = vm["chunksize"].as<std::size_t>();
+        set_buffer_chunk_size(t);
+    }
+#ifdef USE_SPLICE
+    if (vm.count("listenqueue")) {
+        auto t = vm["listenqueue"].as<std::size_t>();
+        set_listen_queuelen(t);
+    }
+#endif
 
     if (gflags_detach)
         if (daemon(0,0))
