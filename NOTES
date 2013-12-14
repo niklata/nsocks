@@ -1,0 +1,25 @@
+Need a list of banned networks.
+In particular, 127.0.0.0/8 and ::1 should be banned by default.
+
+Need a list of permitted client networks/hosts.
+Everything not permitted should be banned by default.
+
+Obviously the list of listening interfaces should be specified manually.
+By default, listen to nothing (fail out).
+
+Use splice() for connection routing.
+
+Single-thread for speed.  Multithread makes absolutely no sense here.
+
+Allow specification of outgoing interface for IPv4 and IPv6.
+
+Cleanup of idle connections can be done via grace period system and
+GC-style coloring.  It should collect at some regular interval that
+adjusts downwards as a function of number of listening sockets.
+
+chroot should be the default, like usual in my programs.
+
+I don't care about authentication.
+
+TCP and UDP should be supported.
+
