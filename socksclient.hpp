@@ -47,7 +47,7 @@ public:
         STATE_WAITGREET,
         STATE_WAITCONNRQ,
         STATE_GOTCONNRQ,
-        STATE_DONE // XXX
+        STATE_DONE
     };
 
     SocksClient(boost::asio::io_service &io_service);
@@ -111,7 +111,6 @@ private:
 
 #ifdef USE_SPLICE
     // Used for splice().
-    // XXX: These need to be closed on class destruction.
     int pToConn_[2];
     int pToSock_[2];
     bool pToConn_init_;
