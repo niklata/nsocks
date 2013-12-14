@@ -187,6 +187,18 @@ SocksClient::~SocksClient()
 
 void SocksClient::terminate()
 {
+#ifdef USE_SPLICE
+    try {
+        sdToConn_.close();
+        close(pToConn_[1]);
+        pToConn_init_ = false;
+    } catch (...) {}
+    try {
+        sdToSock_.close();
+        close(pToSock_[1]);
+        pToSock_init_ = false;
+    } catch (...) {}
+#endif
     try {
         client_socket_.close();
     } catch (...) {}
@@ -662,8 +674,12 @@ client_socket_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
+    auto bytes = client_socket_.available();
+    if (!bytes) {
+        terminate();
+        return;
+    }
     try {
-        auto bytes = client_socket_.available();
         pToConn_len_ = bytes;
         std::cerr << "client->crPIPE: ";
         spliceit(client_socket_.native(), pToConn_[1], bytes);
@@ -685,8 +701,12 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
+    auto bytes = remote_socket_.available();
+    if (!bytes) {
+        terminate();
+        return;
+    }
     try {
-        auto bytes = remote_socket_.available();
         pToSock_len_ = bytes;
         std::cerr << "remote->rcPIPE: ";
         spliceit(remote_socket_.native(), pToSock_[1], bytes);
