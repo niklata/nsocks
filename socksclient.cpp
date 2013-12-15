@@ -750,9 +750,12 @@ client_socket_read_handler(const boost::system::error_code &ec,
         conditional_terminate();
         return;
     }
+    splicePipeToRemote();
     do_client_socket_connect_read();
-    if (pToRemote_len_)
+    if (pToRemote_len_) {
+        std::cerr << "Polling sdToRemote for reads.\n";
         do_sdToRemote_read();
+    }
 }
 
 // Remote server is trying to send data to the client.  Splice it to the
@@ -783,9 +786,12 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         conditional_terminate();
         return;
     }
+    splicePipeToClient();
     do_remote_socket_read();
-    if (pToClient_len_)
+    if (pToClient_len_) {
+        std::cerr << "Polling sdToClient for reads.\n";
         do_sdToClient_read();
+    }
 }
 
 void SocksClient::splicePipeToClient()
