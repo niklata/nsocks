@@ -115,21 +115,21 @@ private:
 
 #ifdef USE_SPLICE
     // Used for splice().
-    int pToConn_[2];
-    int pToSock_[2];
-    bool pToConn_init_;
-    bool pToSock_init_;
-    bool pToConn_reading_;
-    bool pToSock_reading_;
-    size_t pToConn_len_;
-    size_t pToSock_len_;
-    boost::asio::posix::stream_descriptor sdToConn_;
-    boost::asio::posix::stream_descriptor sdToSock_;
-    void do_sdToConn_read();
-    void do_sdToSock_read();
-    void sdToConn_read_handler(const boost::system::error_code &ec,
+    int pToRemote_[2];
+    int pToClient_[2];
+    bool pToRemote_init_;
+    bool pToClient_init_;
+    bool pToRemote_reading_;
+    bool pToClient_reading_;
+    size_t pToRemote_len_;
+    size_t pToClient_len_;
+    boost::asio::posix::stream_descriptor sdToRemote_;
+    boost::asio::posix::stream_descriptor sdToClient_;
+    void do_sdToRemote_read();
+    void do_sdToClient_read();
+    void sdToRemote_read_handler(const boost::system::error_code &ec,
                                std::size_t bytes_xferred);
-    void sdToSock_read_handler(const boost::system::error_code &ec,
+    void sdToClient_read_handler(const boost::system::error_code &ec,
                                std::size_t bytes_xferred);
     void splicePipeToClient();
     void splicePipeToRemote();
