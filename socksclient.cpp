@@ -198,6 +198,7 @@ void SocksClient::close_client_socket()
 #ifdef USE_SPLICE
     try {
         if (sdToSock_.is_open()) {
+            pToSock_len_ = 0;
             sdToSock_.close();
             close(pToSock_[1]);
             pToSock_init_ = false;
@@ -216,6 +217,7 @@ void SocksClient::close_remote_socket()
 #ifdef USE_SPLICE
     try {
         if (sdToConn_.is_open()) {
+            pToConn_len_ = 0;
             sdToConn_.close();
             close(pToConn_[1]);
             pToConn_init_ = false;
@@ -246,7 +248,13 @@ void SocksClient::conditional_terminate()
 {
     bool rso = remote_socket_.is_open();
     bool cso = client_socket_.is_open();
+    if (rso && cso)
+        return;
     if (!rso && !cso)
+        terminate();
+    if (!rso && !pToSock_len_)
+        terminate();
+    if (!cso && !pToConn_len_)
         terminate();
 }
 
@@ -778,15 +786,27 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         do_sdToSock_read();
 }
 
-// The pToConn_ pipe has data.  Splice it to remote_socket_.
-void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
-                                        std::size_t bytes_xferred)
+void SocksClient::splicePipeToClient()
 {
-    pToConn_reading_ = false;
-    if (ec) {
-        std::cerr << "crPIPE error: " << boost::system::system_error(ec).what()
-                  << "\n";
+    if (!client_socket_.is_open()) {
+        pToSock_len_ = 0;
+        return;
+    }
+    try {
+        std::cerr << "rcPIPE->client: ";
+        pToSock_len_ -= spliceit(pToSock_[0], client_socket_.native(),
+                                 pToSock_len_);
+    } catch (const std::runtime_error &e) {
+        std::cerr << "sdToSock_read_handler() TERMINATE: "<< e.what() << "\n";
         terminate();
+        return;
+    }
+}
+
+void SocksClient::splicePipeToRemote()
+{
+    if (!remote_socket_.is_open()) {
+        pToConn_len_ = 0;
         return;
     }
     try {
@@ -798,6 +818,20 @@ void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
+}
+
+// The pToConn_ pipe has data.  Splice it to remote_socket_.
+void SocksClient::sdToConn_read_handler(const boost::system::error_code &ec,
+                                        std::size_t bytes_xferred)
+{
+    pToConn_reading_ = false;
+    if (ec) {
+        std::cerr << "crPIPE error: " << boost::system::system_error(ec).what()
+                  << "\n";
+        terminate();
+        return;
+    }
+    splicePipeToRemote();
     if (markedForDeath_ && pToConn_len_ == 0) {
         conditional_terminate();
         return;
@@ -819,15 +853,7 @@ void SocksClient::sdToSock_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
-    try {
-        std::cerr << "rcPIPE->client: ";
-        pToSock_len_ -= spliceit(pToSock_[0], client_socket_.native(),
-                                 pToSock_len_);
-    } catch (const std::runtime_error &e) {
-        std::cerr << "sdToSock_read_handler() TERMINATE: "<< e.what() << "\n";
-        terminate();
-        return;
-    }
+    splicePipeToClient();
     if (pToSock_len_ > 0)
         do_sdToSock_read();
     else if (markedForDeath_)

@@ -131,6 +131,8 @@ private:
                                std::size_t bytes_xferred);
     void sdToSock_read_handler(const boost::system::error_code &ec,
                                std::size_t bytes_xferred);
+    void splicePipeToClient();
+    void splicePipeToRemote();
 #else
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
