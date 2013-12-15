@@ -621,6 +621,8 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
         send_reply(errorToReplyCode(ec));
         return;
     }
+    remote_socket_.non_blocking(true);
+    remote_socket_.set_option(ba::socket_base::keep_alive(true));
     // Now we have a live socket, so we need to inform the client and then
     // begin proxying data.
     conntracker_connect.store(shared_from_this());
@@ -1018,6 +1020,7 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
 {
     acceptor_.open(endpoint_.protocol());
     acceptor_.set_option(ba::ip::tcp::acceptor::reuse_address(true));
+    acceptor_.non_blocking(true);
     acceptor_.bind(endpoint_);
     acceptor_.listen(listen_queuelen);
     start_accept();
@@ -1027,7 +1030,7 @@ void ClientListener::start_accept()
 {
     auto conn = std::make_shared<SocksClient>(acceptor_.get_io_service());
     conntracker_hs->store(conn);
-    acceptor_.async_accept(conn->socket(), endpoint_,
+    acceptor_.async_accept(conn->client_socket(), endpoint_,
                            boost::bind(&ClientListener::accept_handler,
                                        this, conn,
                                        ba::placeholders::error));
@@ -1038,7 +1041,7 @@ void ClientListener::accept_handler(std::shared_ptr<SocksClient> conn,
 {
     if (ec)
         return;
-    conn->start();
+    conn->start_client_socket();
     start_accept();
 }
 

@@ -53,8 +53,14 @@ public:
     SocksClient(boost::asio::io_service &io_service);
     ~SocksClient();
 
-    void start() { do_read(); }
-    boost::asio::ip::tcp::socket &socket() { return client_socket_; }
+    inline void start_client_socket() {
+        client_socket_.non_blocking(true);
+        client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+        do_read();
+    }
+    inline boost::asio::ip::tcp::socket &client_socket() {
+        return client_socket_;
+    }
 
 private:
     enum ParseState {
