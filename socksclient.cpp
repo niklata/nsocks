@@ -316,9 +316,6 @@ void SocksClient::write_handler(const boost::system::error_code &ec,
     outbuf_.erase(0, bytes_xferred);
     if (outbuf_.size())
         do_write();
-    // XXX: I think this is wrong for this program; is correct for nident.
-    // else
-    //     terminate();
 }
 
 void SocksClient::write()
