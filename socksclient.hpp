@@ -54,7 +54,7 @@ public:
         STATE_WAITGREET,
         STATE_WAITCONNRQ,
         STATE_GOTCONNRQ,
-        STATE_DONE
+        STATE_TERMINATED
     };
 
     SocksClient(boost::asio::io_service &io_service);

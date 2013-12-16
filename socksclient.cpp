@@ -239,6 +239,8 @@ void SocksClient::close_remote_socket()
 
 void SocksClient::terminate()
 {
+    if (state_ == STATE_TERMINATED)
+        return;
     close_remote_socket();
     close_client_socket();
     switch (client_type_) {
@@ -247,7 +249,7 @@ void SocksClient::terminate()
     case SCT_BIND: conntracker_bind.remove(this); break;
     case SCT_UDP: conntracker_udp.remove(this); break;
     }
-    state_ = STATE_DONE;
+    state_ = STATE_TERMINATED;
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
@@ -280,7 +282,7 @@ void SocksClient::do_read()
 void SocksClient::read_handler(const boost::system::error_code &ec,
                                     std::size_t bytes_xferred)
 {
-    if (state_ != STATE_DONE && ec) {
+    if (ec) {
         std::cerr << "Client read error: "
                   << boost::system::system_error(ec).what() << std::endl;
         return;
