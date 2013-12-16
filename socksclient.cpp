@@ -285,6 +285,7 @@ void SocksClient::read_handler(const boost::system::error_code &ec,
     if (ec) {
         std::cerr << "Client read error: "
                   << boost::system::system_error(ec).what() << std::endl;
+        terminate();
         return;
     }
     if (!bytes_xferred)
@@ -317,6 +318,7 @@ void SocksClient::write_handler(const boost::system::error_code &ec,
     if (ec) {
         std::cerr << "Client write error: "
                   << boost::system::system_error(ec).what() << std::endl;
+        terminate();
         return;
     }
     outbuf_.erase(0, bytes_xferred);
