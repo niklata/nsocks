@@ -645,8 +645,6 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
     pToClient_init_ = true;
     sdToRemote_.assign(pToRemote_[0]);
     sdToClient_.assign(pToClient_[0]);
-    //do_sdToRemote_read();
-    //do_sdToClient_read();
 #endif
     std::cout << "Successful setup.  Starting to proxy.\n";
     send_reply(RplSuccess);
@@ -740,7 +738,6 @@ client_socket_read_handler(const boost::system::error_code &ec,
     if (!bytes) {
         close_client_socket();
         conditional_terminate();
-        /* do_sdToRemote_read(); */
         return;
     }
     try {
@@ -776,7 +773,6 @@ remote_socket_read_handler(const boost::system::error_code &ec,
     if (!bytes) {
         close_remote_socket();
         conditional_terminate();
-        /* do_sdToClient_read(); */
         return;
     }
     try {
