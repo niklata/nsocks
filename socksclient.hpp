@@ -39,6 +39,13 @@
 
 #define USE_SPLICE 1
 
+enum SocksClientType {
+    SCT_INIT = 0,
+    SCT_CONNECT,
+    SCT_BIND,
+    SCT_UDP,
+};
+
 class SocksClient
     : public std::enable_shared_from_this<SocksClient>
 {
@@ -60,6 +67,9 @@ public:
     }
     inline boost::asio::ip::tcp::socket &client_socket() {
         return client_socket_;
+    }
+    inline void setClientType(SocksClientType ct) {
+        client_type_ = ct;
     }
 
 private:
@@ -105,6 +115,7 @@ private:
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
+    SocksClientType client_type_;
     CommandCode cmd_code_;
     AddressType addr_type_;
     std::string dst_hostname_;

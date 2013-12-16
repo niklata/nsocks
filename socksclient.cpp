@@ -112,8 +112,11 @@ private:
 class connTracker
 {
 public:
+    explicit connTracker(SocksClientType client_type)
+        : client_type_(client_type) {}
     void store(std::shared_ptr<SocksClient> ssc)
     {
+        ssc->setClientType(client_type_);
         hash_[ssc.get()] = ssc;
     }
     bool remove(SocksClient* sc)
@@ -126,13 +129,14 @@ public:
         return false;
     }
 private:
+    SocksClientType client_type_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
 };
 
 static ephConnTracker *conntracker_hs;
-static connTracker conntracker_connect;
-static connTracker conntracker_bind;
-static connTracker conntracker_udp;
+static connTracker conntracker_connect(SCT_CONNECT);
+static connTracker conntracker_bind(SCT_BIND);
+static connTracker conntracker_udp(SCT_UDP);
 
 void init_conntracker_hs()
 {
@@ -164,8 +168,9 @@ static ConnectPortAssigner CPA(48000, 49000);
 
 SocksClient::SocksClient(ba::io_service &io_service)
         : client_socket_(io_service), remote_socket_(io_service),
-          tcp_resolver_(io_service), markedForDeath_(false),
-          client_socket_reading_(false), remote_socket_reading_(false)
+          tcp_resolver_(io_service), client_type_(SCT_INIT),
+          markedForDeath_(false), client_socket_reading_(false),
+          remote_socket_reading_(false)
 #ifdef USE_SPLICE
           ,
           pToRemote_init_(false), pToClient_init_(false),
@@ -234,12 +239,12 @@ void SocksClient::terminate()
 {
     close_remote_socket();
     close_client_socket();
-    // XXX: Specialize
-    conntracker_hs->remove(this);
-    conntracker_connect.remove(this);
-    conntracker_bind.remove(this);
-    conntracker_udp.remove(this);
-
+    switch (client_type_) {
+    case SCT_INIT: conntracker_hs->remove(this); break;
+    case SCT_CONNECT: conntracker_connect.remove(this); break;
+    case SCT_BIND: conntracker_bind.remove(this); break;
+    case SCT_UDP: conntracker_udp.remove(this); break;
+    }
     state_ = STATE_DONE;
     std::cout << "Connection terminated.\n";
 }
