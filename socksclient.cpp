@@ -66,7 +66,6 @@ public:
     void store(std::shared_ptr<SocksClient> ssc)
     {
         SocksClient *p = ssc.get();
-        std::cerr << "hidx_ = " << hidx_ << "\n";
         hash_[hidx_][p] = ssc;
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
@@ -140,7 +139,6 @@ static connTracker conntracker_udp(SCT_UDP);
 
 void init_conntracker_hs()
 {
-    std::cerr << "init_conntracker_hs() called\n";
     conntracker_hs = new ephConnTracker(io_service, 5);
 }
 
@@ -195,6 +193,10 @@ SocksClient::~SocksClient()
         close(pToClient_[1]);
     }
 #endif
+    std::cout << "Connection to "
+              << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                        : dst_hostname_)
+              << ":" << dst_port_ << " DESTRUCTED\n";
 }
 
 void SocksClient::close_client_socket()
@@ -246,7 +248,10 @@ void SocksClient::terminate()
     case SCT_UDP: conntracker_udp.remove(this); break;
     }
     state_ = STATE_DONE;
-    std::cout << "Connection terminated.\n";
+    std::cout << "Connection to "
+              << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                        : dst_hostname_)
+              << ":" << dst_port_ << " called terminate().\n";
 }
 
 void SocksClient::conditional_terminate()
@@ -294,7 +299,6 @@ void SocksClient::read_handler(const boost::system::error_code &ec,
 
 void SocksClient::do_write()
 {
-    std::cout << "do_write(): '" << outbuf_ << "'\n";
     assert(!writePending_);
     writePending_ = true;
     ba::async_write(
@@ -329,12 +333,12 @@ bool SocksClient::process_input()
 {
     switch (state_) {
     case STATE_WAITGREET:
-        std::cout << "process_input(): STATE_WAITGREET\n";
+        //std::cout << "process_input(): STATE_WAITGREET\n";
         if (!process_greet())
             return false;
         break;
     case STATE_WAITCONNRQ:
-        std::cout << "process_input(): STATE_WAITCONNRQ\n";
+        //std::cout << "process_input(): STATE_WAITCONNRQ\n";
         if (!process_connrq())
             return false;
         break;
@@ -350,7 +354,6 @@ bool SocksClient::process_greet()
 {
     if (state_ != STATE_WAITGREET)
         return false;
-    std::cout << "process_greet(): 1\n";
 
     size_t poff = 0;
     size_t isiz = inbuf_.size();
@@ -362,14 +365,12 @@ bool SocksClient::process_greet()
     if (inbuf_[poff] != 0x05)
         return false;
     ++poff;
-    std::cout << "process_greet(): 2\n";
 
     // Number of authentication methods supported.
     if (poff == isiz)
         return true;
     nauth = static_cast<uint8_t>(inbuf_[poff]);
     ++poff;
-    std::cout << "process_greet(): 3\n";
 
     // Types of authentication methods supported.
     size_t aendsiz = nauth + 2;
@@ -377,10 +378,8 @@ bool SocksClient::process_greet()
     // wait for more data.  If it's just right, proceed.
     if (isiz > aendsiz)
         return false;
-    std::cout << "process_greet(): 4\n";
     if (isiz < aendsiz)
         return true;
-    std::cout << "process_greet(): 5\n";
     for (;poff < aendsiz; ++poff) {
         uint8_t atype = static_cast<uint8_t>(inbuf_[poff]);
         if (atype == 0x0)
@@ -391,7 +390,6 @@ bool SocksClient::process_greet()
             auth_unpw_ = true;
     }
     inbuf_.clear();
-    std::cout << "process_greet(): end\n";
     return reply_greet();
 }
 
@@ -401,12 +399,10 @@ bool SocksClient::reply_greet()
 {
     if (!auth_none_)
         return false;
-    std::cout << "reply_greet(): 1\n";
 
     outbuf_ += '\x5';
     outbuf_ += '\x0'; // We don't support authentication.
     write();
-    std::cout << "reply_greet(): end -> STATE_WAITCONNRQ\n";
     state_ = STATE_WAITCONNRQ;
     return true;
 }
@@ -426,8 +422,6 @@ bool SocksClient::process_connrq()
         return true;
     if (inbuf_[poff] != 0x05)
         return false;
-    std::cout << "reply_greet(): SOCKS version: "
-              << static_cast<uint32_t>(inbuf_[poff]) << "\n";
     ++poff;
 
     // Client command.
@@ -440,7 +434,6 @@ bool SocksClient::process_connrq()
     default: return false; break;
     }
     ++poff;
-    std::cout << "reply_greet(): cmd_code_ == " << cmd_code_ << "\n";
 
     // Must be zero (reserved).
     if (poff == isiz)
@@ -448,7 +441,6 @@ bool SocksClient::process_connrq()
     if (inbuf_[poff] != 0x0)
         return false;
     ++poff;
-    std::cout << "reply_greet(): reserved byte is zero\n";
 
     // Address type.
     if (poff == isiz)
@@ -466,12 +458,9 @@ bool SocksClient::process_connrq()
         return true;
     switch (addr_type_) {
         case AddrIPv4: {
-            std::cout << "reply_greet(): dst is ipv4\n";
             // isiz = 10, poff = 4
-            std::cout << "isiz == " << isiz << " && poff == " << poff << "\n";
             if (isiz - poff != 6)
                 return false;
-            std::cout << "reply_greet(): ipv4 len ok\n";
             ba::ip::address_v4::bytes_type v4o;
             memcpy(v4o.data(), inbuf_.data() + poff, 4);
             dst_address_ = ba::ip::address_v4(v4o);
@@ -479,10 +468,8 @@ bool SocksClient::process_connrq()
             break;
         }
         case AddrIPv6: {
-            std::cout << "reply_greet(): dst is ipv6\n";
             if (isiz - poff != 18)
                 return false;
-            std::cout << "reply_greet(): ipv6 len ok\n";
             ba::ip::address_v6::bytes_type v6o;
             memcpy(v6o.data(), inbuf_.data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
@@ -490,25 +477,19 @@ bool SocksClient::process_connrq()
             break;
         }
         case AddrDNS: {
-            std::cout << "reply_greet(): dst is dnshost\n";
             size_t dnssiz = static_cast<uint8_t>(inbuf_[poff]);
             ++poff;
             if (isiz - poff != dnssiz + 2)
                 return false;
-            std::cout << "reply_greet(): dnshost len ok\n";
             dst_hostname_ = std::string(inbuf_.data() + poff, dnssiz);
             poff += dnssiz;
             break;
         }
         default:
-            std::cout << "reply_greet(): unknown address type: "
+            std::cerr << "reply_greet(): unknown address type: "
                       << addr_type_ << "\n";
             return false;
     }
-    if (addr_type_ != AddrDNS)
-        std::cout << "reply_greet(): dst_address_ = " << dst_address_ << "\n";
-    else
-        std::cout << "reply_greet(): dst_hostname_ = " << dst_hostname_ << "\n";
 
     // Destination port.
     if (poff == isiz)
@@ -518,10 +499,8 @@ bool SocksClient::process_connrq()
     uint16_t tmp;
     memcpy(&tmp, inbuf_.data() + poff, 2);
     dst_port_ = ntohs(tmp);
-    std::cout << "reply_greet(): dst_port_ = " << dst_port_ << "\n";
     inbuf_.clear();
     state_ = STATE_GOTCONNRQ;
-    std::cout << "reply_greet(): end -> STATE_GOTCONNRQ\n";
     dispatch_connrq();
     return true;
 }
@@ -586,7 +565,6 @@ void SocksClient::dispatch_connrq()
 
 bool SocksClient::dispatch_tcp_connect()
 {
-    std::cout << "dispatch_tcp_connect()\n";
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
     auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
@@ -646,7 +624,12 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
     sdToRemote_.assign(pToRemote_[0]);
     sdToClient_.assign(pToClient_[0]);
 #endif
-    std::cout << "Successful setup.  Starting to proxy.\n";
+    std::cout << "TCP Connect from "
+              << client_socket_.remote_endpoint().address()
+              << " to "
+              << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                        : dst_hostname_)
+              << ":" << dst_port_ << "\n";
     send_reply(RplSuccess);
 }
 
@@ -704,7 +687,7 @@ void SocksClient::do_sdToClient_read()
 // Can throw std::runtime_error
 static size_t spliceit(int infd, int outfd, std::size_t len)
 {
-    std::cerr << "Splicing " << infd << "->" << outfd << " len=" << len << "\n";
+    //std::cerr << "Splicing " << infd << "->" << outfd << " len=" << len << "\n";
     auto spliced = splice(infd, NULL, outfd, NULL, len,
                           SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
     if (spliced < 0) {
@@ -741,7 +724,7 @@ client_socket_read_handler(const boost::system::error_code &ec,
         return;
     }
     try {
-        std::cerr << "client->crPIPE: ";
+        //std::cerr << "client->crPIPE: ";
         pToRemote_len_ += spliceit(client_socket_.native(), pToRemote_[1], bytes);
     } catch (const std::runtime_error &e) {
         std::cerr << "client_socket_read_handler() TERMINATE: " << e.what() << "\n";
@@ -776,7 +759,7 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         return;
     }
     try {
-        std::cerr << "remote->rcPIPE: ";
+        //std::cerr << "remote->rcPIPE: ";
         pToClient_len_ += spliceit(remote_socket_.native(), pToClient_[1], bytes);
     } catch (const std::runtime_error &e) {
         std::cerr << "remote_socket_read_handler() TERMINATE: "<< e.what() << "\n";
@@ -799,7 +782,7 @@ void SocksClient::splicePipeToClient()
         return;
     }
     try {
-        std::cerr << "rcPIPE->client: ";
+        //std::cerr << "rcPIPE->client: ";
         pToClient_len_ -= spliceit(pToClient_[0], client_socket_.native(),
                                  pToClient_len_);
     } catch (const std::runtime_error &e) {
@@ -816,7 +799,7 @@ void SocksClient::splicePipeToRemote()
         return;
     }
     try {
-        std::cerr << "crPIPE->remote: ";
+        //std::cerr << "crPIPE->remote: ";
         pToRemote_len_ -= spliceit(pToRemote_[0], remote_socket_.native(),
                                  pToRemote_len_);
     } catch (const std::runtime_error &e) {
@@ -869,7 +852,6 @@ void SocksClient::sdToClient_read_handler(const boost::system::error_code &ec,
 // Write data read from the client socket to the connect socket.
 void SocksClient::do_client_socket_connect_read()
 {
-    //std::cout << "do_client_socket_connect_read: start\n";
     ba::streambuf::mutable_buffers_type ibm
         = client_buf_.prepare(buffer_chunk_size);
     client_socket_.async_read_some
@@ -882,7 +864,6 @@ void SocksClient::do_client_socket_connect_read()
 // Write data read from the connect socket to the client socket.
 void SocksClient::do_remote_socket_read()
 {
-    //std::cout << "do_remote_socket_read: start\n";
     ba::streambuf::mutable_buffers_type ibm
         = remote_buf_.prepare(buffer_chunk_size);
     remote_socket_.async_read_some
@@ -902,7 +883,6 @@ void SocksClient::client_socket_read_handler(const boost::system::error_code &ec
         return;
     }
     client_buf_.commit(bytes_xferred);
-    std::cout << "client->remote writing: '" << bytes_xferred << "'\n";
     ba::async_write(remote_socket_,
                     client_buf_,
                     boost::bind(&SocksClient::handle_client_write,
@@ -914,7 +894,6 @@ void SocksClient::client_socket_read_handler(const boost::system::error_code &ec
 void SocksClient::handle_client_write(const boost::system::error_code &ec,
                                       std::size_t bytes_xferred)
 {
-    //std::cout << "handle_client_write: start\n";
     if (ec) {
         terminate();
         return;
@@ -933,9 +912,7 @@ remote_socket_read_handler(const boost::system::error_code &ec,
         terminate();
         return;
     }
-    //std::cout << "remote_socket_read_handler: start\n";
     remote_buf_.commit(bytes_xferred);
-    std::cout << "remote->client writing: '" << bytes_xferred << "'\n";
     ba::async_write(client_socket_,
                     remote_buf_,
                     boost::bind(&SocksClient::handle_remote_write,
@@ -947,7 +924,6 @@ remote_socket_read_handler(const boost::system::error_code &ec,
 void SocksClient::handle_remote_write(const boost::system::error_code &ec,
                                       std::size_t bytes_xferred)
 {
-    //std::cout << "handle_remote_write: start\n";
     if (ec) {
         terminate();
         return;
@@ -997,26 +973,22 @@ void SocksClient::send_reply(ReplyCode replycode)
         outbuf_.append(1, portu.b[1]);
     }
     sentReplyType_ = replycode;
-    std::cout << "send_reply: calling async_write()\n";
     ba::async_write(client_socket_, ba::buffer(outbuf_, outbuf_.size()),
                     boost::bind(&SocksClient::handle_reply_write,
                                 shared_from_this(),
                                 ba::placeholders::error,
                                 ba::placeholders::bytes_transferred));
-    std::cout << "send_reply: called async_write()\n";
 }
 
 void SocksClient::handle_reply_write(const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
 {
-    std::cout << "handle_reply_write: start\n";
     if (ec || sentReplyType_ != RplSuccess) {
         terminate();
         return;
     }
     do_client_socket_connect_read();
     do_remote_socket_read();
-    std::cout << "handle_reply_write: end\n";
 }
 
 ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
