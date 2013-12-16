@@ -1019,9 +1019,10 @@ void ClientListener::start_accept()
 void ClientListener::accept_handler(std::shared_ptr<SocksClient> conn,
                                     const boost::system::error_code &ec)
 {
-    if (ec)
-        return;
-    conn->start_client_socket();
+    if (!ec)
+        conn->start_client_socket();
+    else
+        conntracker_hs->remove(conn.get());
     start_accept();
 }
 
