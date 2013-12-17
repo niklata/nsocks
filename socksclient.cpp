@@ -80,9 +80,12 @@ public:
             return remove(hidx_ ^ 1, sc);
         return true;
     }
+    std::size_t size() { return hash_[0].size() + hash_[1].size(); }
 private:
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
+        std::cerr << "doSwap wiped " << hash_[hnext].size()
+                  << " items from hash " << hnext << "\n";
         hash_[hnext].clear();
         hidx_ = hnext;
     }
@@ -93,7 +96,7 @@ private:
     }
     void timerHandler(const boost::system::error_code& error) {
         doSwap();
-        if (hash_[0].size() || hash_[1].size())
+        if (size())
             setTimer();
     }
     std::size_t cyclefreq_;
@@ -101,6 +104,8 @@ private:
     ba::deadline_timer swapTimer_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_[2];
 };
+
+static ephConnTracker *conntracker_hs;
 
 class connTracker
 {
@@ -111,17 +116,19 @@ public:
     {
         ssc->setClientType(client_type_);
         hash_[ssc.get()] = ssc;
+        if (!conntracker_hs->remove(ssc.get()))
+            std::cerr << "Store to non-handshake tracker for connection that wasn't in the handshake tracker! SocksClient=" << ssc.get() << "\n";
     }
     bool remove(SocksClient* sc)
     {
         return !!hash_.erase(sc);
     }
+    std::size_t size() { return hash_.size(); }
 private:
     SocksClientType client_type_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
 };
 
-static ephConnTracker *conntracker_hs;
 static connTracker conntracker_connect(SCT_CONNECT);
 static connTracker conntracker_bind(SCT_BIND);
 static connTracker conntracker_udp(SCT_UDP);
@@ -185,7 +192,9 @@ SocksClient::~SocksClient()
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
-              << ":" << dst_port_ << " DESTRUCTED\n";
+              << ":" << dst_port_ << " DESTRUCTED (total: "
+              << (conntracker_hs->size() + conntracker_connect.size()
+                  + conntracker_bind.size() + conntracker_udp.size()) << ") SocksClient=" << this << "\n";
 }
 
 void SocksClient::close_client_socket()
@@ -467,6 +476,8 @@ bool SocksClient::process_connrq()
             memcpy(v6o.data(), inbuf_.data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff += 16;
+            std::cerr << "Got a dst ipv6 address: "
+                      << dst_address_.to_string() << "\n";
             break;
         }
         case AddrDNS: {
@@ -588,6 +599,18 @@ SocksClient::errorToReplyCode(const boost::system::error_code &ec)
     return rc;
 }
 
+static const char * const replyCodeString[] = {
+    "Success",
+    "Fail",
+    "Deny",
+    "NetUnreach",
+    "HostUnreach",
+    "ConnRefused",
+    "TTLExpired",
+    "RplCmdNotSupp",
+    "RplAddrNotSupp",
+};
+
 void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
 {
     if (ec) {
@@ -599,7 +622,6 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
     // Now we have a live socket, so we need to inform the client and then
     // begin proxying data.
     conntracker_connect.store(shared_from_this());
-    conntracker_hs->remove(this);
 #ifdef USE_SPLICE
     int err;
     err = pipe2(pToRemote_, O_NONBLOCK);
@@ -977,6 +999,14 @@ void SocksClient::handle_reply_write(const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
 {
     if (ec || sentReplyType_ != RplSuccess) {
+        std::cout << "Connection killed before handshake completed from "
+            << client_socket_.remote_endpoint().address()
+            << " to "
+            << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                : dst_hostname_)
+            << ":" << dst_port_
+            << " with reply code='" << replyCodeString[sentReplyType_]
+            << "'\n";
         terminate();
         return;
     }
