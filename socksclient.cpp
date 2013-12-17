@@ -690,6 +690,7 @@ void SocksClient::do_sdToRemote_read()
     if (pToRemote_reading_)
         return;
     pToRemote_reading_ = true;
+    std::cerr << "Polling sdToRemote for reads.\n";
     sdToRemote_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToRemote_read_handler,
@@ -702,6 +703,7 @@ void SocksClient::do_sdToClient_read()
     if (pToClient_reading_)
         return;
     pToClient_reading_ = true;
+    std::cerr << "Polling sdToClient for reads.\n";
     sdToClient_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToClient_read_handler,
@@ -759,10 +761,8 @@ client_socket_read_handler(const boost::system::error_code &ec,
     }
     splicePipeToRemote();
     do_client_socket_connect_read();
-    if (pToRemote_len_) {
-        std::cerr << "Polling sdToRemote for reads.\n";
+    if (pToRemote_len_)
         do_sdToRemote_read();
-    }
 }
 
 // Remote server is trying to send data to the client.  Splice it to the
@@ -794,10 +794,8 @@ remote_socket_read_handler(const boost::system::error_code &ec,
     }
     splicePipeToClient();
     do_remote_socket_read();
-    if (pToClient_len_) {
-        std::cerr << "Polling sdToClient for reads.\n";
+    if (pToClient_len_)
         do_sdToClient_read();
-    }
 }
 
 void SocksClient::splicePipeToClient()
