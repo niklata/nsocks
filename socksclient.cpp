@@ -998,7 +998,7 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
 void ClientListener::start_accept()
 {
     auto conn = std::make_shared<SocksClient>(acceptor_.get_io_service());
-    conntracker_hs->store(conn);
+    std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
     acceptor_.async_accept(conn->client_socket(), endpoint_,
                            boost::bind(&ClientListener::accept_handler,
                                        this, conn,
@@ -1008,9 +1008,11 @@ void ClientListener::start_accept()
 void ClientListener::accept_handler(std::shared_ptr<SocksClient> conn,
                                     const boost::system::error_code &ec)
 {
-    if (!ec)
+    if (!ec) {
+        std::cout << "Stored a new SocksClient=" << conn.get() << ".\n";
+        conntracker_hs->store(conn);
         conn->start_client_socket();
-    else
+    } else
         conntracker_hs->remove(conn.get());
     start_accept();
 }
