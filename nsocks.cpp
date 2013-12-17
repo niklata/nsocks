@@ -73,7 +73,6 @@ namespace po = boost::program_options;
 
 boost::asio::io_service io_service;
 bool gChrooted = false;
-extern void init_conntracker_hs();
 
 static void sighandler(int sig)
 {
@@ -187,6 +186,8 @@ int main(int ac, char *av[]) {
 #endif
         ("listenqueue,L", po::value<std::size_t>(),
          "maximum number of pending client connections")
+        ("disable-ipv6", "disable proxy to ipv6 destinations")
+        ("prefer-ipv4", "prefer ipv4 addresses when looking up hostnames")
         ("help,h", "print help message")
         ("version,v", "print version information")
         ;
@@ -278,6 +279,10 @@ int main(int ac, char *av[]) {
         set_listen_queuelen(t);
     }
 #endif
+    if (vm.count("disable-ipv6"))
+        g_disable_ipv6 = true;
+    if (vm.count("prefer-ipv4"))
+        g_prefer_ipv4 = true;
 
     if (gflags_detach)
         if (daemon(0,0))

@@ -49,6 +49,7 @@ extern bool gParanoid;
 extern bool gChrooted;
 
 bool g_prefer_ipv4 = false;
+bool g_disable_ipv6 = false;
 
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
@@ -478,6 +479,10 @@ bool SocksClient::process_connrq()
             poff += 16;
             std::cerr << "Got a dst ipv6 address: "
                       << dst_address_.to_string() << "\n";
+            if (g_disable_ipv6) {
+                send_reply(RplAddrNotSupp);
+                return false;
+            }
             break;
         }
         case AddrDNS: {
@@ -492,6 +497,7 @@ bool SocksClient::process_connrq()
         default:
             std::cerr << "reply_greet(): unknown address type: "
                       << addr_type_ << "\n";
+            send_reply(RplAddrNotSupp);
             return false;
     }
 
@@ -539,6 +545,10 @@ void SocksClient::resolve_handler(const boost::system::error_code &ec,
     }
     dst_address_ = g_prefer_ipv4 ? fv4->endpoint().address()
                                  : fv6->endpoint().address();
+    if (g_disable_ipv6 && !dst_address_.is_v4()) {
+        send_reply(RplHostUnreach);
+        return;
+    }
     dispatch_connrq();
 }
 

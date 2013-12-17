@@ -220,4 +220,9 @@ private:
 void set_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
 
+extern void init_conntracker_hs();
+extern bool g_prefer_ipv4;
+extern bool g_disable_ipv6;
+
 #endif /* NK_SOCKSCLIENT_H */
+
