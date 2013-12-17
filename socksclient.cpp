@@ -73,13 +73,7 @@ public:
     }
     bool remove(std::size_t hidx, SocksClient* sc)
     {
-        auto& h = hash_[hidx];
-        auto it = h.find(sc);
-        if (it != h.end()) {
-            h.erase(it);
-            return true;
-        }
-        return false;
+        return !!hash_[hidx].erase(sc);
     }
     bool remove(SocksClient* sc) {
         if (!remove(hidx_, sc))
@@ -120,12 +114,7 @@ public:
     }
     bool remove(SocksClient* sc)
     {
-        auto it = hash_.find(sc);
-        if (it != hash_.end()) {
-            hash_.erase(it);
-            return true;
-        }
-        return false;
+        return !!hash_.erase(sc);
     }
 private:
     SocksClientType client_type_;
