@@ -103,6 +103,7 @@ static void fix_signals(void) {
     sigaction(SIGTERM, &sa, NULL);
 }
 
+#if 0
 // XXX: This is not updated for nsocks.
 static int enforce_seccomp(void)
 {
@@ -154,10 +155,11 @@ static int enforce_seccomp(void)
         return -1;
     return 0;
 }
+#endif
 
 int main(int ac, char *av[]) {
     int uid = 0, gid = 0;
-    bool v4only = false;
+    //bool v4only = false;
     std::string pidfile, chroot_path;
     std::vector<std::unique_ptr<ClientListener>> listeners;
     std::vector<std::string> addrlist;
