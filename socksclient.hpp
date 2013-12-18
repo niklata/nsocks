@@ -37,8 +37,6 @@
 #include <boost/asio.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
-#define USE_SPLICE 1
-
 enum SocksClientType {
     SCT_INIT = 0,
     SCT_CONNECT,
