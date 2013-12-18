@@ -55,6 +55,7 @@
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 
+#include "make_unique.hpp"
 #include "socksclient.hpp"
 
 extern "C" {
@@ -331,11 +332,10 @@ int main(int ac, char *av[]) {
 
     if (!addrlist.size()) {
         auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);
-        listeners.emplace_back(std::unique_ptr<ClientListener>(
-                                   new ClientListener(ep)));
+        listeners.emplace_back(nk::make_unique<ClientListener>(ep));
     } else
-        for (auto i = addrlist.cbegin(); i != addrlist.cend(); ++i) {
-            std::string addr = *i;
+        for (const auto &i: addrlist) {
+            std::string addr(i);
             int port = 1080;
             auto loc = addr.rfind(":");
             if (loc != std::string::npos) {
@@ -351,8 +351,7 @@ int main(int ac, char *av[]) {
             try {
                 auto addy = boost::asio::ip::address::from_string(addr);
                 auto ep = boost::asio::ip::tcp::endpoint(addy, port);
-                listeners.emplace_back(std::unique_ptr<ClientListener>(
-                                            new ClientListener(ep)));
+                listeners.emplace_back(nk::make_unique<ClientListener>(ep));
             } catch (const boost::system::error_code&) {
                 std::cout << "bad address: " << addr << std::endl;
             }

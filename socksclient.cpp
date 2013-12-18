@@ -37,6 +37,7 @@
 #include <boost/lexical_cast.hpp>
 
 #include "socksclient.hpp"
+#include "make_unique.hpp"
 
 extern "C" {
 #include "log.h"
@@ -106,7 +107,7 @@ private:
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_[2];
 };
 
-static ephConnTracker *conntracker_hs;
+static std::unique_ptr<ephConnTracker> conntracker_hs;
 
 class connTracker
 {
@@ -136,7 +137,7 @@ static connTracker conntracker_udp(SCT_UDP);
 
 void init_conntracker_hs()
 {
-    conntracker_hs = new ephConnTracker(io_service, 5);
+    conntracker_hs = nk::make_unique<ephConnTracker>(io_service, 5);
 }
 
 #if 0
