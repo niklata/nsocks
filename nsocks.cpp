@@ -74,7 +74,8 @@ extern "C" {
 namespace po = boost::program_options;
 
 boost::asio::io_service io_service;
-bool gChrooted = false;
+static std::vector<std::unique_ptr<ClientListener>> listeners;
+static int nsocks_uid = 0, nsocks_gid = 0;
 
 static void sighandler(int sig)
 {
@@ -255,14 +256,10 @@ static po::variables_map fetch_options(int ac, char *av[])
     return vm;
 }
 
-int main(int ac, char *av[]) {
-    int uid = 0, gid = 0;
-    //bool v4only = false;
-    std::string pidfile, chroot_path;
-    std::vector<std::unique_ptr<ClientListener>> listeners;
+static void process_options(int ac, char *av[])
+{
     std::vector<std::string> addrlist;
-
-    gflags_log_name = const_cast<char *>("nsocks");
+    std::string pidfile, chroot_path;
 
     auto vm(fetch_options(ac, av));
 
@@ -281,24 +278,24 @@ int main(int ac, char *av[]) {
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
         try {
-            uid = boost::lexical_cast<unsigned int>(t);
+            nsocks_uid = boost::lexical_cast<unsigned int>(t);
         } catch (const boost::bad_lexical_cast&) {
             auto pws = getpwnam(t.c_str());
             if (pws) {
-                uid = (int)pws->pw_uid;
-                if (!gid)
-                    gid = (int)pws->pw_gid;
+                nsocks_uid = (int)pws->pw_uid;
+                if (!nsocks_gid)
+                    nsocks_gid = (int)pws->pw_gid;
             } else suicide("invalid uid specified");
         }
     }
     if (vm.count("group")) {
         auto t = vm["group"].as<std::string>();
         try {
-            gid = boost::lexical_cast<unsigned int>(t);
+            nsocks_gid = boost::lexical_cast<unsigned int>(t);
         } catch (const boost::bad_lexical_cast&) {
             auto grp = getgrnam(t.c_str());
             if (grp) {
-                gid = (int)grp->gr_gid;
+                nsocks_gid = (int)grp->gr_gid;
             } else suicide("invalid gid specified");
         }
     }
@@ -316,17 +313,6 @@ int main(int ac, char *av[]) {
         g_disable_ipv6 = true;
     if (vm.count("prefer-ipv4"))
         g_prefer_ipv4 = true;
-
-    if (gflags_detach)
-        if (daemon(0,0))
-            suicide("detaching fork failed");
-
-    if (pidfile.size() && file_exists(pidfile.c_str(), "w"))
-        write_pid(pidfile.c_str());
-
-    umask(077);
-    fix_signals();
-    ncm_fix_env(uid, 0);
 
     init_conntracker_hs();
 
@@ -356,8 +342,19 @@ int main(int ac, char *av[]) {
                 std::cout << "bad address: " << addr << std::endl;
             }
         }
-    addrlist.clear();
 
+    if (gflags_detach)
+        if (daemon(0,0))
+            suicide("detaching fork failed");
+
+    if (pidfile.size() && file_exists(pidfile.c_str(), "w"))
+        write_pid(pidfile.c_str());
+
+    umask(077);
+    fix_signals();
+    ncm_fix_env(nsocks_uid, 0);
+
+    // bool v4only = false;
     // nlink = std::unique_ptr<Netlink>(new Netlink(v4only));
     // if (!nlink->open(NETLINK_INET_DIAG)) {
     //     std::cerr << "failed to create netlink socket" << std::endl;
@@ -371,17 +368,20 @@ int main(int ac, char *av[]) {
             suicide("failed to chdir(%s)\n", chroot_path.c_str());
         if (chroot(chroot_path.c_str()))
             suicide("failed to chroot(%s)\n", chroot_path.c_str());
-        gChrooted = true;
-        chroot_path.clear();
     }
-    if (uid != 0 || gid != 0)
-        drop_root(uid, gid);
-
-    /* Cover our tracks... */
-    pidfile.clear();
+    if (nsocks_uid != 0 || nsocks_gid != 0)
+        drop_root(nsocks_uid, nsocks_gid);
 
     // if (enforce_seccomp())
     //     log_line("seccomp filter cannot be installed");
+
+}
+
+int main(int ac, char *av[])
+{
+    gflags_log_name = const_cast<char *>("nsocks");
+
+    process_options(ac, av);
 
     io_service.run();
 
