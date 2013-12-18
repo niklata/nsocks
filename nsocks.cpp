@@ -157,14 +157,9 @@ static int enforce_seccomp(void)
 }
 #endif
 
-int main(int ac, char *av[]) {
-    int uid = 0, gid = 0;
-    //bool v4only = false;
-    std::string pidfile, chroot_path, config_file;
-    std::vector<std::unique_ptr<ClientListener>> listeners;
-    std::vector<std::string> addrlist;
-
-    gflags_log_name = const_cast<char *>("nsocks");
+static po::variables_map fetch_options(int ac, char *av[])
+{
+    std::string config_file;
 
     po::options_description cli_opts("Command-line-exclusive options");
     cli_opts.add_options()
@@ -219,7 +214,7 @@ int main(int ac, char *av[]) {
         std::ifstream ifs(config_file.c_str());
         if (!ifs) {
             std::cerr << "Could not open config file: " << config_file << "\n";
-            return 0;
+            std::exit(EXIT_FAILURE);
         }
         po::store(po::parse_config_file(ifs, cfgfile_options), vm);
         po::notify(vm);
@@ -230,7 +225,7 @@ int main(int ac, char *av[]) {
                   << "Copyright (c) 2013 Nicholas J. Kain\n"
                   << av[0] << " [options] addresses...\n"
                   << gopts << std::endl;
-        return 1;
+        std::exit(EXIT_FAILURE);
     }
     if (vm.count("version")) {
         std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n" <<
@@ -254,8 +249,22 @@ int main(int ac, char *av[]) {
             "CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n"
             "ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n"
             "POSSIBILITY OF SUCH DAMAGE.\n";
-        return 1;
+        std::exit(EXIT_FAILURE);
     }
+    return vm;
+}
+
+int main(int ac, char *av[]) {
+    int uid = 0, gid = 0;
+    //bool v4only = false;
+    std::string pidfile, chroot_path;
+    std::vector<std::unique_ptr<ClientListener>> listeners;
+    std::vector<std::string> addrlist;
+
+    gflags_log_name = const_cast<char *>("nsocks");
+
+    auto vm(fetch_options(ac, av));
+
     if (vm.count("detach"))
         gflags_detach = 1;
     if (vm.count("nodetach"))
