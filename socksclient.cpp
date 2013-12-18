@@ -598,6 +598,12 @@ bool SocksClient::dispatch_tcp_connect()
     remote_socket_.async_connect
         (ep, boost::bind(&SocksClient::tcp_connect_handler, shared_from_this(),
                          ba::placeholders::error));
+    std::cout << "Starting TCP Connect from "
+              << remote_socket_.local_endpoint().address()
+              << " to "
+              << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                        : dst_hostname_)
+              << ":" << dst_port_ << "\n";
     return true;
 }
 
@@ -662,12 +668,12 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
     sdToRemote_.assign(pToRemote_[0]);
     sdToClient_.assign(pToClient_[0]);
 #endif
-    std::cout << "TCP Connect from "
-              << client_socket_.remote_endpoint().address()
-              << " to "
-              << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                        : dst_hostname_)
-              << ":" << dst_port_ << "\n";
+    // std::cout << "TCP Connect from "
+    //           << client_socket_.remote_endpoint().address()
+    //           << " to "
+    //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
+    //                                     : dst_hostname_)
+    //           << ":" << dst_port_ << "\n";
     send_reply(RplSuccess);
 }
 
@@ -1020,14 +1026,14 @@ void SocksClient::handle_reply_write(const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
 {
     if (ec || sentReplyType_ != RplSuccess) {
-        std::cout << "Connection killed before handshake completed from "
-            << client_socket_.remote_endpoint().address()
-            << " to "
-            << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                : dst_hostname_)
-            << ":" << dst_port_
-            << " with reply code='" << replyCodeString[sentReplyType_]
-            << "'\n";
+        // std::cout << "Connection killed before handshake completed from "
+        //     << client_socket_.remote_endpoint().address()
+        //     << " to "
+        //     << (addr_type_ != AddrDNS ? dst_address_.to_string()
+        //         : dst_hostname_)
+        //     << ":" << dst_port_
+        //     << " with reply code='" << replyCodeString[sentReplyType_]
+        //     << "'\n";
         terminate();
         return;
     }
