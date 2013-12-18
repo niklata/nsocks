@@ -54,7 +54,7 @@ bool g_disable_ipv6 = false;
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 
-#ifdef USE_SPLICE
+#ifndef USE_SPLICE
 static std::size_t buffer_chunk_size = 4096;
 void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
 #endif
@@ -261,12 +261,16 @@ void SocksClient::conditional_terminate()
     bool cso = client_socket_.is_open();
     if (rso && cso)
         return;
+#ifdef USE_SPLICE
     if (!rso && !cso)
         terminate();
     if (!rso && !pToClient_len_)
         terminate();
     if (!cso && !pToRemote_len_)
         terminate();
+#else
+    terminate();
+#endif
 }
 
 void SocksClient::do_read()
