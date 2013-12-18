@@ -31,6 +31,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -159,22 +160,30 @@ static int enforce_seccomp(void)
 int main(int ac, char *av[]) {
     int uid = 0, gid = 0;
     //bool v4only = false;
-    std::string pidfile, chroot_path;
+    std::string pidfile, chroot_path, config_file;
     std::vector<std::unique_ptr<ClientListener>> listeners;
     std::vector<std::string> addrlist;
 
     gflags_log_name = const_cast<char *>("nsocks");
 
-    po::options_description desc("Options");
-    desc.add_options()
+    po::options_description cli_opts("Command-line-exclusive options");
+    cli_opts.add_options()
+        ("config,c", po::value<std::string>(&config_file),
+         "path to configuration file")
         ("detach,d", "run as a background daemon (default)")
         ("nodetach,n", "stay attached to TTY")
         ("quiet,q", "don't print to std(out|err) or log")
+        ("help,h", "print help message")
+        ("version,v", "print version information")
+        ;
+
+    po::options_description gopts("Options");
+    gopts.add_options()
         ("pidfile,f", po::value<std::string>(),
          "path to process id file")
-        ("chroot,c", po::value<std::string>(),
+        ("chroot,C", po::value<std::string>(),
          "path in which nsocks should chroot itself")
-        ("address,a", po::value<std::vector<std::string> >(),
+        ("address,a", po::value<std::vector<std::string> >()->composing(),
          "'address[:port]' on which to listen (default all local)")
         ("user,u", po::value<std::string>(),
          "user name that nsocks should run as")
@@ -188,25 +197,39 @@ int main(int ac, char *av[]) {
          "maximum number of pending client connections")
         ("disable-ipv6", "disable proxy to ipv6 destinations")
         ("prefer-ipv4", "prefer ipv4 addresses when looking up hostnames")
-        ("help,h", "print help message")
-        ("version,v", "print version information")
         ;
+
+    po::options_description cmdline_options;
+    cmdline_options.add(cli_opts).add(gopts);
+    po::options_description cfgfile_options;
+    cfgfile_options.add(gopts);
+
     po::positional_options_description p;
     p.add("address", -1);
     po::variables_map vm;
     try {
         po::store(po::command_line_parser(ac, av).
-                  options(desc).positional(p).run(), vm);
+                  options(cmdline_options).positional(p).run(), vm);
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
     }
     po::notify(vm);
 
+    if (config_file.size()) {
+        std::ifstream ifs(config_file.c_str());
+        if (!ifs) {
+            std::cerr << "Could not open config file: " << config_file << "\n";
+            return 0;
+        }
+        po::store(po::parse_config_file(ifs, cfgfile_options), vm);
+        po::notify(vm);
+    }
+
     if (vm.count("help")) {
         std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n"
                   << "Copyright (c) 2013 Nicholas J. Kain\n"
                   << av[0] << " [options] addresses...\n"
-                  << desc << std::endl;
+                  << gopts << std::endl;
         return 1;
     }
     if (vm.count("version")) {
