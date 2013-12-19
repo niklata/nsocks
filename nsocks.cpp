@@ -75,7 +75,7 @@ namespace po = boost::program_options;
 
 boost::asio::io_service io_service;
 static std::vector<std::unique_ptr<ClientListener>> listeners;
-static int nsocks_uid = 0, nsocks_gid = 0;
+static int nsocks_uid, nsocks_gid;
 
 static void sighandler(int sig)
 {
@@ -385,6 +385,6 @@ int main(int ac, char *av[])
 
     io_service.run();
 
-    exit(EXIT_SUCCESS);
+    std::exit(EXIT_SUCCESS);
 }
 
