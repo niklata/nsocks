@@ -37,6 +37,7 @@
 #include <boost/lexical_cast.hpp>
 
 #include "socksclient.hpp"
+#include "asio_addrcmp.hpp"
 #include "make_unique.hpp"
 
 extern "C" {
@@ -591,8 +592,17 @@ void SocksClient::dispatch_connrq()
     }
 }
 
-bool SocksClient::dispatch_tcp_connect()
+static auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
+static auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
+
+void SocksClient::dispatch_tcp_connect()
 {
+    // Deny proxy attempts to the local loopback addresses.
+    if (dst_address_ == loopback_addr_v6 ||
+        nk::asio::compare_ip(dst_address_, loopback_addr_v4, 8)) {
+        send_reply(RplDeny);
+        return;
+    }
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
     auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
@@ -605,7 +615,6 @@ bool SocksClient::dispatch_tcp_connect()
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
               << ":" << dst_port_ << "\n";
-    return true;
 }
 
 SocksClient::ReplyCode

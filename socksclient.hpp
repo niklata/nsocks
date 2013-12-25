@@ -173,7 +173,7 @@ private:
                          boost::asio::ip::tcp::resolver::iterator it);
     void dispatch_connrq();
 
-    bool dispatch_tcp_connect();
+    void dispatch_tcp_connect();
     void start_tcp_connect_accept();
 
     void tcp_connect_handler(const boost::system::error_code &ec);
