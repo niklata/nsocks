@@ -59,8 +59,6 @@ public:
     ~SocksClient();
 
     inline void start_client_socket() {
-        std::cout << "Client connected from from "
-                  << client_socket_.remote_endpoint().address() << "\n";
         client_socket_.non_blocking(true);
         client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
         do_read();

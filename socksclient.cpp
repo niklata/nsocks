@@ -87,8 +87,8 @@ public:
 private:
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
-        std::cerr << "doSwap wiped " << hash_[hnext].size()
-                  << " items from hash " << hnext << "\n";
+        // std::cerr << "doSwap wiped " << hash_[hnext].size()
+        //           << " items from hash " << hnext << "\n";
         hash_[hnext].clear();
         hidx_ = hnext;
     }
@@ -200,7 +200,7 @@ SocksClient::~SocksClient()
                                         : dst_hostname_)
               << ":" << dst_port_ << " DESTRUCTED (total: "
               << (conntracker_hs->size() + conntracker_connect.size()
-                  + conntracker_bind.size() + conntracker_udp.size()) << ") SocksClient=" << this << "\n";
+                  + conntracker_bind.size() + conntracker_udp.size()) << ")\n";
 }
 
 void SocksClient::close_client_socket()
@@ -254,10 +254,10 @@ void SocksClient::terminate()
     case SCT_UDP: conntracker_udp.remove(this); break;
     }
     state_ = STATE_TERMINATED;
-    std::cout << "Connection to "
-              << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                        : dst_hostname_)
-              << ":" << dst_port_ << " called terminate().\n";
+    // std::cout << "Connection to "
+    //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
+    //                                     : dst_hostname_)
+    //           << ":" << dst_port_ << " called terminate().\n";
 }
 
 void SocksClient::conditional_terminate()
@@ -491,8 +491,6 @@ bool SocksClient::process_connrq()
             memcpy(v6o.data(), inbuf_.data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff += 16;
-            std::cerr << "Got a dst ipv6 address: "
-                      << dst_address_.to_string() << "\n";
             if (g_disable_ipv6) {
                 send_reply(RplAddrNotSupp);
                 return false;
@@ -627,9 +625,9 @@ void SocksClient::dispatch_tcp_connect()
     remote_socket_.async_connect
         (ep, boost::bind(&SocksClient::tcp_connect_handler, shared_from_this(),
                          ba::placeholders::error));
-    std::cout << "Starting TCP Connect from "
-              << remote_socket_.local_endpoint().address()
-              << " to "
+    std::cout << "TCP Connect @" << client_socket_.remote_endpoint().address()
+              << " " << remote_socket_.local_endpoint().address()
+              << " -> "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
               << ":" << dst_port_ << "\n";
@@ -737,7 +735,7 @@ void SocksClient::do_sdToRemote_read()
     if (pToRemote_reading_)
         return;
     pToRemote_reading_ = true;
-    std::cerr << "Polling sdToRemote for reads.\n";
+    //std::cerr << "Polling sdToRemote for reads.\n";
     sdToRemote_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToRemote_read_handler,
@@ -750,7 +748,7 @@ void SocksClient::do_sdToClient_read()
     if (pToClient_reading_)
         return;
     pToClient_reading_ = true;
-    std::cerr << "Polling sdToClient for reads.\n";
+    //std::cerr << "Polling sdToClient for reads.\n";
     sdToClient_.async_read_some
         (ba::null_buffers(),
          boost::bind(&SocksClient::sdToClient_read_handler,
@@ -1083,7 +1081,7 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
 void ClientListener::start_accept()
 {
     auto conn = std::make_shared<SocksClient>(acceptor_.get_io_service());
-    std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
+    // std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
     acceptor_.async_accept(conn->client_socket(), endpoint_,
                            boost::bind(&ClientListener::accept_handler,
                                        this, conn,
@@ -1094,7 +1092,7 @@ void ClientListener::accept_handler(std::shared_ptr<SocksClient> conn,
                                     const boost::system::error_code &ec)
 {
     if (!ec) {
-        std::cout << "Stored a new SocksClient=" << conn.get() << ".\n";
+        // std::cout << "Stored a new SocksClient=" << conn.get() << ".\n";
         conntracker_hs->store(conn);
         conn->start_client_socket();
     } else
