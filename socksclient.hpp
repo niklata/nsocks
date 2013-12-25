@@ -176,6 +176,8 @@ private:
     void dispatch_tcp_connect();
     void start_tcp_connect_accept();
 
+    bool is_dst_denied();
+
     void tcp_connect_handler(const boost::system::error_code &ec);
     void do_client_socket_connect_read();
     void do_remote_socket_read();
@@ -221,6 +223,9 @@ void set_listen_queuelen(std::size_t len);
 extern void init_conntracker_hs();
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;
+
+extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_dst_deny_masks;
 
 #endif /* NK_SOCKSCLIENT_H */
 

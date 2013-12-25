@@ -194,6 +194,8 @@ static po::variables_map fetch_options(int ac, char *av[])
          "maximum number of pending client connections")
         ("disable-ipv6", "disable proxy to ipv6 destinations")
         ("prefer-ipv4", "prefer ipv4 addresses when looking up hostnames")
+        ("deny-dst", po::value<std::vector<std::string>>()->composing(),
+         "denies connections to the specified 'host/netmask'")
         ;
 
     po::options_description cmdline_options;
@@ -258,7 +260,7 @@ static po::variables_map fetch_options(int ac, char *av[])
 
 static void process_options(int ac, char *av[])
 {
-    std::vector<std::string> addrlist;
+    std::vector<std::string> addrlist, denydstlist;
     std::string pidfile, chroot_path;
 
     auto vm(fetch_options(ac, av));
@@ -275,6 +277,8 @@ static void process_options(int ac, char *av[])
         chroot_path = vm["chroot"].as<std::string>();
     if (vm.count("address"))
         addrlist = vm["address"].as<std::vector<std::string> >();
+    if (vm.count("deny-dst"))
+        denydstlist = vm["deny-dst"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
         try {
@@ -342,6 +346,35 @@ static void process_options(int ac, char *av[])
                 std::cout << "bad address: " << addr << std::endl;
             }
         }
+
+    for (const auto &i: denydstlist) {
+        std::string addr(i);
+        int mask = -1;
+        auto loc = addr.rfind("/");
+        if (loc != std::string::npos) {
+            auto mstr = addr.substr(loc + 1);
+            try {
+                mask = boost::lexical_cast<int>(mstr);
+            } catch (const boost::bad_lexical_cast&) {
+                std::cerr << "bad mask in deny-dst: '" << addr << "'\n";
+                std::exit(EXIT_FAILURE);
+            }
+            addr.erase(loc);
+        }
+        try {
+            auto addy = boost::asio::ip::address::from_string(addr);
+            if (mask < 0)
+                mask = addy.is_v4() ? 32 : 128;
+            if (addy.is_v4())
+                mask = std::min(mask, 32);
+            else
+                mask = std::min(mask, 128);
+            g_dst_deny_masks.emplace_back(addy, mask);
+        } catch (const boost::system::error_code&) {
+            std::cerr << "bad address in deny-dst: '" << addr << "'\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
 
     if (gflags_detach)
         if (daemon(0,0))

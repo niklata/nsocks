@@ -141,6 +141,9 @@ void init_conntracker_hs()
     conntracker_hs = nk::make_unique<ephConnTracker>(io_service, 5);
 }
 
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_dst_deny_masks;
+
 #if 0
 class ConnectPortAssigner
 {
@@ -595,11 +598,26 @@ void SocksClient::dispatch_connrq()
 static auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
 static auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
 
-void SocksClient::dispatch_tcp_connect()
+bool SocksClient::is_dst_denied()
 {
     // Deny proxy attempts to the local loopback addresses.
     if (dst_address_ == loopback_addr_v6 ||
-        nk::asio::compare_ip(dst_address_, loopback_addr_v4, 8)) {
+        nk::asio::compare_ip(dst_address_, loopback_addr_v4, 8))
+        return true;
+    for (const auto &i: g_dst_deny_masks) {
+        auto r = nk::asio::compare_ip(dst_address_, std::get<0>(i),
+                                      std::get<1>(i));
+        if (r) {
+            std::cerr << "DENIED connection to " << dst_address_.to_string() << "\n";
+            return true;
+        }
+    }
+    return false;
+}
+
+void SocksClient::dispatch_tcp_connect()
+{
+    if (is_dst_denied()) {
         send_reply(RplDeny);
         return;
     }
