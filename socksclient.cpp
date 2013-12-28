@@ -44,6 +44,8 @@ extern "C" {
 #include "log.h"
 }
 
+#define MAX_BIND_TRIES 10
+
 namespace ba = boost::asio;
 
 extern ba::io_service io_service;
@@ -144,12 +146,12 @@ void init_conntracker_hs()
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
 
-#if 0
-class ConnectPortAssigner
+// XXX: Make the selection of bound port numbers more unpredictable?
+class BindPortAssigner
 {
 public:
-    ConnectPortAssigner(uint16_t start, uint16_t end) :
-        start_port_(start), end_port_(end), current_port_(start);
+    BindPortAssigner(uint16_t start, uint16_t end) :
+        start_port_(start), end_port_(end), current_port_(start) {}
     uint16_t get_port()
     {
         uint16_t port = current_port_++;
@@ -158,13 +160,12 @@ public:
         return port;
     }
 private:
-    uint16_t start_port;
-    uint16_t end_port;
-    uint16_t current_port;
+    uint16_t start_port_;
+    uint16_t end_port_;
+    uint16_t current_port_;
 };
 
-static ConnectPortAssigner CPA(48000, 49000);
-#endif
+static BindPortAssigner BPA(48000, 49000);
 
 SocksClient::SocksClient(ba::io_service &io_service)
         : client_socket_(io_service), remote_socket_(io_service),
@@ -672,28 +673,12 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
         send_reply(errorToReplyCode(ec));
         return;
     }
-    remote_socket_.non_blocking(true);
-    remote_socket_.set_option(ba::socket_base::keep_alive(true));
+    set_remote_socket_options();
     // Now we have a live socket, so we need to inform the client and then
     // begin proxying data.
     conntracker_connect.store(shared_from_this());
-#ifdef USE_SPLICE
-    int err;
-    err = pipe2(pToRemote_, O_NONBLOCK);
-    if (err) {
-        send_reply(RplFail);
+    if (!init_splice_pipes())
         return;
-    }
-    pToRemote_init_ = true;
-    err = pipe2(pToClient_, O_NONBLOCK);
-    if (err) {
-        send_reply(RplFail);
-        return;
-    }
-    pToClient_init_ = true;
-    sdToRemote_.assign(pToRemote_[0]);
-    sdToClient_.assign(pToClient_[0]);
-#endif
     // std::cout << "TCP Connect from "
     //           << client_socket_.remote_endpoint().address()
     //           << " to "
@@ -704,6 +689,26 @@ void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
 }
 
 #ifdef USE_SPLICE
+bool SocksClient::init_splice_pipes()
+{
+    int err;
+    err = pipe2(pToRemote_, O_NONBLOCK);
+    if (err) {
+        send_reply(RplFail);
+        return false;
+    }
+    pToRemote_init_ = true;
+    err = pipe2(pToClient_, O_NONBLOCK);
+    if (err) {
+        send_reply(RplFail);
+        return false;
+    }
+    pToClient_init_ = true;
+    sdToRemote_.assign(pToRemote_[0]);
+    sdToClient_.assign(pToClient_[0]);
+    return true;
+}
+
 // Write data read from the client socket to the connect socket.
 void SocksClient::do_client_socket_connect_read()
 {
@@ -1001,16 +1006,88 @@ void SocksClient::handle_remote_write(const boost::system::error_code &ec,
 }
 #endif
 
-bool SocksClient::dispatch_tcp_bind()
+bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
 {
-    send_reply(RplCmdNotSupp);
+    int tries = 0;
+    while (true) {
+        ++tries;
+        if (tries > MAX_BIND_TRIES) {
+            std::cerr << "fatal error creating BIND socket: can't find unused port\n";
+            break;
+        }
+        try {
+            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
+        } catch (const std::runtime_error &e) {
+            std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
+            break;
+        } catch (const std::domain_error &e) {
+            continue;
+        }
+        return true;
+    }
+    send_reply(RplFail);
     return false;
+}
+
+void SocksClient::dispatch_tcp_bind()
+{
+    // XXX: Use the remote interface that is associated with the client
+    //      -specified dst_address_ and dst_port_.
+    //
+    if (!create_bind_socket(ba::ip::tcp::endpoint(ba::ip::tcp::v6(),
+                                                  BPA.get_port())))
+        return;
+
+    bound_->acceptor_.async_accept
+        (remote_socket_,
+         boost::bind(&SocksClient::bind_accept_handler, shared_from_this(),
+                     ba::placeholders::error));
+    send_reply(RplSuccess);
+}
+
+void SocksClient::bind_accept_handler(const boost::system::error_code &ec)
+{
+    if (ec) {
+        send_reply(RplFail);
+        bound_.reset();
+        return;
+    }
+    std::cout << "Accepted a connection to a BIND socket.\n";
+    set_remote_socket_options();
+    conntracker_bind.store(shared_from_this());
+    if (!init_splice_pipes())
+        return;
+    bound_.reset();
+    send_reply(RplSuccess);
 }
 
 bool SocksClient::dispatch_udp()
 {
     send_reply(RplCmdNotSupp);
     return false;
+}
+
+void SocksClient::send_reply_binds(ba::ip::tcp::endpoint ep)
+{
+    auto bnd_addr = ep.address();
+    if (bnd_addr.is_v4()) {
+        auto v4b = bnd_addr.to_v4().to_bytes();
+        outbuf_.append(1, 0x01);
+        for (auto &i: v4b)
+            outbuf_.append(1, i);
+    } else {
+        auto v6b = bnd_addr.to_v6().to_bytes();
+        outbuf_.append(1, 0x04);
+        for (auto &i: v6b)
+            outbuf_.append(1, i);
+    }
+    union {
+        uint16_t p;
+        char b[2];
+    } portu;
+    portu.p = htons(ep.port());
+    outbuf_.append(1, portu.b[0]);
+    outbuf_.append(1, portu.b[1]);
 }
 
 void SocksClient::send_reply(ReplyCode replycode)
@@ -1020,25 +1097,19 @@ void SocksClient::send_reply(ReplyCode replycode)
     outbuf_.append(1, replycode);
     outbuf_.append(1, 0x00);
     if (replycode == RplSuccess) {
-        auto bnd_addr = remote_socket_.local_endpoint().address();
-        if (bnd_addr.is_v4()) {
-            auto v4b = bnd_addr.to_v4().to_bytes();
-            outbuf_.append(1, 0x01);
-            for (auto &i: v4b)
-                outbuf_.append(1, i);
-        } else {
-            auto v6b = bnd_addr.to_v6().to_bytes();
-            outbuf_.append(1, 0x04);
-            for (auto &i: v6b)
-                outbuf_.append(1, i);
+        switch (cmd_code_) {
+        case CmdTCPConnect:
+            send_reply_binds(remote_socket_.local_endpoint());
+            break;
+        case CmdTCPBind:
+            if (bound_)
+                send_reply_binds(bound_->local_endpoint_);
+            else
+                send_reply_binds(remote_socket_.remote_endpoint());
+            break;
+        default:
+            throw std::logic_error("Invalid cmd_code_ in send_reply().\n");
         }
-        union {
-            uint16_t p;
-            char b[2];
-        } portu;
-        portu.p = htons(remote_socket_.local_endpoint().port());
-        outbuf_.append(1, portu.b[0]);
-        outbuf_.append(1, portu.b[1]);
     }
     sentReplyType_ = replycode;
     ba::async_write(client_socket_, ba::buffer(outbuf_, outbuf_.size()),
@@ -1063,8 +1134,10 @@ void SocksClient::handle_reply_write(const boost::system::error_code &ec,
         terminate();
         return;
     }
-    do_client_socket_connect_read();
-    do_remote_socket_read();
+    if (!bound_) {
+        do_client_socket_connect_read();
+        do_remote_socket_read();
+    }
 }
 
 ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)

@@ -103,10 +103,37 @@ private:
         RplAddrNotSupp = 8
     };
 
+    struct BoundSocket {
+        BoundSocket(boost::asio::io_service &io_service,
+                    boost::asio::ip::tcp::endpoint lep)
+         : acceptor_(io_service), local_endpoint_(lep)
+        {
+            boost::system::error_code ec;
+            acceptor_.open(lep.protocol(), ec);
+            if (ec)
+                throw std::runtime_error("open failed");
+            acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+            if (ec)
+                throw std::runtime_error("set_option/reuse_address failed");
+            acceptor_.non_blocking(true, ec);
+            if (ec)
+                throw std::runtime_error("non_blocking failed");
+            acceptor_.bind(lep, ec);
+            if (ec)
+                throw std::domain_error("bind failed");
+            acceptor_.listen(1, ec);
+            if (ec)
+                throw std::runtime_error("listen failed");
+        }
+        boost::asio::ip::tcp::acceptor acceptor_;
+        boost::asio::ip::tcp::endpoint local_endpoint_;
+    };
+
     SocksClientState state_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     boost::asio::ip::tcp::resolver tcp_resolver_;
+    std::unique_ptr<BoundSocket> bound_;
     boost::array<char, 4096> inBytes_;
     std::string inbuf_;
     bool writePending_;
@@ -140,6 +167,7 @@ private:
     size_t pToClient_len_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
+    bool init_splice_pipes();
     void do_sdToRemote_read();
     void do_sdToClient_read();
     void sdToRemote_read_handler(const boost::system::error_code &ec,
@@ -151,11 +179,18 @@ private:
 #else
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
+    inline bool init_splice_pipes() { return true; }
     void handle_client_write(const boost::system::error_code &ec,
                              std::size_t bytes_xferred);
     void handle_remote_write(const boost::system::error_code &ec,
                              std::size_t bytes_xferred);
 #endif
+
+    inline void set_remote_socket_options()
+    {
+        remote_socket_.non_blocking(true);
+        remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+    }
 
     void do_read();
     void do_write();
@@ -184,9 +219,12 @@ private:
     void remote_socket_read_handler(const boost::system::error_code &ec,
                                          std::size_t bytes_xferred);
 
-    bool dispatch_tcp_bind();
+    void dispatch_tcp_bind();
+    bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
+    void bind_accept_handler(const boost::system::error_code &ec);
     bool dispatch_udp();
     void send_reply(ReplyCode replycode);
+    void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
     void handle_reply_write(const boost::system::error_code &ec,
                             std::size_t bytes_xferred);
     bool create_reply();
