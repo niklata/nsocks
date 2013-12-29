@@ -219,6 +219,7 @@ private:
     void remote_socket_read_handler(const boost::system::error_code &ec,
                                          std::size_t bytes_xferred);
 
+    bool is_bind_client_allowed();
     void dispatch_tcp_bind();
     bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
     void bind_accept_handler(const boost::system::error_code &ec);
@@ -262,6 +263,8 @@ extern bool g_disable_ipv6;
 
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
+extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_bind_allow_masks;
 
 #endif /* NK_SOCKSCLIENT_H */
 

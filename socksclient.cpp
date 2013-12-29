@@ -145,6 +145,8 @@ void init_conntracker_hs()
 
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_bind_allow_masks;
 
 // XXX: Make the selection of bound port numbers more unpredictable?
 class BindPortAssigner
@@ -1006,6 +1008,18 @@ void SocksClient::handle_remote_write(const boost::system::error_code &ec,
 }
 #endif
 
+bool SocksClient::is_bind_client_allowed()
+{
+    auto laddr = client_socket_.remote_endpoint().address();
+    for (const auto &i: g_client_bind_allow_masks) {
+        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        if (r)
+            return true;
+    }
+    std::cerr << "DENIED bind request from " << laddr.to_string() << "\n";
+    return false;
+}
+
 bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
 {
     int tries = 0;
@@ -1031,6 +1045,11 @@ bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
 
 void SocksClient::dispatch_tcp_bind()
 {
+    if (!is_bind_client_allowed()) {
+        send_reply(RplDeny);
+        return;
+    }
+
     // XXX: Use the remote interface that is associated with the client
     //      -specified dst_address_ and dst_port_.
     //

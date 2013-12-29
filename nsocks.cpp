@@ -196,6 +196,8 @@ static po::variables_map fetch_options(int ac, char *av[])
         ("prefer-ipv4", "prefer ipv4 addresses when looking up hostnames")
         ("deny-dst", po::value<std::vector<std::string>>()->composing(),
          "denies connections to the specified 'host/netmask'")
+        ("bind-allow-src", po::value<std::vector<std::string>>()->composing(),
+         "allows bind requests from the specified 'host/netmask'")
         ;
 
     po::options_description cmdline_options;
@@ -258,9 +260,44 @@ static po::variables_map fetch_options(int ac, char *av[])
     return vm;
 }
 
+static void hostmask_vec_add(const std::vector<std::string> &svec,
+                             std::vector<std::pair<boost::asio::ip::address,
+                                                   unsigned int>> &dvec,
+                             const char sname[])
+{
+    for (const auto &i: svec) {
+        std::string addr(i);
+        int mask = -1;
+        auto loc = addr.rfind("/");
+        if (loc != std::string::npos) {
+            auto mstr = addr.substr(loc + 1);
+            try {
+                mask = boost::lexical_cast<int>(mstr);
+            } catch (const boost::bad_lexical_cast&) {
+                std::cerr << "bad mask in " << sname << ": '" << addr << "'\n";
+                std::exit(EXIT_FAILURE);
+            }
+            addr.erase(loc);
+        }
+        try {
+            auto addy = boost::asio::ip::address::from_string(addr);
+            if (mask < 0)
+                mask = addy.is_v4() ? 32 : 128;
+            if (addy.is_v4())
+                mask = std::min(mask, 32);
+            else
+                mask = std::min(mask, 128);
+            dvec.emplace_back(addy, mask);
+        } catch (const boost::system::error_code&) {
+            std::cerr << "bad address in " << sname << ": '" << addr << "'\n";
+            std::exit(EXIT_FAILURE);
+        }
+    }
+}
+
 static void process_options(int ac, char *av[])
 {
-    std::vector<std::string> addrlist, denydstlist;
+    std::vector<std::string> addrlist, denydstlist, bindallowsrclist;
     std::string pidfile, chroot_path;
 
     auto vm(fetch_options(ac, av));
@@ -279,6 +316,8 @@ static void process_options(int ac, char *av[])
         addrlist = vm["address"].as<std::vector<std::string> >();
     if (vm.count("deny-dst"))
         denydstlist = vm["deny-dst"].as<std::vector<std::string>>();
+    if (vm.count("bind-allow-src"))
+        bindallowsrclist = vm["bind-allow-src"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
         try {
@@ -347,34 +386,9 @@ static void process_options(int ac, char *av[])
             }
         }
 
-    for (const auto &i: denydstlist) {
-        std::string addr(i);
-        int mask = -1;
-        auto loc = addr.rfind("/");
-        if (loc != std::string::npos) {
-            auto mstr = addr.substr(loc + 1);
-            try {
-                mask = boost::lexical_cast<int>(mstr);
-            } catch (const boost::bad_lexical_cast&) {
-                std::cerr << "bad mask in deny-dst: '" << addr << "'\n";
-                std::exit(EXIT_FAILURE);
-            }
-            addr.erase(loc);
-        }
-        try {
-            auto addy = boost::asio::ip::address::from_string(addr);
-            if (mask < 0)
-                mask = addy.is_v4() ? 32 : 128;
-            if (addy.is_v4())
-                mask = std::min(mask, 32);
-            else
-                mask = std::min(mask, 128);
-            g_dst_deny_masks.emplace_back(addy, mask);
-        } catch (const boost::system::error_code&) {
-            std::cerr << "bad address in deny-dst: '" << addr << "'\n";
-            std::exit(EXIT_FAILURE);
-        }
-    }
+    hostmask_vec_add(denydstlist, g_dst_deny_masks, "deny-dst");
+    hostmask_vec_add(bindallowsrclist, g_client_bind_allow_masks,
+                     "bind-allow-src");
 
     if (gflags_detach)
         if (daemon(0,0))
