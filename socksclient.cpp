@@ -1053,8 +1053,10 @@ void SocksClient::dispatch_tcp_bind()
     // XXX: Use the remote interface that is associated with the client
     //      -specified dst_address_ and dst_port_.
     //
-    if (!create_bind_socket(ba::ip::tcp::endpoint(ba::ip::tcp::v6(),
-                                                  BPA.get_port())))
+    if (!create_bind_socket
+        (ba::ip::tcp::endpoint(!g_disable_ipv6 ? ba::ip::tcp::v6()
+                                               : ba::ip::tcp::v4(),
+                               BPA.get_port())))
         return;
 
     bound_->acceptor_.async_accept
