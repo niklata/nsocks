@@ -253,10 +253,12 @@ private:
                         const boost::system::error_code &ec);
 };
 
+#ifndef USE_SPLICE
 void set_buffer_chunk_size(std::size_t size);
+#endif
 void set_listen_queuelen(std::size_t len);
 
-extern void init_conntrackers();
+extern void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;
 

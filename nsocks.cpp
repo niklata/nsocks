@@ -198,6 +198,10 @@ static po::variables_map fetch_options(int ac, char *av[])
          "denies connections to the specified 'host/netmask'")
         ("bind-allow-src", po::value<std::vector<std::string>>()->composing(),
          "allows bind requests from the specified 'host/netmask'")
+        ("handshake-gc-interval", po::value<std::size_t>()->default_value(5),
+         "seconds between gc sweeps of unfinished handshakes")
+        ("bindlisten-gc-interval", po::value<std::size_t>()->default_value(180),
+         "seconds between gc sweeps of listening bind sockets")
         ;
 
     po::options_description cmdline_options;
@@ -302,6 +306,9 @@ static void process_options(int ac, char *av[])
 
     auto vm(fetch_options(ac, av));
 
+    auto hs_secs = vm["handshake-gc-interval"].as<std::size_t>();
+    auto bindlisten_secs = vm["bindlisten-gc-interval"].as<std::size_t>();
+
     if (vm.count("detach"))
         gflags_detach = 1;
     if (vm.count("nodetach"))
@@ -357,7 +364,7 @@ static void process_options(int ac, char *av[])
     if (vm.count("prefer-ipv4"))
         g_prefer_ipv4 = true;
 
-    init_conntrackers();
+    init_conntrackers(hs_secs, bindlisten_secs);
 
     if (!addrlist.size()) {
         auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);

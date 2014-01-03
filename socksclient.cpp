@@ -45,8 +45,6 @@ extern "C" {
 }
 
 #define MAX_BIND_TRIES 10
-#define HS_GC_CYCLE_SEC 5
-#define BINDLISTEN_GC_CYCLE_SEC 180
 
 namespace ba = boost::asio;
 
@@ -143,12 +141,12 @@ static connTracker conntracker_connect(SCT_CONNECT, conntracker_hs);
 static connTracker conntracker_bind(SCT_BIND, conntracker_bindlisten);
 static connTracker conntracker_udp(SCT_UDP, conntracker_hs);
 
-void init_conntrackers()
+void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {
     conntracker_hs = nk::make_unique<ephConnTracker>
-        (io_service, HS_GC_CYCLE_SEC);
+        (io_service, hs_secs);
     conntracker_bindlisten = nk::make_unique<ephConnTracker>
-        (io_service, BINDLISTEN_GC_CYCLE_SEC);
+        (io_service, bindlisten_secs);
 }
 
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
