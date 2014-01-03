@@ -61,7 +61,7 @@ public:
     inline void start_client_socket() {
         client_socket_.non_blocking(true);
         client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
-        do_read();
+        read_handshake();
     }
     inline boost::asio::ip::tcp::socket &client_socket() {
         return client_socket_;
@@ -191,9 +191,9 @@ private:
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
     }
 
-    void do_read();
-    void read_handler(const boost::system::error_code &ec,
-                      std::size_t bytes_xferred);
+    void read_handshake();
+    void handshake_read_handler(const boost::system::error_code &ec,
+                                std::size_t bytes_xferred);
     void write_greet();
     void handle_write_greet(const boost::system::error_code &ec,
                             std::size_t bytes_xferred);

@@ -290,17 +290,17 @@ void SocksClient::conditional_terminate()
 #endif
 }
 
-void SocksClient::do_read()
+void SocksClient::read_handshake()
 {
     client_socket_.async_read_some
         (ba::buffer(inBytes_),
-         boost::bind(&SocksClient::read_handler, shared_from_this(),
+         boost::bind(&SocksClient::handshake_read_handler, shared_from_this(),
                      ba::placeholders::error,
                      ba::placeholders::bytes_transferred));
 }
 
-void SocksClient::read_handler(const boost::system::error_code &ec,
-                                    std::size_t bytes_xferred)
+void SocksClient::handshake_read_handler(const boost::system::error_code &ec,
+                                         std::size_t bytes_xferred)
 {
     if (ec) {
         std::cerr << "Client read error: "
@@ -317,7 +317,7 @@ void SocksClient::read_handler(const boost::system::error_code &ec,
         return;
     }
     if (state_ != STATE_GOTCONNRQ)
-        do_read();
+        read_handshake();
 }
 
 void SocksClient::handle_write_greet(const boost::system::error_code &ec,
