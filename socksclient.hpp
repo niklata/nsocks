@@ -134,7 +134,7 @@ private:
     boost::asio::ip::tcp::socket remote_socket_;
     boost::asio::ip::tcp::resolver tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
-    boost::array<char, 4096> inBytes_;
+    boost::array<char, 32> inBytes_;
     std::string inbuf_;
     bool writePending_;
     bool auth_none_;
