@@ -129,44 +129,35 @@ private:
         boost::asio::ip::tcp::endpoint local_endpoint_;
     };
 
-    SocksClientState state_;
+    boost::array<char, 32> inBytes_;
+    std::string inbuf_;
+    std::string dst_hostname_;
+    std::string outbuf_;
+    std::unique_ptr<BoundSocket> bound_;
+    boost::asio::ip::address local_address_; // XXX: Populate this.
+    boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     boost::asio::ip::tcp::resolver tcp_resolver_;
-    std::unique_ptr<BoundSocket> bound_;
-    boost::array<char, 32> inBytes_;
-    std::string inbuf_;
-    bool writePending_;
-    bool auth_none_;
-    bool auth_gssapi_;
-    bool auth_unpw_;
+    SocksClientState state_;
     SocksClientType client_type_;
     CommandCode cmd_code_;
     AddressType addr_type_;
-    std::string dst_hostname_;
-    boost::asio::ip::address local_address_; // XXX: Populate this.
-    boost::asio::ip::address dst_address_;
-    uint16_t dst_port_;
-
-    std::string outbuf_;
     ReplyCode sentReplyType_;
-
-    bool markedForDeath_;
-    bool client_socket_reading_;
-    bool remote_socket_reading_;
+    uint16_t dst_port_;
 
 #ifdef USE_SPLICE
     // Used for splice().
+    size_t pToRemote_len_;
+    size_t pToClient_len_;
+    boost::asio::posix::stream_descriptor sdToRemote_;
+    boost::asio::posix::stream_descriptor sdToClient_;
     int pToRemote_[2];
     int pToClient_[2];
     bool pToRemote_init_;
     bool pToClient_init_;
     bool pToRemote_reading_;
     bool pToClient_reading_;
-    size_t pToRemote_len_;
-    size_t pToClient_len_;
-    boost::asio::posix::stream_descriptor sdToRemote_;
-    boost::asio::posix::stream_descriptor sdToClient_;
     bool init_splice_pipes();
     void do_sdToRemote_read();
     void do_sdToClient_read();
@@ -185,6 +176,14 @@ private:
     void handle_remote_write(const boost::system::error_code &ec,
                              std::size_t bytes_xferred);
 #endif
+
+    bool writePending_;
+    bool auth_none_;
+    bool auth_gssapi_;
+    bool auth_unpw_;
+    bool markedForDeath_;
+    bool client_socket_reading_;
+    bool remote_socket_reading_;
 
     inline void set_remote_socket_options()
     {

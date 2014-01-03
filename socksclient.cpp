@@ -171,20 +171,18 @@ static BindPortAssigner BPA(48000, 49000);
 
 SocksClient::SocksClient(ba::io_service &io_service)
         : client_socket_(io_service), remote_socket_(io_service),
-          tcp_resolver_(io_service), client_type_(SCT_INIT),
-          markedForDeath_(false), client_socket_reading_(false),
-          remote_socket_reading_(false)
+          tcp_resolver_(io_service), state_(STATE_WAITGREET),
+          client_type_(SCT_INIT),
 #ifdef USE_SPLICE
-          ,
+          pToRemote_len_(0), pToClient_len_(0),
+          sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_init_(false), pToClient_init_(false),
           pToRemote_reading_(false), pToClient_reading_(false),
-          pToRemote_len_(0), pToClient_len_(0),
-          sdToRemote_(io_service), sdToClient_(io_service)
 #endif
-{
-    state_ = STATE_WAITGREET;
-    writePending_ = false;
-}
+          writePending_(false), auth_none_(false), auth_gssapi_(false),
+          auth_unpw_(false), markedForDeath_(false),
+          client_socket_reading_(false), remote_socket_reading_(false)
+{}
 
 SocksClient::~SocksClient()
 {
