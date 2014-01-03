@@ -320,18 +320,7 @@ void SocksClient::read_handler(const boost::system::error_code &ec,
         do_read();
 }
 
-void SocksClient::do_write()
-{
-    assert(!writePending_);
-    writePending_ = true;
-    ba::async_write(
-        client_socket_, ba::buffer(outbuf_),
-        boost::bind(&SocksClient::write_handler, shared_from_this(),
-                    ba::placeholders::error,
-                    ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::write_handler(const boost::system::error_code &ec,
+void SocksClient::handle_write_greet(const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
 {
     writePending_ = false;
@@ -343,13 +332,18 @@ void SocksClient::write_handler(const boost::system::error_code &ec,
     }
     outbuf_.erase(0, bytes_xferred);
     if (outbuf_.size())
-        do_write();
+        write_greet();
 }
 
-void SocksClient::write()
+void SocksClient::write_greet()
 {
-    if (!writePending_)
-        do_write();
+    assert(!writePending_);
+    writePending_ = true;
+    ba::async_write(
+        client_socket_, ba::buffer(outbuf_, outbuf_.size()),
+        boost::bind(&SocksClient::handle_write_greet, shared_from_this(),
+                    ba::placeholders::error,
+                    ba::placeholders::bytes_transferred));
 }
 
 // Returns false if the object needs to be destroyed by the caller.
@@ -421,7 +415,7 @@ bool SocksClient::reply_greet()
 
     outbuf_ += '\x5';
     outbuf_ += '\x0'; // We don't support authentication.
-    write();
+    write_greet();
     state_ = STATE_WAITCONNRQ;
     return true;
 }
@@ -1144,16 +1138,13 @@ void SocksClient::send_reply(ReplyCode replycode)
         }
     }
     sentReplyType_ = replycode;
-    ba::async_write(client_socket_, ba::buffer(outbuf_, outbuf_.size()),
-                    boost::bind(&SocksClient::handle_reply_write,
-                                shared_from_this(),
-                                ba::placeholders::error,
-                                ba::placeholders::bytes_transferred));
+    write_reply();
 }
 
-void SocksClient::handle_reply_write(const boost::system::error_code &ec,
+void SocksClient::handle_write_reply(const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
 {
+    writePending_ = false;
     if (ec || sentReplyType_ != RplSuccess) {
         // std::cout << "Connection killed before handshake completed from "
         //     << client_socket_.remote_endpoint().address()
@@ -1166,10 +1157,26 @@ void SocksClient::handle_reply_write(const boost::system::error_code &ec,
         terminate();
         return;
     }
+    outbuf_.erase(0, bytes_xferred);
+    if (outbuf_.size()) {
+        write_reply();
+        return;
+    }
     if (!bound_) {
         do_client_socket_connect_read();
         do_remote_socket_read();
     }
+}
+
+void SocksClient::write_reply()
+{
+    assert(!writePending_);
+    writePending_ = true;
+    ba::async_write(client_socket_, ba::buffer(outbuf_, outbuf_.size()),
+                    boost::bind(&SocksClient::handle_write_reply,
+                                shared_from_this(),
+                                ba::placeholders::error,
+                                ba::placeholders::bytes_transferred));
 }
 
 ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)

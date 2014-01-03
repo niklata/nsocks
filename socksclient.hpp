@@ -192,11 +192,11 @@ private:
     }
 
     void do_read();
-    void do_write();
     void read_handler(const boost::system::error_code &ec,
                       std::size_t bytes_xferred);
-    void write_handler(const boost::system::error_code &ec,
-                       std::size_t bytes_xferred);
+    void write_greet();
+    void handle_write_greet(const boost::system::error_code &ec,
+                            std::size_t bytes_xferred);
     bool process_input();
     bool process_greet();
     bool reply_greet();
@@ -225,10 +225,10 @@ private:
     bool dispatch_udp();
     void send_reply(ReplyCode replycode);
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
-    void handle_reply_write(const boost::system::error_code &ec,
+    void write_reply();
+    void handle_write_reply(const boost::system::error_code &ec,
                             std::size_t bytes_xferred);
     bool create_reply();
-    void write();
     void terminate();
     void conditional_terminate();
     void close_client_socket();
