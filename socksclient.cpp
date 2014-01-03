@@ -1,6 +1,6 @@
 /* socksclient.cpp - socks client request handling
  *
- * (c) 2013 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -45,6 +45,8 @@ extern "C" {
 }
 
 #define MAX_BIND_TRIES 10
+#define HS_GC_CYCLE_SEC 5
+#define BINDLISTEN_GC_CYCLE_SEC 180
 
 namespace ba = boost::asio;
 
@@ -111,17 +113,19 @@ private:
 };
 
 static std::unique_ptr<ephConnTracker> conntracker_hs;
+static std::unique_ptr<ephConnTracker> conntracker_bindlisten;
 
 class connTracker
 {
 public:
-    explicit connTracker(SocksClientType client_type)
-        : client_type_(client_type) {}
+    explicit connTracker(SocksClientType client_type,
+                         std::unique_ptr<ephConnTracker> &ct)
+        : client_type_(client_type), ct_(ct) {}
     void store(std::shared_ptr<SocksClient> ssc)
     {
         ssc->setClientType(client_type_);
         hash_[ssc.get()] = ssc;
-        if (!conntracker_hs->remove(ssc.get()))
+        if (!ct_->remove(ssc.get()))
             std::cerr << "Store to non-handshake tracker for connection that wasn't in the handshake tracker! SocksClient=" << ssc.get() << "\n";
     }
     bool remove(SocksClient* sc)
@@ -131,16 +135,20 @@ public:
     std::size_t size() { return hash_.size(); }
 private:
     SocksClientType client_type_;
+    std::unique_ptr<ephConnTracker> &ct_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
 };
 
-static connTracker conntracker_connect(SCT_CONNECT);
-static connTracker conntracker_bind(SCT_BIND);
-static connTracker conntracker_udp(SCT_UDP);
+static connTracker conntracker_connect(SCT_CONNECT, conntracker_hs);
+static connTracker conntracker_bind(SCT_BIND, conntracker_bindlisten);
+static connTracker conntracker_udp(SCT_UDP, conntracker_hs);
 
-void init_conntracker_hs()
+void init_conntrackers()
 {
-    conntracker_hs = nk::make_unique<ephConnTracker>(io_service, 5);
+    conntracker_hs = nk::make_unique<ephConnTracker>
+        (io_service, HS_GC_CYCLE_SEC);
+    conntracker_bindlisten = nk::make_unique<ephConnTracker>
+        (io_service, BINDLISTEN_GC_CYCLE_SEC);
 }
 
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
@@ -200,8 +208,9 @@ SocksClient::~SocksClient()
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
               << ":" << dst_port_ << " DESTRUCTED (total: "
-              << (conntracker_hs->size() + conntracker_connect.size()
-                  + conntracker_bind.size() + conntracker_udp.size()) << ")\n";
+              << (conntracker_hs->size()  + conntracker_bindlisten->size()
+                  + conntracker_connect.size() + conntracker_bind.size()
+                  + conntracker_udp.size()) << ")\n";
 }
 
 void SocksClient::close_client_socket()
@@ -249,7 +258,11 @@ void SocksClient::terminate()
     close_remote_socket();
     close_client_socket();
     switch (client_type_) {
-    case SCT_INIT: conntracker_hs->remove(this); break;
+    case SCT_INIT:
+        conntracker_hs->remove(this);
+        if (cmd_code_ == CmdTCPBind)
+            conntracker_bindlisten->remove(this);
+        break;
     case SCT_CONNECT: conntracker_connect.remove(this); break;
     case SCT_BIND: conntracker_bind.remove(this); break;
     case SCT_UDP: conntracker_udp.remove(this); break;
@@ -1056,6 +1069,8 @@ void SocksClient::dispatch_tcp_bind()
                                                : ba::ip::tcp::v4(),
                                BPA.get_port())))
         return;
+    conntracker_bindlisten->store(shared_from_this());
+    conntracker_hs->remove(this);
 
     bound_->acceptor_.async_accept
         (remote_socket_,

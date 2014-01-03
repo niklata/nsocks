@@ -1,6 +1,6 @@
 /* nsocks.c - socks5 server
  *
- * (c) 2013 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -228,14 +228,14 @@ static po::variables_map fetch_options(int ac, char *av[])
 
     if (vm.count("help")) {
         std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n"
-                  << "Copyright (c) 2013 Nicholas J. Kain\n"
+                  << "Copyright (c) 2013-2014 Nicholas J. Kain\n"
                   << av[0] << " [options] addresses...\n"
                   << gopts << std::endl;
         std::exit(EXIT_FAILURE);
     }
     if (vm.count("version")) {
         std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n" <<
-            "Copyright (c) 2013 Nicholas J. Kain\n"
+            "Copyright (c) 2013-2014 Nicholas J. Kain\n"
             "All rights reserved.\n\n"
             "Redistribution and use in source and binary forms, with or without\n"
             "modification, are permitted provided that the following conditions are met:\n\n"
@@ -357,7 +357,7 @@ static void process_options(int ac, char *av[])
     if (vm.count("prefer-ipv4"))
         g_prefer_ipv4 = true;
 
-    init_conntracker_hs();
+    init_conntrackers();
 
     if (!addrlist.size()) {
         auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);

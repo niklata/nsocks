@@ -1,6 +1,6 @@
 /* socksclient.hpp - socks client request handling
  *
- * (c) 2013 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -256,7 +256,7 @@ private:
 void set_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
 
-extern void init_conntracker_hs();
+extern void init_conntrackers();
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;
 
