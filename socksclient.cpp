@@ -331,8 +331,6 @@ void SocksClient::handle_write_greet(const boost::system::error_code &ec,
         return;
     }
     outbuf_.erase(0, bytes_xferred);
-    if (outbuf_.size())
-        write_greet();
 }
 
 void SocksClient::write_greet()
@@ -1158,10 +1156,6 @@ void SocksClient::handle_write_reply(const boost::system::error_code &ec,
         return;
     }
     outbuf_.erase(0, bytes_xferred);
-    if (outbuf_.size()) {
-        write_reply();
-        return;
-    }
     if (!bound_) {
         do_client_socket_connect_read();
         do_remote_socket_read();
