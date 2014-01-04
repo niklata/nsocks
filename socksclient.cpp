@@ -96,13 +96,12 @@ private:
     }
     void setTimer(void) {
         swapTimer_.expires_from_now(boost::posix_time::seconds(cyclefreq_));
-        swapTimer_.async_wait(boost::bind(&ephConnTracker::timerHandler,
-                                          this, ba::placeholders::error));
-    }
-    void timerHandler(const boost::system::error_code& error) {
-        doSwap();
-        if (size())
-            setTimer();
+        swapTimer_.async_wait([this](const boost::system::error_code& error)
+                              {
+                                  doSwap();
+                                  if (size())
+                                      setTimer();
+                              });
     }
     std::size_t cyclefreq_;
     std::size_t hidx_;
@@ -292,56 +291,52 @@ void SocksClient::conditional_terminate()
 
 void SocksClient::read_handshake()
 {
+    auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(inBytes_),
-         boost::bind(&SocksClient::handshake_read_handler, shared_from_this(),
-                     ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::handshake_read_handler(const boost::system::error_code &ec,
-                                         std::size_t bytes_xferred)
-{
-    if (ec) {
-        std::cerr << "Client read error: "
-                  << boost::system::system_error(ec).what() << std::endl;
-        terminate();
-        return;
-    }
-    if (!bytes_xferred)
-        return;
-    inbuf_.append(inBytes_.data(), bytes_xferred);
-    if (!process_input()) {
-        std::cout << "process_input(): returned false -> terminate!\n";
-        terminate();
-        return;
-    }
-    if (state_ != STATE_GOTCONNRQ)
-        read_handshake();
-}
-
-void SocksClient::handle_write_greet(const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
-{
-    writePending_ = false;
-    if (ec) {
-        std::cerr << "Client write error: "
-                  << boost::system::system_error(ec).what() << std::endl;
-        terminate();
-        return;
-    }
-    outbuf_.erase(0, bytes_xferred);
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 std::cerr << "Client read error: "
+                           << boost::system::system_error(ec).what()
+                           << std::endl;
+                 terminate();
+                 return;
+             }
+             if (!bytes_xferred)
+                 return;
+             inbuf_.append(inBytes_.data(), bytes_xferred);
+             if (!process_input()) {
+                 std::cout << "process_input(): returned false -> terminate!\n";
+                 terminate();
+                 return;
+             }
+             if (state_ != STATE_GOTCONNRQ)
+                 read_handshake();
+         });
 }
 
 void SocksClient::write_greet()
 {
     assert(!writePending_);
     writePending_ = true;
+    auto sfd = shared_from_this();
     ba::async_write(
         client_socket_, ba::buffer(outbuf_, outbuf_.size()),
-        boost::bind(&SocksClient::handle_write_greet, shared_from_this(),
-                    ba::placeholders::error,
-                    ba::placeholders::bytes_transferred));
+        [this, sfd](const boost::system::error_code &ec,
+                    std::size_t bytes_xferred)
+        {
+            writePending_ = false;
+            if (ec) {
+                std::cerr << "Client write error: "
+                          << boost::system::system_error(ec).what()
+                          << std::endl;
+                terminate();
+                return;
+            }
+            outbuf_.erase(0, bytes_xferred);
+        });
 }
 
 // Returns false if the object needs to be destroyed by the caller.
@@ -535,54 +530,51 @@ bool SocksClient::process_connrq()
     return true;
 }
 
-void SocksClient::resolve_handler(const boost::system::error_code &ec,
-                                  ba::ip::tcp::resolver::iterator it)
-{
-    if (ec) {
-        send_reply(RplHostUnreach);
-        return;
-    }
-    ba::ip::tcp::resolver::iterator fv4, fv6, rie;
-    for (; it != rie; ++it) {
-        bool isv4 = it->endpoint().address().is_v4();
-        if (isv4) {
-            if (g_prefer_ipv4) {
-                dst_address_ = it->endpoint().address();
-                dispatch_connrq();
-                return;
-            }
-            if (fv4 == rie)
-                fv4 = it;
-        } else {
-            if (!g_prefer_ipv4) {
-                dst_address_ = it->endpoint().address();
-                dispatch_connrq();
-                return;
-            }
-            if (fv6 == rie)
-                fv6 = it;
-        }
-    }
-    dst_address_ = g_prefer_ipv4 ? fv4->endpoint().address()
-                                 : fv6->endpoint().address();
-    if (g_disable_ipv6 && !dst_address_.is_v4()) {
-        send_reply(RplHostUnreach);
-        return;
-    }
-    dispatch_connrq();
-}
-
 void SocksClient::dispatch_connrq()
 {
     if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
         ba::ip::tcp::resolver::query query
             (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
+        auto sfd = shared_from_this();
         try {
             tcp_resolver_.async_resolve
-                (query, boost::bind(&SocksClient::resolve_handler,
-                                    shared_from_this(),
-                                    ba::placeholders::error,
-                                    ba::placeholders::iterator));
+                (query,
+                 [this, sfd](const boost::system::error_code &ec,
+                             ba::ip::tcp::resolver::iterator it)
+                 {
+                     if (ec) {
+                         send_reply(RplHostUnreach);
+                         return;
+                     }
+                     ba::ip::tcp::resolver::iterator fv4, fv6, rie;
+                     for (; it != rie; ++it) {
+                         bool isv4 = it->endpoint().address().is_v4();
+                         if (isv4) {
+                             if (g_prefer_ipv4) {
+                                 dst_address_ = it->endpoint().address();
+                                 dispatch_connrq();
+                                 return;
+                             }
+                             if (fv4 == rie)
+                                 fv4 = it;
+                         } else {
+                             if (!g_prefer_ipv4) {
+                                 dst_address_ = it->endpoint().address();
+                                 dispatch_connrq();
+                                 return;
+                             }
+                             if (fv6 == rie)
+                                 fv6 = it;
+                         }
+                     }
+                     dst_address_ = g_prefer_ipv4 ? fv4->endpoint().address()
+                                                  : fv6->endpoint().address();
+                     if (g_disable_ipv6 && !dst_address_.is_v4()) {
+                         send_reply(RplHostUnreach);
+                         return;
+                     }
+                     dispatch_connrq();
+                 });
         } catch (std::exception const e) {
             send_reply(RplHostUnreach);
         }
@@ -626,9 +618,28 @@ void SocksClient::dispatch_tcp_connect()
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
     auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
+    auto sfd = shared_from_this();
     remote_socket_.async_connect
-        (ep, boost::bind(&SocksClient::tcp_connect_handler, shared_from_this(),
-                         ba::placeholders::error));
+        (ep, [this, sfd](const boost::system::error_code &ec)
+         {
+             if (ec) {
+                 send_reply(errorToReplyCode(ec));
+                 return;
+             }
+             set_remote_socket_options();
+             // Now we have a live socket, so we need to inform the client
+             // and then begin proxying data.
+             conntracker_connect.store(shared_from_this());
+             if (!init_splice_pipes())
+                 return;
+             // std::cout << "TCP Connect from "
+             //           << client_socket_.remote_endpoint().address()
+             //           << " to "
+             //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
+             //                                     : dst_hostname_)
+             //           << ":" << dst_port_ << "\n";
+             send_reply(RplSuccess);
+         });
     std::cout << "TCP Connect @" << client_socket_.remote_endpoint().address()
               << " " << remote_socket_.local_endpoint().address()
               << " -> "
@@ -670,27 +681,6 @@ static const char * const replyCodeString[] = {
     "RplAddrNotSupp",
 };
 
-void SocksClient::tcp_connect_handler(const boost::system::error_code &ec)
-{
-    if (ec) {
-        send_reply(errorToReplyCode(ec));
-        return;
-    }
-    set_remote_socket_options();
-    // Now we have a live socket, so we need to inform the client and then
-    // begin proxying data.
-    conntracker_connect.store(shared_from_this());
-    if (!init_splice_pipes())
-        return;
-    // std::cout << "TCP Connect from "
-    //           << client_socket_.remote_endpoint().address()
-    //           << " to "
-    //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
-    //                                     : dst_hostname_)
-    //           << ":" << dst_port_ << "\n";
-    send_reply(RplSuccess);
-}
-
 #ifdef USE_SPLICE
 bool SocksClient::init_splice_pipes()
 {
@@ -710,58 +700,6 @@ bool SocksClient::init_splice_pipes()
     sdToRemote_.assign(pToRemote_[0]);
     sdToClient_.assign(pToClient_[0]);
     return true;
-}
-
-// Write data read from the client socket to the connect socket.
-void SocksClient::do_client_socket_connect_read()
-{
-    if (client_socket_reading_)
-        return;
-    client_socket_reading_ = true;
-    client_socket_.async_read_some
-        (ba::null_buffers(),
-         boost::bind(&SocksClient::client_socket_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
-}
-
-// Write data read from the connect socket to the client socket.
-void SocksClient::do_remote_socket_read()
-{
-    if (remote_socket_reading_)
-        return;
-    remote_socket_reading_ = true;
-    remote_socket_.async_read_some
-        (ba::null_buffers(),
-         boost::bind(&SocksClient::remote_socket_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::do_sdToRemote_read()
-{
-    if (pToRemote_reading_)
-        return;
-    pToRemote_reading_ = true;
-    //std::cerr << "Polling sdToRemote for reads.\n";
-    sdToRemote_.async_read_some
-        (ba::null_buffers(),
-         boost::bind(&SocksClient::sdToRemote_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::do_sdToClient_read()
-{
-    if (pToClient_reading_)
-        return;
-    pToClient_reading_ = true;
-    //std::cerr << "Polling sdToClient for reads.\n";
-    sdToClient_.async_read_some
-        (ba::null_buffers(),
-         boost::bind(&SocksClient::sdToClient_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
 }
 
 // Can throw std::runtime_error
@@ -785,70 +723,153 @@ static size_t spliceit(int infd, int outfd, std::size_t len)
     return spliced;
 }
 
-// Client is trying to send data to the remote server.  Splice it to the
-// pToRemote_ pipe.
-void SocksClient::
-client_socket_read_handler(const boost::system::error_code &ec,
-                           std::size_t bytes_xferred)
+// Write data read from the client socket to the connect socket.
+void SocksClient::do_client_socket_connect_read()
 {
-    client_socket_reading_ = false;
-    if (ec) {
-        close_client_socket();
-        conditional_terminate();
+    if (client_socket_reading_)
         return;
-    }
-    auto bytes = client_socket_.available();
-    if (!bytes) {
-        close_client_socket();
-        conditional_terminate();
-        return;
-    }
-    try {
-        //std::cerr << "client->crPIPE: ";
-        pToRemote_len_ += spliceit(client_socket_.native(), pToRemote_[1], bytes);
-    } catch (const std::runtime_error &e) {
-        std::cerr << "client_socket_read_handler() TERMINATE: " << e.what() << "\n";
-        close_client_socket();
-        conditional_terminate();
-        return;
-    }
-    splicePipeToRemote();
-    do_client_socket_connect_read();
-    if (pToRemote_len_)
-        do_sdToRemote_read();
+    client_socket_reading_ = true;
+    auto sfd = shared_from_this();
+    // Client is trying to send data to the remote server.  Splice it to the
+    // pToRemote_ pipe.
+    client_socket_.async_read_some
+        (ba::null_buffers(),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             client_socket_reading_ = false;
+             if (ec) {
+                 close_client_socket();
+                 conditional_terminate();
+                 return;
+             }
+             auto bytes = client_socket_.available();
+             if (!bytes) {
+                 close_client_socket();
+                 conditional_terminate();
+                 return;
+             }
+             try {
+                 //std::cerr << "client->crPIPE: ";
+                 pToRemote_len_ += spliceit(client_socket_.native(),
+                                            pToRemote_[1], bytes);
+             } catch (const std::runtime_error &e) {
+                 std::cerr << "client_socket_read_handler() TERMINATE: "
+                           << e.what() << "\n";
+                 close_client_socket();
+                 conditional_terminate();
+                 return;
+             }
+             splicePipeToRemote();
+             do_client_socket_connect_read();
+             if (pToRemote_len_)
+                 do_sdToRemote_read();
+         });
 }
 
-// Remote server is trying to send data to the client.  Splice it to the
-// pToClient_ pipe.
-void SocksClient::
-remote_socket_read_handler(const boost::system::error_code &ec,
-                           std::size_t bytes_xferred)
+// Write data read from the connect socket to the client socket.
+void SocksClient::do_remote_socket_read()
 {
-    remote_socket_reading_ = false;
-    if (ec) {
-        close_remote_socket();
-        conditional_terminate();
+    if (remote_socket_reading_)
         return;
-    }
-    auto bytes = remote_socket_.available();
-    if (!bytes) {
-        close_remote_socket();
-        conditional_terminate();
+    remote_socket_reading_ = true;
+    auto sfd = shared_from_this();
+    // Remote server is trying to send data to the client.  Splice it to the
+    // pToClient_ pipe.
+    remote_socket_.async_read_some
+        (ba::null_buffers(),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             remote_socket_reading_ = false;
+             if (ec) {
+                 close_remote_socket();
+                 conditional_terminate();
+                 return;
+             }
+             auto bytes = remote_socket_.available();
+             if (!bytes) {
+                 close_remote_socket();
+                 conditional_terminate();
+                 return;
+             }
+             try {
+                 //std::cerr << "remote->rcPIPE: ";
+                 pToClient_len_ += spliceit(remote_socket_.native(),
+                                            pToClient_[1], bytes);
+             } catch (const std::runtime_error &e) {
+                 std::cerr << "remote_socket_read_handler() TERMINATE: "
+                           << e.what() << "\n";
+                 close_remote_socket();
+                 conditional_terminate();
+                 return;
+             }
+             splicePipeToClient();
+             do_remote_socket_read();
+             if (pToClient_len_)
+                 do_sdToClient_read();
+         });
+}
+
+void SocksClient::do_sdToRemote_read()
+{
+    if (pToRemote_reading_)
         return;
-    }
-    try {
-        //std::cerr << "remote->rcPIPE: ";
-        pToClient_len_ += spliceit(remote_socket_.native(), pToClient_[1], bytes);
-    } catch (const std::runtime_error &e) {
-        std::cerr << "remote_socket_read_handler() TERMINATE: "<< e.what() << "\n";
-        close_remote_socket();
-        conditional_terminate();
+    pToRemote_reading_ = true;
+    //std::cerr << "Polling sdToRemote for reads.\n";
+    auto sfd = shared_from_this();
+    // The pToRemote_ pipe has data.  Splice it to remote_socket_.
+    sdToRemote_.async_read_some
+        (ba::null_buffers(),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             pToRemote_reading_ = false;
+             if (ec) {
+                 std::cerr << "crPIPE error: "
+                           << boost::system::system_error(ec).what() << "\n";
+                 terminate();
+                 return;
+             }
+             splicePipeToRemote();
+             if (markedForDeath_ && pToRemote_len_ == 0) {
+                 conditional_terminate();
+                 return;
+             }
+             if (pToRemote_len_ > 0)
+                 do_sdToRemote_read();
+             else if (markedForDeath_)
+                 conditional_terminate();
+
+         });
+}
+
+void SocksClient::do_sdToClient_read()
+{
+    if (pToClient_reading_)
         return;
-    }
-    splicePipeToClient();
-    do_remote_socket_read();
-    if (pToClient_len_)
-        do_sdToClient_read();
+    pToClient_reading_ = true;
+    //std::cerr << "Polling sdToClient for reads.\n";
+    auto sfd = shared_from_this();
+    // The pToClient_ pipe has data.  Splice it to client_socket_.
+    sdToClient_.async_read_some
+        (ba::null_buffers(),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             pToClient_reading_ = false;
+             if (ec) {
+                 std::cerr << "rcPIPE error: "
+                           << boost::system::system_error(ec).what() << "\n";
+                 terminate();
+                 return;
+             }
+             splicePipeToClient();
+             if (pToClient_len_ > 0)
+                 do_sdToClient_read();
+             else if (markedForDeath_)
+                 conditional_terminate();
+         });
 }
 
 void SocksClient::splicePipeToClient()
@@ -862,7 +883,7 @@ void SocksClient::splicePipeToClient()
         pToClient_len_ -= spliceit(pToClient_[0], client_socket_.native(),
                                  pToClient_len_);
     } catch (const std::runtime_error &e) {
-        std::cerr << "sdToClient_read_handler() TERMINATE: "<< e.what() << "\n";
+        std::cerr << "splicePipeToClient() TERMINATE: "<< e.what() << "\n";
         terminate();
         return;
     }
@@ -879,50 +900,10 @@ void SocksClient::splicePipeToRemote()
         pToRemote_len_ -= spliceit(pToRemote_[0], remote_socket_.native(),
                                  pToRemote_len_);
     } catch (const std::runtime_error &e) {
-        std::cerr << "sdToRemote_read_handler() TERMINATE: "<< e.what() << "\n";
+        std::cerr << "splicePipeToRemote() TERMINATE: "<< e.what() << "\n";
         terminate();
         return;
     }
-}
-
-// The pToRemote_ pipe has data.  Splice it to remote_socket_.
-void SocksClient::sdToRemote_read_handler(const boost::system::error_code &ec,
-                                        std::size_t bytes_xferred)
-{
-    pToRemote_reading_ = false;
-    if (ec) {
-        std::cerr << "crPIPE error: " << boost::system::system_error(ec).what()
-                  << "\n";
-        terminate();
-        return;
-    }
-    splicePipeToRemote();
-    if (markedForDeath_ && pToRemote_len_ == 0) {
-        conditional_terminate();
-        return;
-    }
-    if (pToRemote_len_ > 0)
-        do_sdToRemote_read();
-    else if (markedForDeath_)
-        conditional_terminate();
-}
-
-// The pToClient_ pipe has data.  Splice it to client_socket_.
-void SocksClient::sdToClient_read_handler(const boost::system::error_code &ec,
-                                        std::size_t bytes_xferred)
-{
-    pToClient_reading_ = false;
-    if (ec) {
-        std::cerr << "rcPIPE error: " << boost::system::system_error(ec).what()
-                  << "\n";
-        terminate();
-        return;
-    }
-    splicePipeToClient();
-    if (pToClient_len_ > 0)
-        do_sdToClient_read();
-    else if (markedForDeath_)
-        conditional_terminate();
 }
 #else
 // Write data read from the client socket to the connect socket.
@@ -930,11 +911,31 @@ void SocksClient::do_client_socket_connect_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = client_buf_.prepare(buffer_chunk_size);
+    auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(ibm),
-         boost::bind(&SocksClient::client_socket_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 terminate();
+                 return;
+             }
+             client_buf_.commit(bytes_xferred);
+             // Client is trying to send data to the remote server.  Write it
+             // to the remote_socket_.
+             ba::async_write(remote_socket_, client_buf_,
+                             [this, sfd](const boost::system::error_code &ec,
+                                         std::size_t bytes_xferred)
+                             {
+                                 if (ec) {
+                                     terminate();
+                                     return;
+                                 }
+                                 client_buf_.consume(bytes_xferred);
+                                 do_client_socket_connect_read();
+                             });
+         });
 }
 
 // Write data read from the connect socket to the client socket.
@@ -942,71 +943,33 @@ void SocksClient::do_remote_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = remote_buf_.prepare(buffer_chunk_size);
+    auto sfd = shared_from_this();
     remote_socket_.async_read_some
         (ba::buffer(ibm),
-         boost::bind(&SocksClient::remote_socket_read_handler,
-                     shared_from_this(), ba::placeholders::error,
-                     ba::placeholders::bytes_transferred));
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 terminate();
+                 return;
+             }
+             remote_buf_.commit(bytes_xferred);
+             // Remote server is trying to send data to the client.  Write it
+             // to the client_socket_.
+             ba::async_write(client_socket_, remote_buf_,
+                             [this, sfd](const boost::system::error_code &ec,
+                                         std::size_t bytes_xferred)
+                             {
+                                 if (ec) {
+                                     terminate();
+                                     return;
+                                 }
+                                 remote_buf_.consume(bytes_xferred);
+                                 do_remote_socket_read();
+                             });
+         });
 }
 
-// Client is trying to send data to the remote server.  Write it to the
-// remote_socket_.
-void SocksClient::client_socket_read_handler(const boost::system::error_code &ec,
-                                          std::size_t bytes_xferred)
-{
-    if (ec) {
-        terminate();
-        return;
-    }
-    client_buf_.commit(bytes_xferred);
-    ba::async_write(remote_socket_,
-                    client_buf_,
-                    boost::bind(&SocksClient::handle_client_write,
-                                shared_from_this(),
-                                ba::placeholders::error,
-                                ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::handle_client_write(const boost::system::error_code &ec,
-                                      std::size_t bytes_xferred)
-{
-    if (ec) {
-        terminate();
-        return;
-    }
-    client_buf_.consume(bytes_xferred);
-    do_client_socket_connect_read();
-}
-
-// Remote server is trying to send data to the client.  Write it to the
-// client_socket_.
-void SocksClient::
-remote_socket_read_handler(const boost::system::error_code &ec,
-                                std::size_t bytes_xferred)
-{
-    if (ec) {
-        terminate();
-        return;
-    }
-    remote_buf_.commit(bytes_xferred);
-    ba::async_write(client_socket_,
-                    remote_buf_,
-                    boost::bind(&SocksClient::handle_remote_write,
-                                shared_from_this(),
-                                ba::placeholders::error,
-                                ba::placeholders::bytes_transferred));
-}
-
-void SocksClient::handle_remote_write(const boost::system::error_code &ec,
-                                      std::size_t bytes_xferred)
-{
-    if (ec) {
-        terminate();
-        return;
-    }
-    remote_buf_.consume(bytes_xferred);
-    do_remote_socket_read();
-}
 #endif
 
 bool SocksClient::is_bind_client_allowed()
@@ -1062,26 +1025,24 @@ void SocksClient::dispatch_tcp_bind()
     conntracker_bindlisten->store(shared_from_this());
     conntracker_hs->remove(this);
 
+    auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
         (remote_socket_,
-         boost::bind(&SocksClient::bind_accept_handler, shared_from_this(),
-                     ba::placeholders::error));
-    send_reply(RplSuccess);
-}
-
-void SocksClient::bind_accept_handler(const boost::system::error_code &ec)
-{
-    if (ec) {
-        send_reply(RplFail);
-        bound_.reset();
-        return;
-    }
-    std::cout << "Accepted a connection to a BIND socket.\n";
-    set_remote_socket_options();
-    conntracker_bind.store(shared_from_this());
-    if (!init_splice_pipes())
-        return;
-    bound_.reset();
+         [this, sfd](const boost::system::error_code &ec)
+         {
+             if (ec) {
+                 send_reply(RplFail);
+                 bound_.reset();
+                 return;
+             }
+             std::cout << "Accepted a connection to a BIND socket.\n";
+             set_remote_socket_options();
+             conntracker_bind.store(shared_from_this());
+             if (!init_splice_pipes())
+                 return;
+             bound_.reset();
+             send_reply(RplSuccess);
+         });
     send_reply(RplSuccess);
 }
 
@@ -1139,38 +1100,35 @@ void SocksClient::send_reply(ReplyCode replycode)
     write_reply();
 }
 
-void SocksClient::handle_write_reply(const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
-{
-    writePending_ = false;
-    if (ec || sentReplyType_ != RplSuccess) {
-        // std::cout << "Connection killed before handshake completed from "
-        //     << client_socket_.remote_endpoint().address()
-        //     << " to "
-        //     << (addr_type_ != AddrDNS ? dst_address_.to_string()
-        //         : dst_hostname_)
-        //     << ":" << dst_port_
-        //     << " with reply code='" << replyCodeString[sentReplyType_]
-        //     << "'\n";
-        terminate();
-        return;
-    }
-    outbuf_.erase(0, bytes_xferred);
-    if (!bound_) {
-        do_client_socket_connect_read();
-        do_remote_socket_read();
-    }
-}
-
 void SocksClient::write_reply()
 {
     assert(!writePending_);
     writePending_ = true;
-    ba::async_write(client_socket_, ba::buffer(outbuf_, outbuf_.size()),
-                    boost::bind(&SocksClient::handle_write_reply,
-                                shared_from_this(),
-                                ba::placeholders::error,
-                                ba::placeholders::bytes_transferred));
+    auto sfd = shared_from_this();
+    ba::async_write
+        (client_socket_, ba::buffer(outbuf_, outbuf_.size()),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             writePending_ = false;
+             if (ec || sentReplyType_ != RplSuccess) {
+                 // std::cout << "Connection killed before handshake completed from "
+                 //     << client_socket_.remote_endpoint().address()
+                 //     << " to "
+                 //     << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                 //         : dst_hostname_)
+                 //     << ":" << dst_port_
+                 //     << " with reply code='" << replyCodeString[sentReplyType_]
+                 //     << "'\n";
+                 terminate();
+                 return;
+             }
+             outbuf_.erase(0, bytes_xferred);
+             if (!bound_) {
+                 do_client_socket_connect_read();
+                 do_remote_socket_read();
+             }
+         });
 }
 
 ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
@@ -1188,21 +1146,18 @@ void ClientListener::start_accept()
 {
     auto conn = std::make_shared<SocksClient>(acceptor_.get_io_service());
     // std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
-    acceptor_.async_accept(conn->client_socket(), endpoint_,
-                           boost::bind(&ClientListener::accept_handler,
-                                       this, conn,
-                                       ba::placeholders::error));
-}
-
-void ClientListener::accept_handler(std::shared_ptr<SocksClient> conn,
-                                    const boost::system::error_code &ec)
-{
-    if (!ec) {
-        // std::cout << "Stored a new SocksClient=" << conn.get() << ".\n";
-        conntracker_hs->store(conn);
-        conn->start_client_socket();
-    } else
-        conntracker_hs->remove(conn.get());
-    start_accept();
+    acceptor_.async_accept
+        (conn->client_socket(), endpoint_,
+         [this, conn](const boost::system::error_code &ec)
+         {
+             if (!ec) {
+                 // std::cout << "Stored a new SocksClient="
+                 //           << conn.get() << ".\n";
+                 conntracker_hs->store(conn);
+                 conn->start_client_socket();
+             } else
+                 conntracker_hs->remove(conn.get());
+             start_accept();
+         });
 }
 
