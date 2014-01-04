@@ -33,9 +33,7 @@
 #include <memory>
 #include <netdb.h>
 
-#include <boost/array.hpp>
 #include <boost/asio.hpp>
-#include <boost/enable_shared_from_this.hpp>
 
 enum SocksClientType {
     SCT_INIT = 0,
@@ -129,7 +127,7 @@ private:
         boost::asio::ip::tcp::endpoint local_endpoint_;
     };
 
-    boost::array<char, 32> inBytes_;
+    std::array<char, 32> inBytes_;
     std::string inbuf_;
     std::string dst_hostname_;
     std::string outbuf_;
