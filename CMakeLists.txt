@@ -118,6 +118,7 @@ add_subdirectory(ncmlib)
 find_package( Boost COMPONENTS system program_options )
 link_directories ( ${Boost_LIBRARY_DIRS} )
 include_directories ( ${Boost_INCLUDE_DIRS} )
+find_package(Threads)
 
 set(NSOCKS_SRCS
   socksclient.cpp
@@ -125,5 +126,6 @@ set(NSOCKS_SRCS
   )
 
 add_executable(nsocks ${NSOCKS_SRCS})
-target_link_libraries(nsocks ${Boost_LIBRARIES} ncmlib)
+target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ${Boost_LIBRARIES}
+                             ncmlib)
 
