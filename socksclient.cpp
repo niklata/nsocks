@@ -200,16 +200,7 @@ SocksClient::SocksClient(ba::io_service &io_service)
 
 SocksClient::~SocksClient()
 {
-#ifdef USE_SPLICE
-    if (pToRemote_init_) {
-        close(pToRemote_[0]);
-        close(pToRemote_[1]);
-    }
-    if (pToClient_init_) {
-        close(pToClient_[0]);
-        close(pToClient_[1]);
-    }
-#endif
+    terminate();
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
@@ -263,6 +254,16 @@ void SocksClient::terminate()
         return;
     close_remote_socket();
     close_client_socket();
+#ifdef USE_SPLICE
+    if (pToRemote_init_) {
+        close(pToRemote_[0]);
+        close(pToRemote_[1]);
+    }
+    if (pToClient_init_) {
+        close(pToClient_[0]);
+        close(pToClient_[1]);
+    }
+#endif
     switch (client_type_) {
     case SCT_INIT:
         conntracker_hs->remove(this);
