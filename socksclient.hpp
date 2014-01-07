@@ -67,6 +67,11 @@ public:
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
     }
+    bool matches_dst(const boost::asio::ip::address &addr, uint16_t port);
+    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint()
+    {
+        return remote_socket_.local_endpoint();
+    }
 
 private:
     enum ParseState {
@@ -180,7 +185,6 @@ private:
         remote_socket_.non_blocking(true);
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
     }
-
     void read_handshake();
     void write_greet();
     bool process_input();

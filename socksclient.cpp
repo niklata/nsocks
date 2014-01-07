@@ -33,7 +33,7 @@
 #include <sys/types.h>
 #include <pwd.h>
 
-#include <boost/bind.hpp>
+#include <boost/optional.hpp>
 #include <boost/lexical_cast.hpp>
 
 #include "socksclient.hpp"
@@ -128,6 +128,15 @@ public:
     bool remove(SocksClient* sc)
     {
         return !!hash_.erase(sc);
+    }
+    boost::optional<std::shared_ptr<SocksClient>>
+    find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
+    {
+        for (auto &i: hash_) {
+            if (i.second->matches_dst(addr, port))
+                return i.second;
+        }
+        return boost::optional<std::shared_ptr<SocksClient>>();
     }
     std::size_t size() { return hash_.size(); }
 private:
@@ -1007,20 +1016,37 @@ bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
     return false;
 }
 
+bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
+                              uint16_t port)
+{
+    if (!nk::asio::compare_ip(addr, dst_address_, 128))
+        return false;
+    if (dst_port_ != port)
+        return false;
+    return true;
+}
+
 void SocksClient::dispatch_tcp_bind()
 {
-    if (!is_bind_client_allowed()) {
-        send_reply(RplDeny);
-        return;
+    ba::ip::tcp::endpoint bind_ep;
+    auto rcnct = conntracker_connect.find_by_addr_port
+        (dst_address_, dst_port_);
+    if (rcnct) {
+        // Bind to the local IP that is associated with the
+        // client-specified dst_address_ and dst_port_.
+        auto laddr((*rcnct)->remote_socket_local_endpoint().address());
+        bind_ep = ba::ip::tcp::endpoint(laddr, BPA.get_port());
+    } else {
+        if (!is_bind_client_allowed()) {
+            send_reply(RplDeny);
+            return;
+        }
+        bind_ep = ba::ip::tcp::endpoint
+            (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
+             BPA.get_port());
     }
 
-    // XXX: Use the remote interface that is associated with the client
-    //      -specified dst_address_ and dst_port_.
-    //
-    if (!create_bind_socket
-        (ba::ip::tcp::endpoint(!g_disable_ipv6 ? ba::ip::tcp::v6()
-                                               : ba::ip::tcp::v4(),
-                               BPA.get_port())))
+    if (!create_bind_socket(bind_ep))
         return;
     conntracker_bindlisten->store(shared_from_this());
     conntracker_hs->remove(this);
