@@ -202,6 +202,11 @@ static po::variables_map fetch_options(int ac, char *av[])
          "seconds between gc sweeps of unfinished handshakes")
         ("bindlisten-gc-interval", po::value<std::size_t>()->default_value(180),
          "seconds between gc sweeps of listening bind sockets")
+        ("bind-lowest-port", po::value<uint16_t>(),
+         "lowest port that will be assigned to bind requests")
+        ("bind-highest-port", po::value<uint16_t>(),
+         "highest port that will be assigned to bind requests")
+        ("disable-bind", "ignore client bind requests")
         ;
 
     po::options_description cmdline_options;
@@ -363,8 +368,17 @@ static void process_options(int ac, char *av[])
         g_disable_ipv6 = true;
     if (vm.count("prefer-ipv4"))
         g_prefer_ipv4 = true;
+    if (vm.count("disable-bind"))
+        g_disable_bind = true;
+
+    uint16_t bind_lowest_port(0), bind_highest_port(0);
+    if (vm.count("bind-lowest-port"))
+        bind_lowest_port = vm["bind-lowest-port"].as<uint16_t>();
+    if (vm.count("bind-highest-port"))
+        bind_highest_port = vm["bind-lowest-port"].as<uint16_t>();
 
     init_conntrackers(hs_secs, bindlisten_secs);
+    init_bind_port_assigner(bind_lowest_port, bind_highest_port);
 
     if (!addrlist.size()) {
         auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);

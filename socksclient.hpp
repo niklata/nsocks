@@ -213,6 +213,7 @@ private:
     void conditional_terminate();
     void close_client_socket();
     void close_remote_socket();
+    void close_bind_listen_socket();
 
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
@@ -237,8 +238,10 @@ void set_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
 
 extern void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
+extern void init_bind_port_assigner(uint16_t lowport, uint16_t highport);
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;
+extern bool g_disable_bind;
 
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;

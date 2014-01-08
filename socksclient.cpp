@@ -54,6 +54,7 @@ extern bool gChrooted;
 
 bool g_prefer_ipv4 = false;
 bool g_disable_ipv6 = false;
+bool g_disable_bind = false;
 
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
@@ -167,7 +168,11 @@ class BindPortAssigner
 {
 public:
     BindPortAssigner(uint16_t start, uint16_t end) :
-        start_port_(start), end_port_(end), current_port_(start) {}
+        start_port_(start), end_port_(end), current_port_(start)
+    {
+        if (start_port_ > end_port_)
+            std::swap(start_port_, end_port_);
+    }
     uint16_t get_port()
     {
         uint16_t port = current_port_++;
@@ -175,13 +180,30 @@ public:
             current_port_ = start_port_;
         return port;
     }
+    void release_port(uint16_t port)
+    {
+    }
 private:
     uint16_t start_port_;
     uint16_t end_port_;
     uint16_t current_port_;
 };
 
-static BindPortAssigner BPA(48000, 49000);
+static std::unique_ptr<BindPortAssigner> BPA;
+
+void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
+{
+    if (g_disable_bind)
+        return;
+    if (lowport < 1024 || highport < 1024) {
+        std::cout << "For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
+                  << "must both be set to non-equal values >= 1024.  BIND requests will be\n"
+                  << "disabled until this configuration problem is corrected.\n";
+        g_disable_bind = true;
+        return;
+    }
+    BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+}
 
 SocksClient::SocksClient(ba::io_service &io_service)
         : client_socket_(io_service), remote_socket_(io_service),
@@ -248,6 +270,16 @@ void SocksClient::close_remote_socket()
     } catch (...) {}
 }
 
+void SocksClient::close_bind_listen_socket()
+{
+    if (!bound_)
+        return;
+    assert(BPA);
+    auto bind_port = bound_->local_endpoint_.port();
+    bound_.reset();
+    BPA->release_port(bind_port);
+}
+
 void SocksClient::terminate()
 {
     if (state_ == STATE_TERMINATED)
@@ -267,8 +299,10 @@ void SocksClient::terminate()
     switch (client_type_) {
     case SCT_INIT:
         conntracker_hs->remove(this);
-        if (cmd_code_ == CmdTCPBind)
+        if (cmd_code_ == CmdTCPBind) {
+            close_bind_listen_socket();
             conntracker_bindlisten->remove(this);
+        }
         break;
     case SCT_CONNECT: conntracker_connect.remove(this); break;
     case SCT_BIND: conntracker_bind.remove(this); break;
@@ -1044,6 +1078,11 @@ bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
 
 void SocksClient::dispatch_tcp_bind()
 {
+    if (g_disable_bind) {
+        send_reply(RplDeny);
+        return;
+    }
+    assert(BPA);
     ba::ip::tcp::endpoint bind_ep;
     auto rcnct = conntracker_connect.find_by_addr_port
         (dst_address_, dst_port_);
@@ -1051,7 +1090,7 @@ void SocksClient::dispatch_tcp_bind()
         // Bind to the local IP that is associated with the
         // client-specified dst_address_ and dst_port_.
         auto laddr((*rcnct)->remote_socket_local_endpoint().address());
-        bind_ep = ba::ip::tcp::endpoint(laddr, BPA.get_port());
+        bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
     } else {
         if (!is_bind_client_allowed()) {
             send_reply(RplDeny);
@@ -1059,7 +1098,7 @@ void SocksClient::dispatch_tcp_bind()
         }
         bind_ep = ba::ip::tcp::endpoint
             (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
-             BPA.get_port());
+             BPA->get_port());
     }
 
     if (!create_bind_socket(bind_ep))
@@ -1080,9 +1119,10 @@ void SocksClient::dispatch_tcp_bind()
              std::cout << "Accepted a connection to a BIND socket.\n";
              set_remote_socket_options();
              conntracker_bind.store(shared_from_this());
+             conntracker_bindlisten->remove(this);
+             close_bind_listen_socket();
              if (!init_splice_pipes())
                  return;
-             bound_.reset();
              send_reply(RplSuccess);
          });
     send_reply(RplSuccess);
