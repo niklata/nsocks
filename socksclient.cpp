@@ -798,7 +798,7 @@ void SocksClient::do_client_socket_connect_read()
                  pToRemote_len_ += spliceit(client_socket_.native(),
                                             pToRemote_[1], bytes);
              } catch (const std::runtime_error &e) {
-                 std::cerr << "client_socket_read_handler() TERMINATE: "
+                 std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
                  close_client_socket();
                  conditional_terminate();
@@ -812,7 +812,8 @@ void SocksClient::do_client_socket_connect_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
-                 terminate();
+                 close_client_socket();
+                 conditional_terminate();
                  return;
              }
          });
@@ -849,7 +850,7 @@ void SocksClient::do_remote_socket_read()
                  pToClient_len_ += spliceit(remote_socket_.native(),
                                             pToClient_[1], bytes);
              } catch (const std::runtime_error &e) {
-                 std::cerr << "remote_socket_read_handler() TERMINATE: "
+                 std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
                  close_remote_socket();
                  conditional_terminate();
@@ -863,7 +864,8 @@ void SocksClient::do_remote_socket_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
-                 terminate();
+                 close_remote_socket();
+                 conditional_terminate();
                  return;
              }
          });
