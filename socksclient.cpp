@@ -888,7 +888,8 @@ void SocksClient::do_sdToRemote_read()
              if (ec) {
                  std::cerr << "crPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
-                 terminate();
+                 close_remote_socket();
+                 conditional_terminate();
                  return;
              }
              try {
@@ -904,7 +905,8 @@ void SocksClient::do_sdToRemote_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToRemote_read() TERMINATE: "
                            << e.what() << "\n";
-                 terminate();
+                 close_remote_socket();
+                 conditional_terminate();
                  return;
              }
          });
@@ -927,7 +929,8 @@ void SocksClient::do_sdToClient_read()
              if (ec) {
                  std::cerr << "rcPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
-                 terminate();
+                 close_client_socket();
+                 conditional_terminate();
                  return;
              }
              try {
@@ -939,7 +942,8 @@ void SocksClient::do_sdToClient_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToClient_read() TERMINATE: "
                            << e.what() << "\n";
-                 terminate();
+                 close_client_socket();
+                 conditional_terminate();
                  return;
              }
          });
