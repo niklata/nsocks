@@ -34,6 +34,7 @@
 #include <netdb.h>
 
 #include <boost/asio.hpp>
+#include <boost/utility.hpp>
 
 enum SocksClientType {
     SCT_INIT = 0,
@@ -43,7 +44,7 @@ enum SocksClientType {
 };
 
 class SocksClient
-    : public std::enable_shared_from_this<SocksClient>
+    : public std::enable_shared_from_this<SocksClient>, boost::noncopyable
 {
 public:
     enum SocksClientState {
@@ -224,7 +225,7 @@ private:
     ParseState parse_request();
 };
 
-class ClientListener
+class ClientListener : boost::noncopyable
 {
 public:
     ClientListener(const boost::asio::ip::tcp::endpoint &endpoint);

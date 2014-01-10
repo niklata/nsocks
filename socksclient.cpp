@@ -69,7 +69,7 @@ void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
-class ephConnTracker
+class ephConnTracker : boost::noncopyable
 {
 public:
     ephConnTracker(ba::io_service &iosrv, std::size_t cyclefreq)
@@ -118,7 +118,7 @@ private:
 static std::unique_ptr<ephConnTracker> conntracker_hs;
 static std::unique_ptr<ephConnTracker> conntracker_bindlisten;
 
-class connTracker
+class connTracker : boost::noncopyable
 {
 public:
     explicit connTracker(SocksClientType client_type,
@@ -168,7 +168,7 @@ g_dst_deny_masks;
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
 
-class BindPortAssigner
+class BindPortAssigner : boost::noncopyable
 {
 public:
     BindPortAssigner(uint16_t start, uint16_t end)
