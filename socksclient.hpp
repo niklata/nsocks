@@ -67,8 +67,9 @@ public:
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
     }
-    bool matches_dst(const boost::asio::ip::address &addr, uint16_t port);
-    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint()
+    bool matches_dst(const boost::asio::ip::address &addr,
+                     uint16_t port) const;
+    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
     {
         return remote_socket_.local_endpoint();
     }
@@ -196,12 +197,12 @@ private:
     void dispatch_tcp_connect();
     void start_tcp_connect_accept();
 
-    bool is_dst_denied();
+    bool is_dst_denied() const;
 
     void do_client_socket_connect_read();
     void do_remote_socket_read();
 
-    bool is_bind_client_allowed();
+    bool is_bind_client_allowed() const;
     void dispatch_tcp_bind();
     bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
     bool dispatch_udp();
@@ -224,7 +225,7 @@ class ClientListener
 {
 public:
     ClientListener(const boost::asio::ip::tcp::endpoint &endpoint);
-    const boost::asio::ip::tcp::acceptor &socket() { return acceptor_; }
+    const boost::asio::ip::tcp::acceptor &socket() const { return acceptor_; }
 private:
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::endpoint endpoint_;

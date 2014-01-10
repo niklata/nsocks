@@ -139,7 +139,7 @@ public:
         }
         return boost::optional<std::shared_ptr<SocksClient>>();
     }
-    std::size_t size() { return hash_.size(); }
+    std::size_t size() const { return hash_.size(); }
 private:
     SocksClientType client_type_;
     std::unique_ptr<ephConnTracker> &ct_;
@@ -636,7 +636,7 @@ void SocksClient::dispatch_connrq()
 static auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
 static auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
 
-bool SocksClient::is_dst_denied()
+bool SocksClient::is_dst_denied() const
 {
     // Deny proxy attempts to the local loopback addresses.
     if (dst_address_ == loopback_addr_v6 ||
@@ -1037,7 +1037,7 @@ void SocksClient::do_remote_socket_read()
 
 #endif
 
-bool SocksClient::is_bind_client_allowed()
+bool SocksClient::is_bind_client_allowed() const
 {
     auto laddr = client_socket_.remote_endpoint().address();
     for (const auto &i: g_client_bind_allow_masks) {
@@ -1073,7 +1073,7 @@ bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
 }
 
 bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
-                              uint16_t port)
+                              uint16_t port) const
 {
     if (!nk::asio::compare_ip(addr, dst_address_, 128))
         return false;
