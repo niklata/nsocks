@@ -763,8 +763,6 @@ bool SocksClient::init_splice_pipes()
 void SocksClient::client_terminate()
 {
     close_client_socket();
-    boost::system::error_code ec;
-    remote_socket_.cancel(ec);
     if (pToRemote_len_)
         do_sdToRemote_read();
     else
@@ -774,8 +772,6 @@ void SocksClient::client_terminate()
 void SocksClient::remote_terminate()
 {
     close_remote_socket();
-    boost::system::error_code ec;
-    client_socket_.cancel(ec);
     if (pToClient_len_)
         do_sdToClient_read();
     else
