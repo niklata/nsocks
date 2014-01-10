@@ -178,7 +178,6 @@ private:
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
-    bool markedForDeath_;
     bool client_socket_reading_;
     bool remote_socket_reading_;
 

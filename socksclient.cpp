@@ -244,8 +244,8 @@ SocksClient::SocksClient(ba::io_service &io_service,
           pToRemote_init_(false), pToClient_init_(false),
           pToRemote_reading_(false), pToClient_reading_(false),
 #endif
-          writePending_(false), auth_none_(false), auth_gssapi_(false),
-          auth_unpw_(false), markedForDeath_(false),
+          writePending_(false),
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_reading_(false), remote_socket_reading_(false)
 {
     client_socket_.non_blocking(true);
@@ -266,7 +266,6 @@ SocksClient::~SocksClient()
 
 void SocksClient::close_client_socket()
 {
-    markedForDeath_ = true;
 #ifdef USE_SPLICE
     try {
         if (sdToClient_.is_open()) {
@@ -285,7 +284,6 @@ void SocksClient::close_client_socket()
 
 void SocksClient::close_remote_socket()
 {
-    markedForDeath_ = true;
 #ifdef USE_SPLICE
     try {
         if (sdToRemote_.is_open()) {
@@ -915,7 +913,7 @@ void SocksClient::do_sdToRemote_read()
                  splicePipeToRemote();
                  if (pToRemote_len_ > 0)
                      do_sdToRemote_read();
-                 else if (markedForDeath_)
+                 else if (!pToClient_init_)
                      terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToRemote_read() TERMINATE: "
@@ -950,7 +948,7 @@ void SocksClient::do_sdToClient_read()
                  splicePipeToClient();
                  if (pToClient_len_ > 0)
                      do_sdToClient_read();
-                 else if (markedForDeath_)
+                 else if (!pToRemote_init_)
                      terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToClient_read() TERMINATE: "
