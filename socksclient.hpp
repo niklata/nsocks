@@ -54,16 +54,12 @@ public:
         STATE_TERMINATED
     };
 
-    SocksClient(boost::asio::io_service &io_service);
+    SocksClient(boost::asio::io_service &io_service,
+                boost::asio::ip::tcp::socket socket);
     ~SocksClient();
 
-    inline void start_client_socket() {
-        client_socket_.non_blocking(true);
-        client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+    inline void start() {
         read_handshake();
-    }
-    inline boost::asio::ip::tcp::socket &client_socket() {
-        return client_socket_;
     }
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
@@ -233,6 +229,7 @@ public:
 private:
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::endpoint endpoint_;
+    boost::asio::ip::tcp::socket socket_;
 
     void start_accept();
 };

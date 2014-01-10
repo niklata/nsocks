@@ -233,8 +233,9 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
     BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-SocksClient::SocksClient(ba::io_service &io_service)
-        : client_socket_(io_service), remote_socket_(io_service),
+SocksClient::SocksClient(ba::io_service &io_service,
+                         ba::ip::tcp::socket socket)
+        : client_socket_(std::move(socket)), remote_socket_(io_service),
           tcp_resolver_(io_service), state_(STATE_WAITGREET),
           client_type_(SCT_INIT),
 #ifdef USE_SPLICE
@@ -246,7 +247,10 @@ SocksClient::SocksClient(ba::io_service &io_service)
           writePending_(false), auth_none_(false), auth_gssapi_(false),
           auth_unpw_(false), markedForDeath_(false),
           client_socket_reading_(false), remote_socket_reading_(false)
-{}
+{
+    client_socket_.non_blocking(true);
+    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+}
 
 SocksClient::~SocksClient()
 {
@@ -1258,7 +1262,7 @@ void SocksClient::write_reply()
 }
 
 ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
-        : acceptor_(io_service), endpoint_(endpoint)
+        : acceptor_(io_service), endpoint_(endpoint), socket_(io_service)
 {
     acceptor_.open(endpoint_.protocol());
     acceptor_.set_option(ba::ip::tcp::acceptor::reuse_address(true));
@@ -1270,19 +1274,19 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
 
 void ClientListener::start_accept()
 {
-    auto conn = std::make_shared<SocksClient>(acceptor_.get_io_service());
     // std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
     acceptor_.async_accept
-        (conn->client_socket(), endpoint_,
-         [this, conn](const boost::system::error_code &ec)
+        (socket_, endpoint_,
+         [this](const boost::system::error_code &ec)
          {
              if (!ec) {
                  // std::cout << "Stored a new SocksClient="
                  //           << conn.get() << ".\n";
+                 auto conn = std::make_shared<SocksClient>
+                     (acceptor_.get_io_service(), std::move(socket_));
                  conntracker_hs->store(conn);
-                 conn->start_client_socket();
-             } else
-                 conntracker_hs->remove(conn.get());
+                 conn->start();
+             }
              start_accept();
          });
 }
