@@ -60,14 +60,9 @@
 
 extern "C" {
 #include "defines.h"
-#include "malloc.h"
 #include "log.h"
 #include "chroot.h"
 #include "pidfile.h"
-#include "strl.h"
-#include "exec.h"
-#include "network.h"
-#include "strlist.h"
 #include "seccomp-bpf.h"
 }
 
@@ -420,7 +415,6 @@ static void process_options(int ac, char *av[])
 
     umask(077);
     fix_signals();
-    ncm_fix_env(nsocks_uid, 0);
 
     // bool v4only = false;
     // nlink = std::unique_ptr<Netlink>(new Netlink(v4only));

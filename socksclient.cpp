@@ -40,10 +40,6 @@
 #include "asio_addrcmp.hpp"
 #include "make_unique.hpp"
 
-extern "C" {
-#include "log.h"
-}
-
 #define MAX_BIND_TRIES 10
 
 namespace ba = boost::asio;
