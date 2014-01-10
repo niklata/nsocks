@@ -35,6 +35,12 @@
 
 #include <boost/optional.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/dynamic_bitset.hpp>
+
+#include <boost/random/random_device.hpp>
+#include <boost/random/mersenne_twister.hpp>
+#include <boost/random/uniform_int.hpp>
+#include <boost/random/variate_generator.hpp>
 
 #include "socksclient.hpp"
 #include "asio_addrcmp.hpp"
@@ -59,6 +65,9 @@ void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 static std::size_t buffer_chunk_size = 4096;
 void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
 #endif
+
+static boost::random::random_device g_random_secure;
+static boost::random::mt19937 g_random_prng(g_random_secure());
 
 class ephConnTracker
 {
@@ -159,30 +168,51 @@ g_dst_deny_masks;
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
 
-// XXX: Make the selection of bound port numbers more unpredictable?
 class BindPortAssigner
 {
 public:
-    BindPortAssigner(uint16_t start, uint16_t end) :
-        start_port_(start), end_port_(end), current_port_(start)
+    BindPortAssigner(uint16_t start, uint16_t end)
+            : ports_used_(end - start + 1), random_portrange_(start, end),
+              random_port_(g_random_prng, random_portrange_),
+              start_port_(start), end_port_(end)
     {
-        if (start_port_ > end_port_)
-            std::swap(start_port_, end_port_);
+        assert(start <= end);
     }
     uint16_t get_port()
     {
-        uint16_t port = current_port_++;
-        if (current_port_ > end_port_ || current_port_ < start_port_)
-            current_port_ = start_port_;
-        return port;
+        auto rp = random_port_();
+        for (int i = rp; i <= end_port_; ++i) {
+            auto p = i - start_port_;
+            if (ports_used_[p])
+                continue;
+            ports_used_[p] = 1;
+            return p;
+        }
+        for (int i = start_port_; i < rp; ++i) {
+            auto p = i - start_port_;
+            if (ports_used_[p])
+                continue;
+            ports_used_[p] = 1;
+            return p;
+        }
+        throw std::out_of_range("no free ports");
     }
     void release_port(uint16_t port)
     {
+        if (port < start_port_ || port > end_port_) {
+            std::cerr << "BindPortAssigner::release_port: port="
+                      << port << " out of range\n";
+            return;
+        }
+        ports_used_[port - start_port_] = 0;
     }
 private:
+    boost::dynamic_bitset<> ports_used_;
+    boost::uniform_int<uint16_t> random_portrange_;
+    boost::variate_generator<boost::mt19937&, boost::uniform_int<uint16_t>>
+        random_port_;
     uint16_t start_port_;
     uint16_t end_port_;
-    uint16_t current_port_;
 };
 
 static std::unique_ptr<BindPortAssigner> BPA;
@@ -198,6 +228,8 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
         g_disable_bind = true;
         return;
     }
+    if (lowport > highport)
+        std::swap(lowport, highport);
     BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
@@ -1088,19 +1120,25 @@ void SocksClient::dispatch_tcp_bind()
     ba::ip::tcp::endpoint bind_ep;
     auto rcnct = conntracker_connect.find_by_addr_port
         (dst_address_, dst_port_);
-    if (rcnct) {
-        // Bind to the local IP that is associated with the
-        // client-specified dst_address_ and dst_port_.
-        auto laddr((*rcnct)->remote_socket_local_endpoint().address());
-        bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
-    } else {
-        if (!is_bind_client_allowed()) {
-            send_reply(RplDeny);
-            return;
+    try {
+        if (rcnct) {
+            // Bind to the local IP that is associated with the
+            // client-specified dst_address_ and dst_port_.
+            auto laddr((*rcnct)->remote_socket_local_endpoint().address());
+            bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
+        } else {
+            if (!is_bind_client_allowed()) {
+                send_reply(RplDeny);
+                return;
+            }
+            bind_ep = ba::ip::tcp::endpoint
+                (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
+                 BPA->get_port());
         }
-        bind_ep = ba::ip::tcp::endpoint
-            (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
-             BPA->get_port());
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a local endpoint.
+        send_reply(RplFail);
+        return;
     }
 
     if (!create_bind_socket(bind_ep))
