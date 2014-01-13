@@ -130,11 +130,35 @@ private:
         boost::asio::ip::tcp::endpoint local_endpoint_;
     };
 
+    struct UDPAssoc {
+        UDPAssoc(boost::asio::io_service &io_service,
+                 boost::asio::ip::udp::endpoint client_ep,
+                 boost::asio::ip::udp::endpoint remote_ep,
+                 boost::asio::ip::udp::endpoint client_remote_ep)
+          : client_endpoint_(client_ep), remote_endpoint_(remote_ep),
+            client_remote_endpoint_(client_remote_ep),
+            client_socket_(io_service, client_ep),
+            remote_socket_(io_service, remote_ep)
+        {}
+        boost::asio::ip::udp::endpoint client_endpoint_;
+        boost::asio::ip::udp::endpoint remote_endpoint_;
+        boost::asio::ip::udp::endpoint client_remote_endpoint_;
+        boost::asio::ip::udp::endpoint csender_endpoint_;
+        boost::asio::ip::udp::endpoint rsender_endpoint_;
+        boost::asio::ip::udp::socket client_socket_;
+        boost::asio::ip::udp::socket remote_socket_;
+        std::vector<uint8_t> inbuf_;
+        std::vector<uint8_t> outbuf_;
+        std::string out_header_;
+        std::vector<boost::asio::const_buffer> out_bufs_;
+    };
+
     std::array<char, 32> inBytes_;
     std::string inbuf_;
     std::string dst_hostname_;
     std::string outbuf_;
     std::unique_ptr<BoundSocket> bound_;
+    std::unique_ptr<UDPAssoc> udp_;
     boost::asio::ip::address local_address_; // XXX: Populate this.
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
@@ -197,7 +221,7 @@ private:
     void dispatch_tcp_connect();
     void start_tcp_connect_accept();
 
-    bool is_dst_denied() const;
+    bool is_dst_denied(const boost::asio::ip::address &addr) const;
 
     void do_client_socket_connect_read();
     void do_remote_socket_read();
@@ -205,7 +229,13 @@ private:
     bool is_bind_client_allowed() const;
     void dispatch_tcp_bind();
     bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
-    bool dispatch_udp();
+
+    bool is_udp_client_allowed(boost::asio::ip::address laddr) const;
+    void dispatch_udp();
+    void udp_tcp_socket_read();
+    void udp_client_socket_read();
+    void udp_remote_socket_read();
+
     void send_reply(ReplyCode replycode);
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
     void write_reply();
@@ -214,6 +244,7 @@ private:
     void close_client_socket();
     void close_remote_socket();
     void close_bind_listen_socket();
+    void close_udp_sockets();
 
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
@@ -233,21 +264,23 @@ private:
     void start_accept();
 };
 
-#ifndef USE_SPLICE
 void set_buffer_chunk_size(std::size_t size);
-#endif
 void set_listen_queuelen(std::size_t len);
 
 extern void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
 extern void init_bind_port_assigner(uint16_t lowport, uint16_t highport);
+extern void init_udp_associate_assigner(uint16_t lowport, uint16_t highport);
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;
 extern bool g_disable_bind;
+extern bool g_disable_udp;
 
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
+extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_udp_allow_masks;
 
 #endif /* NK_SOCKSCLIENT_H */
 

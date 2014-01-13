@@ -181,10 +181,8 @@ static po::variables_map fetch_options(int ac, char *av[])
          "user name that nsocks should run as")
         ("group,g", po::value<std::string>(),
          "group name that nsocks should run as")
-#ifndef USE_SPLICE
         ("chunksize,S", po::value<std::size_t>(),
          "size of memory buffer used to proxy data between sockets")
-#endif
         ("listenqueue,L", po::value<std::size_t>(),
          "maximum number of pending client connections")
         ("disable-ipv6", "disable proxy to ipv6 destinations")
@@ -202,6 +200,9 @@ static po::variables_map fetch_options(int ac, char *av[])
         ("bind-highest-port", po::value<uint16_t>(),
          "highest port that will be assigned to bind requests")
         ("disable-bind", "ignore client bind requests")
+        ("udp-allow-src", po::value<std::vector<std::string>>()->composing(),
+         "allows udp associate requests from the specified 'host/netmask'")
+        ("disable-udp", "ignore client udp associate requests")
         ;
 
     po::options_description cmdline_options;
@@ -301,7 +302,8 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
 
 static void process_options(int ac, char *av[])
 {
-    std::vector<std::string> addrlist, denydstlist, bindallowsrclist;
+    std::vector<std::string> addrlist, denydstlist, bindallowsrclist,
+        udpallowsrclist;
     std::string pidfile, chroot_path;
 
     auto vm(fetch_options(ac, av));
@@ -325,6 +327,8 @@ static void process_options(int ac, char *av[])
         denydstlist = vm["deny-dst"].as<std::vector<std::string>>();
     if (vm.count("bind-allow-src"))
         bindallowsrclist = vm["bind-allow-src"].as<std::vector<std::string>>();
+    if (vm.count("udp-allow-src"))
+        udpallowsrclist = vm["udp-allow-src"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
         try {
@@ -349,12 +353,10 @@ static void process_options(int ac, char *av[])
             } else suicide("invalid gid specified");
         }
     }
-#ifndef USE_SPLICE
     if (vm.count("chunksize")) {
         auto t = vm["chunksize"].as<std::size_t>();
         set_buffer_chunk_size(t);
     }
-#endif
     if (vm.count("listenqueue")) {
         auto t = vm["listenqueue"].as<std::size_t>();
         set_listen_queuelen(t);
@@ -365,6 +367,8 @@ static void process_options(int ac, char *av[])
         g_prefer_ipv4 = true;
     if (vm.count("disable-bind"))
         g_disable_bind = true;
+    if (vm.count("disable-udp"))
+        g_disable_udp = true;
 
     uint16_t bind_lowest_port(0), bind_highest_port(0);
     if (vm.count("bind-lowest-port"))
@@ -405,6 +409,8 @@ static void process_options(int ac, char *av[])
     hostmask_vec_add(denydstlist, g_dst_deny_masks, "deny-dst");
     hostmask_vec_add(bindallowsrclist, g_client_bind_allow_masks,
                      "bind-allow-src");
+    hostmask_vec_add(udpallowsrclist, g_client_udp_allow_masks,
+                     "udp-allow-src");
 
     if (gflags_detach)
         if (daemon(0,0))

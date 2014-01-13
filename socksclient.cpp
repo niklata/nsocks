@@ -57,14 +57,13 @@ extern bool gChrooted;
 bool g_prefer_ipv4 = false;
 bool g_disable_ipv6 = false;
 bool g_disable_bind = false;
+bool g_disable_udp = false;
 
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 
-#ifndef USE_SPLICE
 static std::size_t buffer_chunk_size = 4096;
 void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
-#endif
 
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
@@ -167,6 +166,8 @@ std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_udp_allow_masks;
 
 class BindPortAssigner : boost::noncopyable
 {
@@ -216,6 +217,7 @@ private:
 };
 
 static std::unique_ptr<BindPortAssigner> BPA;
+static std::unique_ptr<BindPortAssigner> UPA;
 
 void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
 {
@@ -231,6 +233,23 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
     if (lowport > highport)
         std::swap(lowport, highport);
     BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+}
+
+void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
+{
+    if (g_disable_udp)
+        return;
+    if (lowport < 1024 || highport < 1024) {
+        std::cout << "For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
+                  << "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
+                  << "ASSOCIATE requests will be disabled until this configuration problem\n"
+                  << "is corrected.\n";
+        g_disable_udp = true;
+        return;
+    }
+    if (lowport > highport)
+        std::swap(lowport, highport);
+    UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
 SocksClient::SocksClient(ba::io_service &io_service,
@@ -310,12 +329,26 @@ void SocksClient::close_bind_listen_socket()
     BPA->release_port(bind_port);
 }
 
+void SocksClient::close_udp_sockets()
+{
+    if (!udp_)
+        return;
+    assert(UPA);
+    auto udp_c_port = udp_->client_socket_.local_endpoint().port();
+    auto udp_r_port = udp_->remote_socket_.local_endpoint().port();
+    udp_.reset();
+    UPA->release_port(udp_c_port);
+    UPA->release_port(udp_r_port);
+}
+
 void SocksClient::terminate()
 {
     if (state_ == STATE_TERMINATED)
         return;
     close_remote_socket();
     close_client_socket();
+    close_bind_listen_socket();
+    close_udp_sockets();
 #ifdef USE_SPLICE
     if (pToRemote_init_) {
         close(pToRemote_[0]);
@@ -329,10 +362,8 @@ void SocksClient::terminate()
     switch (client_type_) {
     case SCT_INIT:
         conntracker_hs->remove(this);
-        if (cmd_code_ == CmdTCPBind) {
-            close_bind_listen_socket();
+        if (cmd_code_ == CmdTCPBind)
             conntracker_bindlisten->remove(this);
-        }
         break;
     case SCT_CONNECT: conntracker_connect.remove(this); break;
     case SCT_BIND: conntracker_bind.remove(this); break;
@@ -648,17 +679,16 @@ void SocksClient::dispatch_connrq()
 static auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
 static auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
 
-bool SocksClient::is_dst_denied() const
+bool SocksClient::is_dst_denied(const ba::ip::address &addr) const
 {
     // Deny proxy attempts to the local loopback addresses.
-    if (dst_address_ == loopback_addr_v6 ||
-        nk::asio::compare_ip(dst_address_, loopback_addr_v4, 8))
+    if (addr == loopback_addr_v6 ||
+        nk::asio::compare_ip(addr, loopback_addr_v4, 8))
         return true;
     for (const auto &i: g_dst_deny_masks) {
-        auto r = nk::asio::compare_ip(dst_address_, std::get<0>(i),
-                                      std::get<1>(i));
+        auto r = nk::asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
         if (r) {
-            std::cerr << "DENIED connection to " << dst_address_.to_string() << "\n";
+            std::cerr << "DENIED connection to " << addr.to_string() << "\n";
             return true;
         }
     }
@@ -667,7 +697,7 @@ bool SocksClient::is_dst_denied() const
 
 void SocksClient::dispatch_tcp_connect()
 {
-    if (is_dst_denied()) {
+    if (is_dst_denied(dst_address_)) {
         send_reply(RplDeny);
         return;
     }
@@ -1170,10 +1200,231 @@ void SocksClient::dispatch_tcp_bind()
     send_reply(RplSuccess);
 }
 
-bool SocksClient::dispatch_udp()
+bool SocksClient::is_udp_client_allowed(boost::asio::ip::address laddr) const
 {
-    send_reply(RplCmdNotSupp);
+    for (const auto &i: g_client_udp_allow_masks) {
+        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        if (r)
+            return true;
+    }
+    std::cerr << "DENIED udp associate request from " << laddr.to_string() << "\n";
     return false;
+}
+
+// DST.ADDR and DST.PORT are ignored.
+void SocksClient::dispatch_udp()
+{
+    if (g_disable_udp) {
+        send_reply(RplDeny);
+        return;
+    }
+    assert(UPA);
+    auto client_ep = client_socket_.remote_endpoint();
+    if (!is_udp_client_allowed(client_ep.address())) {
+        send_reply(RplDeny);
+        return;
+    }
+    ba::ip::udp::endpoint udp_client_ep, udp_remote_ep;
+    uint16_t udp_local_port, udp_remote_port;
+    auto laddr(client_socket_.local_endpoint().address());
+    try {
+        udp_local_port = UPA->get_port();
+        udp_client_ep = ba::ip::udp::endpoint(laddr, udp_local_port);
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a local endpoint.
+        send_reply(RplFail);
+        return;
+    }
+    try {
+        udp_remote_port = UPA->get_port();
+        udp_remote_ep = ba::ip::udp::endpoint
+            (!g_disable_ipv6 ? ba::ip::udp::v6() : ba::ip::udp::v4(),
+             udp_remote_port);
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a remote endpoint.
+        UPA->release_port(udp_local_port);
+        send_reply(RplFail);
+        return;
+    }
+
+    try {
+        udp_ = nk::make_unique<UDPAssoc>
+            (io_service, udp_client_ep, udp_remote_ep,
+             ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+    } catch (const boost::system::system_error &) {
+        UPA->release_port(udp_local_port);
+        UPA->release_port(udp_remote_port);
+        send_reply(RplFail);
+        return;
+    }
+
+    conntracker_udp.store(shared_from_this());
+
+    udp_tcp_socket_read();
+    udp_client_socket_read();
+    udp_remote_socket_read();
+
+    send_reply(RplSuccess);
+}
+
+// Listen for data on client_socket_.  If we get EOF, then terminate the
+// entire SocksClient.
+void SocksClient::udp_tcp_socket_read()
+{
+    auto sfd = shared_from_this();
+    client_socket_.async_read_some
+        (ba::buffer(inBytes_),
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 std::cerr << "Client closed TCP socket for UDP associate: "
+                           << boost::system::system_error(ec).what()
+                           << std::endl;
+                 terminate();
+             }
+             udp_tcp_socket_read();
+         });
+}
+
+void SocksClient::udp_client_socket_read()
+{
+    udp_->inbuf_.reserve(buffer_chunk_size);
+    auto sfd = shared_from_this();
+    udp_->client_socket_.async_receive_from
+        (ba::buffer(udp_->inbuf_),
+         udp_->csender_endpoint_,
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 std::cerr << "Error on client UDP socket: "
+                           << boost::system::system_error(ec).what()
+                           << std::endl;
+                 terminate();
+             }
+             if (udp_->csender_endpoint_ == udp_->client_remote_endpoint_) {
+                 std::size_t headersiz = 4;
+                 if (bytes_xferred < 4)
+                     goto nosend;
+                 if (udp_->inbuf_[0] != '\0')
+                     goto nosend;
+                 if (udp_->inbuf_[1] != '\0')
+                     goto nosend;
+                 auto fragn = udp_->inbuf_[2];
+                 // XXX: Support fragments.
+                 if (fragn != '\0')
+                     goto nosend;
+                 auto atyp = udp_->inbuf_[3];
+                 ba::ip::address daddr;
+                 switch (atyp) {
+                     case 1: { // IPv4
+                         if (bytes_xferred < 10)
+                             goto nosend;
+                         ba::ip::address_v4::bytes_type v4o;
+                         memcpy(v4o.data(), udp_->inbuf_.data() + headersiz, 4);
+                         daddr = ba::ip::address_v4(v4o);
+                         headersiz += 4;
+                         break;
+                     }
+                     case 3: // DNS
+                         // XXX: Handle.
+                         goto nosend;
+                         break;
+                     case 4: { // IPv6
+                         if (bytes_xferred < 22)
+                             goto nosend;
+                         ba::ip::address_v6::bytes_type v6o;
+                         memcpy(v6o.data(), udp_->inbuf_.data() + headersiz, 16);
+                         daddr = ba::ip::address_v6(v6o);
+                         headersiz += 16;
+                         break;
+                     }
+                     default: goto nosend; break;
+                 }
+                 if (is_dst_denied(daddr))
+                     goto nosend;
+                 uint16_t dport;
+                 memcpy(&dport, udp_->inbuf_.data() + headersiz, 2);
+                 dport = ntohs(dport);
+                 headersiz += 2;
+                 ba::ip::udp::endpoint destination_ep(daddr, dport);
+                 // Forward it to the remote socket.
+                 udp_->remote_socket_.async_send_to
+                     (ba::buffer(udp_->inbuf_.data() + headersiz,
+                                 bytes_xferred - headersiz),
+                      destination_ep, 0,
+                      [this, sfd](const boost::system::error_code &ec,
+                                  std::size_t bytes_xferred)
+                      {
+                          if (ec) {
+                              terminate();
+                              return;
+                          }
+                          udp_client_socket_read();
+                      });
+                 return;
+             }
+           nosend:
+             udp_client_socket_read();
+         });
+}
+
+void SocksClient::udp_remote_socket_read()
+{
+    auto sfd = shared_from_this();
+    udp_->outbuf_.clear();
+    udp_->out_header_.clear();
+    udp_->out_bufs_.clear();
+    udp_->outbuf_.reserve(buffer_chunk_size);
+    udp_->remote_socket_.async_receive_from
+        (ba::buffer(udp_->outbuf_),
+         udp_->rsender_endpoint_,
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 std::cerr << "Error on remote UDP socket: "
+                           << boost::system::system_error(ec).what()
+                           << std::endl;
+                 terminate();
+             }
+             // Attach the header.
+             auto saddr = udp_->rsender_endpoint_.address();
+             uint16_t sport = udp_->rsender_endpoint_.port();
+             if (saddr.is_v4()) {
+                 udp_->out_header_.append("\0\0\0\x01");
+                 auto v4b = saddr.to_v4().to_bytes();
+                 for (auto &i: v4b)
+                     udp_->out_header_.append(1, i);
+             } else {
+                 udp_->out_header_.append("\0\0\0\x04");
+                 auto v6b = saddr.to_v6().to_bytes();
+                 for (auto &i: v6b)
+                     udp_->out_header_.append(1, i);
+             }
+             union {
+                 uint16_t p;
+                 char b[2];
+             } portu;
+             portu.p = htons(sport);
+             udp_->out_header_.append(1, portu.b[0]);
+             udp_->out_header_.append(1, portu.b[1]);
+             // Forward it to the client socket.
+             udp_->out_bufs_.push_back(boost::asio::buffer(udp_->out_header_));
+             udp_->out_bufs_.push_back(boost::asio::buffer(udp_->outbuf_));
+             udp_->client_socket_.async_send_to
+                 (udp_->out_bufs_, udp_->client_remote_endpoint_,
+                  [this, sfd](const boost::system::error_code &ec,
+                              std::size_t bytes_xferred)
+                  {
+                      if (ec) {
+                          terminate();
+                          return;
+                      }
+                      udp_remote_socket_read();
+                  });
+         });
 }
 
 void SocksClient::send_reply_binds(ba::ip::tcp::endpoint ep)
@@ -1216,6 +1467,11 @@ void SocksClient::send_reply(ReplyCode replycode)
             else
                 send_reply_binds(remote_socket_.remote_endpoint());
             break;
+        case CmdUDP: {
+            auto ep = udp_->client_socket_.local_endpoint();
+            send_reply_binds(ba::ip::tcp::endpoint(ep.address(), ep.port()));
+            break;
+        }
         default:
             throw std::logic_error("Invalid cmd_code_ in send_reply().\n");
         }
