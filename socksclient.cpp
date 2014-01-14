@@ -1289,7 +1289,7 @@ void SocksClient::udp_tcp_socket_read()
 
 void SocksClient::udp_client_socket_read()
 {
-    udp_->inbuf_.reserve(buffer_chunk_size);
+    udp_->inbuf_.resize(buffer_chunk_size);
     auto sfd = shared_from_this();
     udp_->client_socket_.async_receive_from
         (ba::buffer(udp_->inbuf_),
