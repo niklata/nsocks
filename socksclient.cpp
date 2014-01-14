@@ -290,8 +290,10 @@ void SocksClient::close_client_socket()
         if (sdToClient_.is_open()) {
             pToClient_len_ = 0;
             sdToClient_.close();
-            close(pToClient_[1]);
+        }
+        if (pToClient_init_) {
             pToClient_init_ = false;
+            close(pToClient_[1]);
         }
     } catch (...) {}
 #endif
@@ -308,8 +310,10 @@ void SocksClient::close_remote_socket()
         if (sdToRemote_.is_open()) {
             pToRemote_len_ = 0;
             sdToRemote_.close();
-            close(pToRemote_[1]);
+        }
+        if (pToRemote_init_) {
             pToRemote_init_ = false;
+            close(pToRemote_[1]);
         }
     } catch (...) {}
 #endif
@@ -345,20 +349,11 @@ void SocksClient::terminate()
 {
     if (state_ == STATE_TERMINATED)
         return;
+    state_ = STATE_TERMINATED;
     close_remote_socket();
     close_client_socket();
     close_bind_listen_socket();
     close_udp_sockets();
-#ifdef USE_SPLICE
-    if (pToRemote_init_) {
-        close(pToRemote_[0]);
-        close(pToRemote_[1]);
-    }
-    if (pToClient_init_) {
-        close(pToClient_[0]);
-        close(pToClient_[1]);
-    }
-#endif
     switch (client_type_) {
     case SCT_INIT:
         conntracker_hs->remove(this);
@@ -369,7 +364,6 @@ void SocksClient::terminate()
     case SCT_BIND: conntracker_bind.remove(this); break;
     case SCT_UDP: conntracker_udp.remove(this); break;
     }
-    state_ = STATE_TERMINATED;
     // std::cout << "Connection to "
     //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
     //                                     : dst_hostname_)
@@ -739,13 +733,13 @@ bool SocksClient::init_splice_pipes()
         return false;
     }
     pToRemote_init_ = true;
+    sdToRemote_.assign(pToRemote_[0]);
     err = pipe2(pToClient_, O_NONBLOCK);
     if (err) {
         send_reply(RplFail);
         return false;
     }
     pToClient_init_ = true;
-    sdToRemote_.assign(pToRemote_[0]);
     sdToClient_.assign(pToClient_[0]);
     return true;
 }
