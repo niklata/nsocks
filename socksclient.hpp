@@ -212,10 +212,9 @@ private:
     }
     void read_handshake();
     void write_greet();
-    bool process_input();
     bool process_greet();
     bool reply_greet();
-    bool process_connrq();
+    ReplyCode process_connrq();
     void dispatch_connrq();
 
     void dispatch_tcp_connect();

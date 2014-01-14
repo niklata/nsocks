@@ -394,12 +394,21 @@ void SocksClient::read_handshake()
              if (!bytes_xferred)
                  return;
              ibSiz_ += bytes_xferred;
-             if (!process_input()) {
-                 std::cout << "process_input(): returned false -> terminate!\n";
-                 terminate();
-                 return;
+             if (state_ == STATE_WAITGREET) {
+                 if (!process_greet()) {
+                     std::cerr << "process_greet(): returned false -> terminate!\n";
+                     terminate();
+                     return;
+                 }
+             } else if (state_ == STATE_WAITCONNRQ) {
+                 // On failure we will terminate via the send_reply() response.
+                 auto rc = process_connrq();
+                 if (rc != RplSuccess) {
+                     send_reply(rc);
+                     state_ = STATE_GOTCONNRQ;
+                 }
              }
-             if (state_ != STATE_GOTCONNRQ)
+             if (state_ == STATE_WAITGREET || state_ == STATE_WAITCONNRQ)
                  read_handshake();
          });
 }
@@ -424,21 +433,6 @@ void SocksClient::write_greet()
             }
             outbuf_.erase(0, bytes_xferred);
         });
-}
-
-// Returns false if the object needs to be destroyed by the caller.
-bool SocksClient::process_input()
-{
-    switch (state_) {
-    case STATE_WAITGREET: return process_greet();
-    case STATE_WAITCONNRQ:
-        // On failure we will terminate via the send_reply() response.
-        if (!process_connrq())
-            state_ = STATE_GOTCONNRQ;
-        return true;
-    default: break;
-    }
-    return false;
 }
 
 // Returns false if the object needs to be destroyed by the caller.
@@ -500,65 +494,57 @@ bool SocksClient::reply_greet()
 
 // Returns false if the object needs to be destroyed by the caller.
 // State can change: STATE_WAITCONNRQ -> STATE_GOTCONNRQ
-bool SocksClient::process_connrq()
+SocksClient::ReplyCode SocksClient::process_connrq()
 {
-    if (state_ != STATE_WAITCONNRQ) {
-        send_reply(RplFail);
-        return false;
-    }
+    if (state_ != STATE_WAITCONNRQ)
+        return RplFail;
 
     size_t poff = 0;
 
     // We only accept Socks5.
     if (poff == ibSiz_)
-        return true;
-    if (inBytes_[poff] != 0x05) {
-        send_reply(RplFail);
-        return false;
-    }
+        return RplSuccess;
+    if (inBytes_[poff] != 0x05)
+        return RplFail;
     ++poff;
 
     // Client command.
     if (poff == ibSiz_)
-        return true;
+        return RplSuccess;
     switch (static_cast<uint8_t>(inBytes_[poff])) {
     case 0x1: cmd_code_ = CmdTCPConnect; break;
     case 0x2: cmd_code_ = CmdTCPBind; break;
     case 0x3: cmd_code_ = CmdUDP; break;
-    default: send_reply(RplCmdNotSupp); return false; break;
+    default: return RplCmdNotSupp;
     }
     ++poff;
 
     // Must be zero (reserved).
     if (poff == ibSiz_)
-        return true;
-    if (inBytes_[poff] != 0x0) {
-        send_reply(RplFail);
-        return false;
-    }
+        return RplSuccess;
+    if (inBytes_[poff] != 0x0)
+        return RplFail;
     ++poff;
 
     // Address type.
     if (poff == ibSiz_)
-        return true;
+        return RplSuccess;
     switch (static_cast<uint8_t>(inBytes_[poff])) {
     case 0x1: addr_type_ = AddrIPv4; break;
     case 0x3: addr_type_ = AddrDNS; break;
     case 0x4: addr_type_ = AddrIPv6; break;
-    default: send_reply(RplAddrNotSupp); return false; break;
+    default: return RplAddrNotSupp;
     }
     ++poff;
 
     // Destination address.
     if (poff == ibSiz_)
-        return true;
+        return RplSuccess;
     switch (addr_type_) {
         case AddrIPv4: {
             // ibSiz_ = 10, poff = 4
-            if (ibSiz_ - poff != 6) {
-                send_reply(RplFail);
-                return false;
-            }
+            if (ibSiz_ - poff != 6)
+                return RplFail;
             ba::ip::address_v4::bytes_type v4o;
             memcpy(v4o.data(), inBytes_.data() + poff, 4);
             dst_address_ = ba::ip::address_v4(v4o);
@@ -566,27 +552,21 @@ bool SocksClient::process_connrq()
             break;
         }
         case AddrIPv6: {
-            if (ibSiz_ - poff != 18) {
-                send_reply(RplFail);
-                return false;
-            }
+            if (ibSiz_ - poff != 18)
+                return RplFail;
             ba::ip::address_v6::bytes_type v6o;
             memcpy(v6o.data(), inBytes_.data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff += 16;
-            if (g_disable_ipv6) {
-                send_reply(RplAddrNotSupp);
-                return false;
-            }
+            if (g_disable_ipv6)
+                return RplAddrNotSupp;
             break;
         }
         case AddrDNS: {
             size_t dnssiz = static_cast<uint8_t>(inBytes_[poff]);
             ++poff;
-            if (ibSiz_ - poff != dnssiz + 2) {
-                send_reply(RplFail);
-                return false;
-            }
+            if (ibSiz_ - poff != dnssiz + 2)
+                return RplFail;
             dst_hostname_ = std::string(inBytes_.data() + poff, dnssiz);
             poff += dnssiz;
             break;
@@ -594,24 +574,21 @@ bool SocksClient::process_connrq()
         default:
             std::cerr << "reply_greet(): unknown address type: "
                       << addr_type_ << "\n";
-            send_reply(RplAddrNotSupp);
-            return false;
+            return RplAddrNotSupp;
     }
 
     // Destination port.
     if (poff == ibSiz_)
-        return true;
-    if (ibSiz_ - poff != 2) {
-        send_reply(RplFail);
-        return false;
-    }
+        return RplSuccess;
+    if (ibSiz_ - poff != 2)
+        return RplFail;
     uint16_t tmp;
     memcpy(&tmp, inBytes_.data() + poff, 2);
     dst_port_ = ntohs(tmp);
     state_ = STATE_GOTCONNRQ;
     ibSiz_ = 0;
     dispatch_connrq();
-    return true;
+    return RplSuccess;
 }
 
 void SocksClient::dispatch_connrq()
