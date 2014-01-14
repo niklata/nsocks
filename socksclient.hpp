@@ -57,6 +57,7 @@ public:
     SocksClient(boost::asio::io_service &io_service,
                 boost::asio::ip::tcp::socket socket);
     ~SocksClient();
+    void terminate();
 
     inline void start() {
         read_handshake();
@@ -237,7 +238,6 @@ private:
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
     void write_reply();
     bool create_reply();
-    void terminate();
     void close_client_socket();
     void close_remote_socket();
     void close_bind_listen_socket();

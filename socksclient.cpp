@@ -96,6 +96,8 @@ private:
         std::size_t hnext = hidx_ ^ 1;
         // std::cerr << "doSwap wiped " << hash_[hnext].size()
         //           << " items from hash " << hnext << "\n";
+        for (auto &i: hash_[hnext])
+            i.second->terminate();
         hash_[hnext].clear();
         hidx_ = hnext;
     }
