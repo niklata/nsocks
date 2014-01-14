@@ -153,13 +153,12 @@ private:
         std::vector<boost::asio::const_buffer> out_bufs_;
     };
 
-    std::array<char, 32> inBytes_;
-    std::string inbuf_;
+    // Maximum packet size for handshakes is 262
+    std::array<char, 272> inBytes_;
     std::string dst_hostname_;
     std::string outbuf_;
     std::unique_ptr<BoundSocket> bound_;
     std::unique_ptr<UDPAssoc> udp_;
-    boost::asio::ip::address local_address_; // XXX: Populate this.
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
@@ -170,6 +169,7 @@ private:
     AddressType addr_type_;
     ReplyCode sentReplyType_;
     uint16_t dst_port_;
+    uint16_t ibSiz_;
 
 #ifdef USE_SPLICE
     // Used for splice().
