@@ -1149,7 +1149,6 @@ void SocksClient::dispatch_tcp_bind()
              std::cout << "Accepted a connection to a BIND socket.\n";
              set_remote_socket_options();
              conntracker_bind.store(shared_from_this());
-             conntracker_bindlisten->remove(this);
              close_bind_listen_socket();
              if (!init_splice_pipes())
                  return;
