@@ -211,9 +211,7 @@ private:
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
     }
     void read_handshake();
-    void write_greet();
     bool process_greet();
-    bool reply_greet();
     ReplyCode process_connrq();
     void dispatch_connrq();
 

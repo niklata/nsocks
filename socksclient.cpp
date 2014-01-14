@@ -413,27 +413,8 @@ void SocksClient::read_handshake()
          });
 }
 
-void SocksClient::write_greet()
-{
-    assert(!writePending_);
-    writePending_ = true;
-    auto sfd = shared_from_this();
-    ba::async_write(
-        client_socket_, ba::buffer(outbuf_, outbuf_.size()),
-        [this, sfd](const boost::system::error_code &ec,
-                    std::size_t bytes_xferred)
-        {
-            writePending_ = false;
-            if (ec) {
-                std::cerr << "Client write error: "
-                          << boost::system::system_error(ec).what()
-                          << std::endl;
-                terminate();
-                return;
-            }
-            outbuf_.erase(0, bytes_xferred);
-        });
-}
+// We don't support authentication.
+static const char reply_greetz[2] = {'\x5','\x0'};
 
 // Returns false if the object needs to be destroyed by the caller.
 // State can change: STATE_WAITGREET -> STATE_WAITCONNRQ
@@ -475,19 +456,26 @@ bool SocksClient::process_greet()
             auth_unpw_ = true;
     }
     ibSiz_ = 0;
-    return reply_greet();
-}
-
-// Returns false if the object needs to be destroyed by the caller.
-// State can change: STATE_WAITGREET -> STATE_WAITCONNRQ
-bool SocksClient::reply_greet()
-{
     if (!auth_none_)
         return false;
 
-    outbuf_ += '\x5';
-    outbuf_ += '\x0'; // We don't support authentication.
-    write_greet();
+    assert(!writePending_);
+    writePending_ = true;
+    auto sfd = shared_from_this();
+    ba::async_write(
+        client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
+        [this, sfd](const boost::system::error_code &ec,
+                    std::size_t bytes_xferred)
+        {
+            writePending_ = false;
+            if (ec) {
+                std::cerr << "Client write error: "
+                          << boost::system::system_error(ec).what()
+                          << std::endl;
+                terminate();
+                return;
+            }
+        });
     state_ = STATE_WAITCONNRQ;
     return true;
 }
