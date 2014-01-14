@@ -1367,12 +1367,12 @@ void SocksClient::udp_remote_socket_read()
              auto saddr = udp_->rsender_endpoint_.address();
              uint16_t sport = udp_->rsender_endpoint_.port();
              if (saddr.is_v4()) {
-                 udp_->out_header_.append("\0\0\0\x01");
+                 udp_->out_header_.append("\0\0\0\x1");
                  auto v4b = saddr.to_v4().to_bytes();
                  for (auto &i: v4b)
                      udp_->out_header_.append(1, i);
              } else {
-                 udp_->out_header_.append("\0\0\0\x04");
+                 udp_->out_header_.append("\0\0\0\x4");
                  auto v6b = saddr.to_v6().to_bytes();
                  for (auto &i: v6b)
                      udp_->out_header_.append(1, i);
