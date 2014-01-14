@@ -262,7 +262,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
 #ifdef USE_SPLICE
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
-          pToRemote_init_(false), pToClient_init_(false),
+          pToRemote_(io_service), pToClient_(io_service),
           pToRemote_reading_(false), pToClient_reading_(false),
 #endif
           writePending_(false),
@@ -287,42 +287,34 @@ SocksClient::~SocksClient()
 
 void SocksClient::close_client_socket()
 {
+    boost::system::error_code ec;
 #ifdef USE_SPLICE
-    try {
-        if (sdToClient_.is_open()) {
-            pToClient_len_ = 0;
-            sdToClient_.close();
-        }
-        if (pToClient_init_) {
-            pToClient_init_ = false;
-            close(pToClient_[1]);
-        }
-    } catch (...) {}
+    pToClient_len_ = 0;
+    if (sdToClient_.is_open())
+        sdToClient_.close(ec);
+    if (pToClient_.is_open())
+        pToClient_.close(ec);
 #endif
-    try {
-        if (client_socket_.is_open())
-            client_socket_.close();
-    } catch (...) {}
+    if (client_socket_.is_open()) {
+        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+        client_socket_.close(ec);
+    }
 }
 
 void SocksClient::close_remote_socket()
 {
+    boost::system::error_code ec;
 #ifdef USE_SPLICE
-    try {
-        if (sdToRemote_.is_open()) {
-            pToRemote_len_ = 0;
-            sdToRemote_.close();
-        }
-        if (pToRemote_init_) {
-            pToRemote_init_ = false;
-            close(pToRemote_[1]);
-        }
-    } catch (...) {}
+    pToRemote_len_ = 0;
+    if (sdToRemote_.is_open())
+        sdToRemote_.close(ec);
+    if (pToRemote_.is_open())
+        pToRemote_.close(ec);
 #endif
-    try {
-        if (remote_socket_.is_open())
-            remote_socket_.close();
-    } catch (...) {}
+    if (remote_socket_.is_open()) {
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+        remote_socket_.close(ec);
+    }
 }
 
 void SocksClient::close_bind_listen_socket()
@@ -729,20 +721,21 @@ static const char * const replyCodeString[] = {
 bool SocksClient::init_splice_pipes()
 {
     int err;
-    err = pipe2(pToRemote_, O_NONBLOCK);
+    int pipes[2];
+    err = pipe2(pipes, O_NONBLOCK);
     if (err) {
         send_reply(RplFail);
         return false;
     }
-    pToRemote_init_ = true;
-    sdToRemote_.assign(pToRemote_[0]);
-    err = pipe2(pToClient_, O_NONBLOCK);
+    sdToRemote_.assign(pipes[0]);
+    pToRemote_.assign(pipes[1]);
+    err = pipe2(pipes, O_NONBLOCK);
     if (err) {
         send_reply(RplFail);
         return false;
     }
-    pToClient_init_ = true;
-    sdToClient_.assign(pToClient_[0]);
+    sdToClient_.assign(pipes[0]);
+    pToClient_.assign(pipes[1]);
     return true;
 }
 
@@ -901,7 +894,7 @@ void SocksClient::do_sdToRemote_read()
                  splicePipeToRemote();
                  if (pToRemote_len_ > 0)
                      do_sdToRemote_read();
-                 else if (!pToClient_init_)
+                 else if (!pToClient_.is_open())
                      terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToRemote_read() TERMINATE: "
@@ -936,7 +929,7 @@ void SocksClient::do_sdToClient_read()
                  splicePipeToClient();
                  if (pToClient_len_ > 0)
                      do_sdToClient_read();
-                 else if (!pToRemote_init_)
+                 else if (!pToRemote_.is_open())
                      terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToClient_read() TERMINATE: "
@@ -954,7 +947,8 @@ void SocksClient::spliceClientToPipe(std::size_t bytes)
         pToRemote_len_ = 0;
         return;
     }
-    pToRemote_len_ += spliceit(client_socket_.native(), pToRemote_[1], bytes);
+    pToRemote_len_ += spliceit(client_socket_.native_handle(),
+                               pToRemote_.native_handle(), bytes);
 }
 
 void SocksClient::spliceRemoteToPipe(std::size_t bytes)
@@ -964,7 +958,8 @@ void SocksClient::spliceRemoteToPipe(std::size_t bytes)
         pToClient_len_ = 0;
         return;
     }
-    pToClient_len_ += spliceit(remote_socket_.native(), pToClient_[1], bytes);
+    pToClient_len_ += spliceit(remote_socket_.native_handle(),
+                               pToClient_.native_handle(), bytes);
 }
 
 void SocksClient::splicePipeToClient()
@@ -974,8 +969,8 @@ void SocksClient::splicePipeToClient()
         return;
     }
     //std::cerr << "rcPIPE->client: ";
-    pToClient_len_ -= spliceit(pToClient_[0], client_socket_.native(),
-                               pToClient_len_);
+    pToClient_len_ -= spliceit(sdToClient_.native_handle(),
+                               client_socket_.native_handle(), pToClient_len_);
 }
 
 void SocksClient::splicePipeToRemote()
@@ -985,8 +980,8 @@ void SocksClient::splicePipeToRemote()
         return;
     }
     //std::cerr << "crPIPE->remote: ";
-    pToRemote_len_ -= spliceit(pToRemote_[0], remote_socket_.native(),
-                             pToRemote_len_);
+    pToRemote_len_ -= spliceit(sdToRemote_.native_handle(),
+                               remote_socket_.native_handle(), pToRemote_len_);
 }
 #else
 // Write data read from the client socket to the connect socket.

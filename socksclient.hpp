@@ -178,10 +178,8 @@ private:
     size_t pToClient_len_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
-    int pToRemote_[2];
-    int pToClient_[2];
-    bool pToRemote_init_;
-    bool pToClient_init_;
+    boost::asio::posix::stream_descriptor pToRemote_;
+    boost::asio::posix::stream_descriptor pToClient_;
     bool pToRemote_reading_;
     bool pToClient_reading_;
     bool init_splice_pipes();
