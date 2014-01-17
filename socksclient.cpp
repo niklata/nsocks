@@ -254,6 +254,8 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
+static std::size_t socks_alive_count;
+
 SocksClient::SocksClient(ba::io_service &io_service,
                          ba::ip::tcp::socket socket)
         : client_socket_(std::move(socket)), remote_socket_(io_service),
@@ -269,20 +271,22 @@ SocksClient::SocksClient(ba::io_service &io_service,
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_reading_(false), remote_socket_reading_(false)
 {
+    ++socks_alive_count;
     client_socket_.non_blocking(true);
     client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
 }
 
 SocksClient::~SocksClient()
 {
-    terminate();
+    --socks_alive_count;
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
               << ":" << dst_port_ << " DESTRUCTED (total: "
               << (conntracker_hs->size()  + conntracker_bindlisten->size()
                   + conntracker_connect.size() + conntracker_bind.size()
-                  + conntracker_udp.size()) << ")\n";
+                  + conntracker_udp.size())
+              << "/" << socks_alive_count << ")\n";
 }
 
 void SocksClient::close_client_socket()
