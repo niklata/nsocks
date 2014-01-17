@@ -1133,7 +1133,7 @@ void SocksClient::dispatch_tcp_bind()
         (remote_socket_,
          [this, sfd](const boost::system::error_code &ec)
          {
-             if (ec) {
+             if (ec || !init_splice_pipes()) {
                  send_reply(RplFail);
                  bound_.reset();
                  return;
@@ -1142,8 +1142,6 @@ void SocksClient::dispatch_tcp_bind()
              set_remote_socket_options();
              conntracker_bind.store(shared_from_this());
              close_bind_listen_socket();
-             if (!init_splice_pipes())
-                 return;
              send_reply(RplSuccess);
          });
     send_reply(RplSuccess);
