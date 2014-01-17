@@ -685,8 +685,10 @@ void SocksClient::dispatch_tcp_connect()
              // Now we have a live socket, so we need to inform the client
              // and then begin proxying data.
              conntracker_connect.store(shared_from_this());
-             if (!init_splice_pipes())
+             if (!init_splice_pipes()) {
+                 send_reply(RplFail);
                  return;
+             }
              // std::cout << "TCP Connect from "
              //           << client_socket_.remote_endpoint().address()
              //           << " to "
