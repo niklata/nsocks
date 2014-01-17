@@ -280,15 +280,19 @@ SocksClient::SocksClient(ba::io_service &io_service,
 
 SocksClient::~SocksClient()
 {
+    if (state_ != STATE_TERMINATED)
+        untrack();
     --socks_alive_count;
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
               << ":" << dst_port_ << " DESTRUCTED (total: "
-              << (conntracker_hs->size()  + conntracker_bindlisten->size()
-                  + conntracker_connect.size() + conntracker_bind.size()
-                  + conntracker_udp.size())
-              << "/" << socks_alive_count << ")\n";
+              << conntracker_hs->size() << ","
+              << conntracker_bindlisten->size() << "|"
+              << conntracker_connect.size() << ","
+              << conntracker_bind.size() << ","
+              << conntracker_udp.size()
+              << " / " << socks_alive_count << ")\n";
 }
 
 void SocksClient::close_client_socket()
@@ -361,14 +365,8 @@ void SocksClient::close_udp_sockets()
     UPA->release_port(udp_r_port);
 }
 
-void SocksClient::terminate()
+void SocksClient::untrack()
 {
-    assert(state_ != STATE_TERMINATED);
-    state_ = STATE_TERMINATED;
-    close_remote_socket();
-    close_client_socket();
-    close_bind_listen_socket();
-    close_udp_sockets();
     switch (client_type_) {
     case SCT_INIT:
         conntracker_hs->remove(this);
@@ -379,6 +377,17 @@ void SocksClient::terminate()
     case SCT_BIND: conntracker_bind.remove(this); break;
     case SCT_UDP: conntracker_udp.remove(this); break;
     }
+}
+
+void SocksClient::terminate()
+{
+    assert(state_ != STATE_TERMINATED);
+    state_ = STATE_TERMINATED;
+    close_remote_socket();
+    close_client_socket();
+    close_bind_listen_socket();
+    close_udp_sockets();
+    untrack();
     // std::cout << "Connection to "
     //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
     //                                     : dst_hostname_)
