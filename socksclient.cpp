@@ -361,8 +361,7 @@ void SocksClient::close_udp_sockets()
 
 void SocksClient::terminate()
 {
-    if (state_ == STATE_TERMINATED)
-        return;
+    assert(state_ != STATE_TERMINATED);
     state_ = STATE_TERMINATED;
     close_remote_socket();
     close_client_socket();
