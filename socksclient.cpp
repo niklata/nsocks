@@ -131,6 +131,7 @@ public:
     {
         ssc->setClientType(client_type_);
         hash_[ssc.get()] = ssc;
+        assert(ct_);
         if (!ct_->remove(ssc.get()))
             std::cerr << "Store to non-handshake tracker for connection that wasn't in the handshake tracker! SocksClient=" << ssc.get() << "\n";
     }
