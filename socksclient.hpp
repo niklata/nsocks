@@ -183,8 +183,6 @@ private:
     bool pToRemote_reading_;
     bool pToClient_reading_;
     bool init_splice_pipes();
-    void client_terminate();
-    void remote_terminate();
     void do_sdToRemote_read();
     void do_sdToClient_read();
     void spliceClientToPipe(std::size_t bytes);

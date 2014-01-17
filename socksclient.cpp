@@ -288,33 +288,45 @@ SocksClient::~SocksClient()
 void SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
+    if (client_socket_.is_open()) {
+        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+        client_socket_.close(ec);
+    }
 #ifdef USE_SPLICE
     pToClient_len_ = 0;
     if (sdToClient_.is_open())
         sdToClient_.close(ec);
     if (pToClient_.is_open())
         pToClient_.close(ec);
+    if (state_ != STATE_TERMINATED &&
+        remote_socket_.is_open() && pToRemote_len_ > 0) {
+        remote_socket_.cancel(ec);
+        do_sdToRemote_read();
+    } else
+        terminate();
 #endif
-    if (client_socket_.is_open()) {
-        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-        client_socket_.close(ec);
-    }
 }
 
 void SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
+    if (remote_socket_.is_open()) {
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+        remote_socket_.close(ec);
+    }
 #ifdef USE_SPLICE
     pToRemote_len_ = 0;
     if (sdToRemote_.is_open())
         sdToRemote_.close(ec);
     if (pToRemote_.is_open())
         pToRemote_.close(ec);
+    if (state_ != STATE_TERMINATED &&
+        client_socket_.is_open() && pToClient_len_ > 0) {
+        client_socket_.cancel(ec);
+        do_sdToClient_read();
+    } else
+        terminate();
 #endif
-    if (remote_socket_.is_open()) {
-        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-        remote_socket_.close(ec);
-    }
 }
 
 void SocksClient::close_bind_listen_socket()
@@ -739,41 +751,17 @@ bool SocksClient::init_splice_pipes()
     return true;
 }
 
-void SocksClient::client_terminate()
-{
-    close_client_socket();
-    if (pToRemote_len_)
-        do_sdToRemote_read();
-    else
-        terminate();
-}
-
-void SocksClient::remote_terminate()
-{
-    close_remote_socket();
-    if (pToClient_len_)
-        do_sdToClient_read();
-    else
-        terminate();
-}
-
 // Can throw std::runtime_error
 static size_t spliceit(int infd, int outfd, std::size_t len)
 {
+  retry:
     //std::cerr << "Splicing " << infd << "->" << outfd << " len=" << len << "\n";
     auto spliced = splice(infd, NULL, outfd, NULL, len,
                           SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
     if (spliced < 0) {
-        spliced = 0;
-        switch (errno) {
-        case EAGAIN:
-        case EINTR: break;
-        case EBADF: throw std::runtime_error("splice EBADF"); break;
-        case EINVAL: throw std::runtime_error("splice EINVAL"); break;
-        case ENOMEM: throw std::runtime_error("splice ENOMEM"); break;
-        case ESPIPE: throw std::runtime_error("splice ESPIPE"); break;
-        default: throw std::runtime_error(strerror(errno)); break;
-        }
+        if (errno == EAGAIN || errno == EINTR)
+            goto retry;
+        throw std::runtime_error(strerror(errno));
     }
     return spliced;
 }
@@ -794,12 +782,12 @@ void SocksClient::do_client_socket_connect_read()
          {
              client_socket_reading_ = false;
              if (ec) {
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
              auto bytes = client_socket_.available();
              if (!bytes) {
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
              try {
@@ -807,7 +795,7 @@ void SocksClient::do_client_socket_connect_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
              try {
@@ -817,7 +805,7 @@ void SocksClient::do_client_socket_connect_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
              do_client_socket_connect_read();
@@ -840,12 +828,12 @@ void SocksClient::do_remote_socket_read()
          {
              remote_socket_reading_ = false;
              if (ec) {
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
              auto bytes = remote_socket_.available();
              if (!bytes) {
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
              try {
@@ -853,7 +841,7 @@ void SocksClient::do_remote_socket_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
              try {
@@ -863,7 +851,7 @@ void SocksClient::do_remote_socket_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
              do_remote_socket_read();
@@ -887,7 +875,7 @@ void SocksClient::do_sdToRemote_read()
              if (ec) {
                  std::cerr << "crPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
              try {
@@ -899,7 +887,7 @@ void SocksClient::do_sdToRemote_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToRemote_read() TERMINATE: "
                            << e.what() << "\n";
-                 remote_terminate();
+                 close_remote_socket();
                  return;
              }
          });
@@ -922,7 +910,7 @@ void SocksClient::do_sdToClient_read()
              if (ec) {
                  std::cerr << "rcPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
              try {
@@ -934,7 +922,7 @@ void SocksClient::do_sdToClient_read()
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_sdToClient_read() TERMINATE: "
                            << e.what() << "\n";
-                 client_terminate();
+                 close_client_socket();
                  return;
              }
          });
