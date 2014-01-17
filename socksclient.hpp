@@ -57,6 +57,7 @@ public:
     SocksClient(boost::asio::io_service &io_service,
                 boost::asio::ip::tcp::socket socket);
     ~SocksClient();
+    void cancel();
     void terminate();
 
     inline void start() {
@@ -183,6 +184,8 @@ private:
     bool pToRemote_reading_;
     bool pToClient_reading_;
     bool init_splice_pipes();
+    void terminate_client();
+    void terminate_remote();
     void do_sdToRemote_read();
     void do_sdToClient_read();
     void spliceClientToPipe(std::size_t bytes);
