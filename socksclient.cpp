@@ -287,10 +287,16 @@ SocksClient::~SocksClient()
     std::cout << "Connection to "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
-              << ":" << dst_port_ << " DESTRUCTED (total: "
-              << conntracker_hs->size() << ","
-              << conntracker_bindlisten->size() << "|"
-              << conntracker_connect.size() << ","
+              << ":" << dst_port_ << " DESTRUCTED (total: ";
+    if (conntracker_hs)
+        std::cout << conntracker_hs->size() << ",";
+    else
+        std::cout << "X,";
+    if (conntracker_bindlisten)
+        std::cout << conntracker_bindlisten->size() << "|";
+    else
+        std::cout << "X|";
+    std::cout << conntracker_connect.size() << ","
               << conntracker_bind.size() << ","
               << conntracker_udp.size()
               << " / " << socks_alive_count << ")\n";
