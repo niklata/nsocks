@@ -300,6 +300,7 @@ void SocksClient::close_client_socket()
         pToClient_.close(ec);
     if (state_ != STATE_TERMINATED &&
         remote_socket_.is_open() && pToRemote_len_ > 0) {
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
         remote_socket_.cancel(ec);
         do_sdToRemote_read();
     } else
@@ -322,6 +323,7 @@ void SocksClient::close_remote_socket()
         pToRemote_.close(ec);
     if (state_ != STATE_TERMINATED &&
         client_socket_.is_open() && pToClient_len_ > 0) {
+        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
         client_socket_.cancel(ec);
         do_sdToClient_read();
     } else
