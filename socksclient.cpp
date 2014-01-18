@@ -81,8 +81,7 @@ public:
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {
-        SocksClient *p = ssc.get();
-        hash_[hidx_][p] = ssc;
+        hash_[hidx_].emplace(ssc.get(), ssc);
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
             setTimer();
@@ -141,7 +140,7 @@ public:
     void store(std::shared_ptr<SocksClient> ssc)
     {
         ssc->setClientType(client_type_);
-        hash_[ssc.get()] = ssc;
+        hash_.emplace(ssc.get(), ssc);
         assert(ct_);
         if (!ct_->remove(ssc.get()))
             std::cerr << "Store to non-handshake tracker for connection that wasn't in the handshake tracker! SocksClient=" << ssc.get() << "\n";
