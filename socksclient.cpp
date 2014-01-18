@@ -76,8 +76,10 @@ public:
     ~ephConnTracker()
     {
         for (std::size_t j = 0; j < 2; ++j)
-            for (auto &i: hash_[j])
+            for (auto &i: hash_[j]) {
                 i.second->cancel();
+                i.second->set_terminated();
+            }
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {
@@ -134,8 +136,10 @@ public:
         : client_type_(client_type), ct_(ct) {}
     ~connTracker()
     {
-        for (auto &i: hash_)
+        for (auto &i: hash_) {
             i.second->cancel();
+            i.second->set_terminated();
+        }
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {

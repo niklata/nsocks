@@ -66,6 +66,7 @@ public:
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
     }
+    inline void set_terminated() { state_ = STATE_TERMINATED; }
     bool matches_dst(const boost::asio::ip::address &addr,
                      uint16_t port) const;
     inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
