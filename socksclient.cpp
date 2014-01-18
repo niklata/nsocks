@@ -1470,11 +1470,6 @@ void SocksClient::send_reply(ReplyCode replycode)
         }
     }
     sentReplyType_ = replycode;
-    write_reply();
-}
-
-void SocksClient::write_reply()
-{
     assert(!writePending_);
     writePending_ = true;
     auto sfd = shared_from_this();

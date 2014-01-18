@@ -235,8 +235,6 @@ private:
 
     void send_reply(ReplyCode replycode);
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
-    void write_reply();
-    bool create_reply();
     void untrack();
     void close_client_socket();
     void close_remote_socket();
