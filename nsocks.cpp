@@ -74,7 +74,7 @@ static int nsocks_uid, nsocks_gid;
 
 static void sighandler(int sig)
 {
-    exit(EXIT_SUCCESS);
+    io_service.stop();
 }
 
 static void fix_signals(void) {
