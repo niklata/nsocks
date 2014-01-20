@@ -652,7 +652,7 @@ void SocksClient::dispatch_connrq()
                      }
                      dispatch_connrq();
                  });
-        } catch (std::exception const e) {
+        } catch (const std::exception &) {
             send_reply(RplHostUnreach);
         }
         return;
