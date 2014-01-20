@@ -1380,10 +1380,6 @@ void SocksClient::udp_proxy_packet()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             if (ec) {
-                 terminate();
-                 return;
-             }
              udp_client_socket_read();
          });
 }
@@ -1485,10 +1481,6 @@ void SocksClient::udp_remote_socket_read()
                   [this, sfd](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
                   {
-                      if (ec) {
-                          terminate();
-                          return;
-                      }
                       udp_remote_socket_read();
                   });
          });
