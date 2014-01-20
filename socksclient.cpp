@@ -789,9 +789,11 @@ static size_t spliceit(int infd, int outfd, std::size_t len)
     auto spliced = splice(infd, NULL, outfd, NULL, len,
                           SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
     if (spliced < 0) {
-        if (errno == EAGAIN || errno == EINTR)
-            goto retry;
-        throw std::runtime_error(strerror(errno));
+        switch (errno) {
+            case EAGAIN: return 0;
+            case EINTR: goto retry;
+            default: throw std::runtime_error(strerror(errno));
+        }
     }
     return spliced;
 }
