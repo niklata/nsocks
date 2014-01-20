@@ -141,7 +141,8 @@ private:
           : client_endpoint_(client_ep), remote_endpoint_(remote_ep),
             client_remote_endpoint_(client_remote_ep),
             client_socket_(io_service, client_ep),
-            remote_socket_(io_service, remote_ep)
+            remote_socket_(io_service, remote_ep),
+            resolver_(io_service)
         {}
         boost::asio::ip::udp::endpoint client_endpoint_;
         boost::asio::ip::udp::endpoint remote_endpoint_;
@@ -150,10 +151,15 @@ private:
         boost::asio::ip::udp::endpoint rsender_endpoint_;
         boost::asio::ip::udp::socket client_socket_;
         boost::asio::ip::udp::socket remote_socket_;
+        boost::asio::ip::udp::resolver resolver_;
+        boost::asio::ip::address daddr_;
         std::vector<uint8_t> inbuf_;
         std::vector<uint8_t> outbuf_;
         std::string out_header_;
         std::vector<boost::asio::const_buffer> out_bufs_;
+        std::size_t poffset_;
+        std::size_t psize_;
+        uint16_t dport_;
     };
 
     // Maximum packet size for handshakes is 262
@@ -233,6 +239,8 @@ private:
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
+    void udp_proxy_packet();
+    void udp_dns_lookup(const std::string &dnsname);
 
     void send_reply(ReplyCode replycode);
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);

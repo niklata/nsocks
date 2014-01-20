@@ -1316,57 +1316,125 @@ void SocksClient::udp_client_socket_read()
                      goto nosend;
                  auto atyp = udp_->inbuf_[3];
                  ba::ip::address daddr;
+                 std::string dnsname;
                  switch (atyp) {
                      case 1: { // IPv4
                          if (bytes_xferred < 10)
                              goto nosend;
                          ba::ip::address_v4::bytes_type v4o;
                          memcpy(v4o.data(), udp_->inbuf_.data() + headersiz, 4);
-                         daddr = ba::ip::address_v4(v4o);
+                         udp_->daddr_ = ba::ip::address_v4(v4o);
                          headersiz += 4;
                          break;
                      }
-                     case 3: // DNS
-                         // XXX: Handle.
-                         goto nosend;
+                     case 3: { // DNS
+                         if (bytes_xferred < 8)
+                             goto nosend;
+                         size_t dnssiz = udp_->inbuf_[headersiz++];
+                         if (bytes_xferred - headersiz < dnssiz + 2)
+                             goto nosend;
+                         dnsname = std::string
+                             (reinterpret_cast<const  char *>
+                              (udp_->inbuf_.data() + headersiz), dnssiz);
+                         headersiz += dnssiz;
                          break;
+                     }
                      case 4: { // IPv6
                          if (bytes_xferred < 22)
                              goto nosend;
                          ba::ip::address_v6::bytes_type v6o;
                          memcpy(v6o.data(), udp_->inbuf_.data() + headersiz, 16);
-                         daddr = ba::ip::address_v6(v6o);
+                         udp_->daddr_ = ba::ip::address_v6(v6o);
                          headersiz += 16;
                          break;
                      }
                      default: goto nosend; break;
                  }
-                 if (is_dst_denied(daddr))
-                     goto nosend;
-                 uint16_t dport;
-                 memcpy(&dport, udp_->inbuf_.data() + headersiz, 2);
-                 dport = ntohs(dport);
+                 memcpy(&udp_->dport_, udp_->inbuf_.data() + headersiz, 2);
+                 udp_->dport_ = ntohs(udp_->dport_);
                  headersiz += 2;
-                 ba::ip::udp::endpoint destination_ep(daddr, dport);
-                 // Forward it to the remote socket.
-                 udp_->remote_socket_.async_send_to
-                     (ba::buffer(udp_->inbuf_.data() + headersiz,
-                                 bytes_xferred - headersiz),
-                      destination_ep, 0,
-                      [this, sfd](const boost::system::error_code &ec,
-                                  std::size_t bytes_xferred)
-                      {
-                          if (ec) {
-                              terminate();
-                              return;
-                          }
-                          udp_client_socket_read();
-                      });
+                 udp_->poffset_ = headersiz;
+                 udp_->psize_ = bytes_xferred - headersiz;
+                 if (dnsname.size() > 0)
+                     udp_dns_lookup(dnsname);
+                 else
+                     udp_proxy_packet();
                  return;
              }
            nosend:
              udp_client_socket_read();
          });
+}
+
+// Forward it to the remote socket.
+void SocksClient::udp_proxy_packet()
+{
+    if (is_dst_denied(udp_->daddr_)) {
+        udp_client_socket_read();
+        return;
+    }
+    auto sfd = shared_from_this();
+    udp_->remote_socket_.async_send_to
+        (ba::buffer(udp_->inbuf_.data() + udp_->poffset_, udp_->psize_),
+         ba::ip::udp::endpoint(udp_->daddr_, udp_->dport_), 0,
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 terminate();
+                 return;
+             }
+             udp_client_socket_read();
+         });
+}
+
+void SocksClient::udp_dns_lookup(const std::string &dnsname)
+{
+    ba::ip::udp::resolver::query query
+        (dnsname, boost::lexical_cast<std::string>(udp_->dport_));
+    auto sfd = shared_from_this();
+    try {
+        udp_->resolver_.async_resolve
+            (query,
+             [this, sfd](const boost::system::error_code &ec,
+                         ba::ip::udp::resolver::iterator it)
+             {
+                 if (ec) {
+                     udp_client_socket_read();
+                     return;
+                 }
+                 ba::ip::udp::resolver::iterator fv4, fv6, rie;
+                 for (; it != rie; ++it) {
+                     bool isv4 = it->endpoint().address().is_v4();
+                     if (isv4) {
+                         if (g_prefer_ipv4) {
+                             udp_->daddr_ = it->endpoint().address();
+                             udp_proxy_packet();
+                             return;
+                         }
+                         if (fv4 == rie)
+                             fv4 = it;
+                     } else {
+                         if (!g_prefer_ipv4) {
+                             udp_->daddr_ = it->endpoint().address();
+                             udp_proxy_packet();
+                             return;
+                         }
+                         if (fv6 == rie)
+                             fv6 = it;
+                     }
+                 }
+                 udp_->daddr_ = g_prefer_ipv4 ? fv4->endpoint().address()
+                                              : fv6->endpoint().address();
+                 if (g_disable_ipv6 && !dst_address_.is_v4()) {
+                     udp_client_socket_read();
+                     return;
+                 }
+                 udp_proxy_packet();
+             });
+    } catch (const std::exception &) {
+        udp_client_socket_read();
+    }
 }
 
 void SocksClient::udp_remote_socket_read()
