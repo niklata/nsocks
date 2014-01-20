@@ -992,7 +992,7 @@ void SocksClient::spliceClientToPipe(std::size_t bytes)
 {
     //std::cerr << "client->crPIPE: ";
     if (!sdToRemote_.is_open()) {
-        pToRemote_len_ = 0;
+        terminate_remote();
         return;
     }
     pToRemote_len_ += spliceit(client_socket_.native_handle(),
@@ -1003,7 +1003,7 @@ void SocksClient::spliceRemoteToPipe(std::size_t bytes)
 {
     //std::cerr << "remote->rcPIPE: ";
     if (!sdToClient_.is_open()) {
-        pToClient_len_ = 0;
+        terminate_client();
         return;
     }
     pToClient_len_ += spliceit(remote_socket_.native_handle(),
@@ -1013,7 +1013,7 @@ void SocksClient::spliceRemoteToPipe(std::size_t bytes)
 void SocksClient::splicePipeToClient()
 {
     if (!client_socket_.is_open()) {
-        pToClient_len_ = 0;
+        terminate_client();
         return;
     }
     //std::cerr << "rcPIPE->client: ";
@@ -1024,7 +1024,7 @@ void SocksClient::splicePipeToClient()
 void SocksClient::splicePipeToRemote()
 {
     if (!remote_socket_.is_open()) {
-        pToRemote_len_ = 0;
+        terminate_remote();
         return;
     }
     //std::cerr << "crPIPE->remote: ";
