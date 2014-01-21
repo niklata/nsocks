@@ -133,6 +133,37 @@ private:
         boost::asio::ip::tcp::endpoint local_endpoint_;
     };
 
+    struct UDPFrags {
+        UDPFrags(boost::asio::io_service &io_service)
+                : timer_(io_service), lastn_(0) {}
+        boost::asio::deadline_timer timer_;
+        std::vector<uint8_t> buf_;
+        boost::asio::ip::address addr_;
+        std::string dns_;
+        uint16_t port_;
+        uint8_t lastn_;
+
+        void reset() {
+            boost::system::error_code ec;
+            timer_.cancel(ec);
+            buf_.clear();
+            dns_.clear();
+            addr_ = boost::asio::ip::address();
+            port_ = 0;
+            lastn_ = 0;
+        }
+        void reaper_start() {
+            timer_.expires_from_now(boost::posix_time::seconds(5));
+            timer_.async_wait(
+                [this](const boost::system::error_code& error)
+                {
+                    if (error)
+                        return;
+                    reset();
+                });
+        }
+    };
+
     struct UDPAssoc {
         UDPAssoc(boost::asio::io_service &io_service,
                  boost::asio::ip::udp::endpoint client_ep,
@@ -160,6 +191,7 @@ private:
         std::size_t poffset_;
         std::size_t psize_;
         uint16_t dport_;
+        std::unique_ptr<UDPFrags> frags_;
     };
 
     // Maximum packet size for handshakes is 262
@@ -239,6 +271,8 @@ private:
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
+    bool udp_frag_handle(uint8_t fragn, uint8_t atyp,
+                         const std::string &dnsname);
     void udp_proxy_packet();
     void udp_dns_lookup(const std::string &dnsname);
 

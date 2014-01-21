@@ -1311,9 +1311,12 @@ void SocksClient::udp_client_socket_read()
                  if (udp_->inbuf_[1] != '\0')
                      goto nosend;
                  auto fragn = udp_->inbuf_[2];
-                 // XXX: Support fragments.
-                 if (fragn != '\0')
-                     goto nosend;
+                 if (fragn != '\0') {
+                     if (!udp_->frags_)
+                         udp_->frags_ = nk::make_unique<UDPFrags>(io_service);
+                     if (fragn > 127 && !udp_->frags_->buf_.size())
+                         fragn = '\0';
+                 }
                  auto atyp = udp_->inbuf_[3];
                  ba::ip::address daddr;
                  std::string dnsname;
@@ -1355,6 +1358,10 @@ void SocksClient::udp_client_socket_read()
                  headersiz += 2;
                  udp_->poffset_ = headersiz;
                  udp_->psize_ = bytes_xferred - headersiz;
+
+                 if (fragn != '\0' && udp_frag_handle(fragn, atyp, dnsname))
+                     return;
+
                  if (dnsname.size() > 0)
                      udp_dns_lookup(dnsname);
                  else
@@ -1364,6 +1371,47 @@ void SocksClient::udp_client_socket_read()
            nosend:
              udp_client_socket_read();
          });
+}
+
+// If true then the caller doesn't need to proceed.
+bool SocksClient::udp_frag_handle(uint8_t fragn, uint8_t atyp,
+                                  const std::string &dnsname)
+{
+    bool new_frags(udp_->frags_->buf_.size() == 0);
+    bool send_frags(fragn > 127);
+    if (fragn <= udp_->frags_->lastn_)
+        udp_->frags_->reset();
+    if (atyp != 3) {
+        if (new_frags)
+            udp_->frags_->addr_ = udp_->daddr_;
+        else if (udp_->daddr_ != udp_->frags_->addr_)
+            udp_->frags_->reset();
+    } else { // DNS
+        if (new_frags)
+            udp_->frags_->dns_ = dnsname;
+        else if (dnsname != udp_->frags_->dns_)
+            udp_->frags_->reset();
+    }
+    if (new_frags)
+        udp_->frags_->port_ = udp_->dport_;
+    else if (udp_->dport_ != udp_->frags_->port_)
+        udp_->frags_->reset();
+    udp_->frags_->lastn_ = fragn;
+    udp_->frags_->buf_.insert
+        (udp_->frags_->buf_.end(),
+         udp_->inbuf_.begin() + udp_->poffset_,
+         udp_->inbuf_.end());
+    if (send_frags) {
+        udp_->inbuf_ = std::move(udp_->frags_->buf_);
+        udp_->poffset_ = 0;
+        udp_->psize_ = udp_->inbuf_.size();
+        udp_->frags_->reset();
+    } else {
+        udp_->frags_->reaper_start();
+        udp_client_socket_read();
+        return true;
+    }
+    return false;
 }
 
 // Forward it to the remote socket.
