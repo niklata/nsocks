@@ -271,6 +271,8 @@ private:
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
+    bool udp_frags_different(uint8_t fragn, uint8_t atyp,
+                             const std::string &dnsname);
     bool udp_frag_handle(uint8_t fragn, uint8_t atyp,
                          const std::string &dnsname);
     void udp_proxy_packet();

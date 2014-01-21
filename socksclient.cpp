@@ -1373,30 +1373,38 @@ void SocksClient::udp_client_socket_read()
          });
 }
 
+bool SocksClient::udp_frags_different(uint8_t fragn, uint8_t atyp,
+                                      const std::string &dnsname)
+{
+    if (fragn <= udp_->frags_->lastn_)
+        return true;
+    if (udp_->dport_ != udp_->frags_->port_)
+        return true;
+    if (atyp != 3) {
+        if (udp_->daddr_ != udp_->frags_->addr_)
+            return true;
+    } else { // DNS
+        if (dnsname != udp_->frags_->dns_)
+            return true;
+    }
+    return false;
+}
+
 // If true then the caller doesn't need to proceed.
 bool SocksClient::udp_frag_handle(uint8_t fragn, uint8_t atyp,
                                   const std::string &dnsname)
 {
-    bool new_frags(udp_->frags_->buf_.size() == 0);
-    bool send_frags(fragn > 127);
-    if (fragn <= udp_->frags_->lastn_)
+    const bool new_frags(udp_->frags_->buf_.size() == 0);
+    const bool send_frags(fragn > 127);
+    if (new_frags || udp_frags_different(fragn, atyp, dnsname)) {
         udp_->frags_->reset();
-    if (atyp != 3) {
-        if (new_frags)
-            udp_->frags_->addr_ = udp_->daddr_;
-        else if (udp_->daddr_ != udp_->frags_->addr_)
-            udp_->frags_->reset();
-    } else { // DNS
-        if (new_frags)
-            udp_->frags_->dns_ = dnsname;
-        else if (dnsname != udp_->frags_->dns_)
-            udp_->frags_->reset();
-    }
-    if (new_frags)
+        udp_->frags_->lastn_ = fragn;
         udp_->frags_->port_ = udp_->dport_;
-    else if (udp_->dport_ != udp_->frags_->port_)
-        udp_->frags_->reset();
-    udp_->frags_->lastn_ = fragn;
+        if (atyp != 3)
+            udp_->frags_->addr_ = udp_->daddr_;
+        else // DNS
+            udp_->frags_->dns_ = dnsname;
+    }
     udp_->frags_->buf_.insert
         (udp_->frags_->buf_.end(),
          udp_->inbuf_.begin() + udp_->poffset_,
