@@ -297,7 +297,6 @@ SocksClient::SocksClient(ba::io_service &io_service,
           sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_(io_service), pToClient_(io_service),
 #endif
-          writePending_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
 {
     ++socks_alive_count;
@@ -501,8 +500,6 @@ bool SocksClient::process_greet()
     if (!auth_none_)
         return false;
 
-    assert(!writePending_);
-    writePending_ = true;
     auto sfd = shared_from_this();
     ba::async_write(
         client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
@@ -510,7 +507,6 @@ bool SocksClient::process_greet()
         [this, sfd](const boost::system::error_code &ec,
                     std::size_t bytes_xferred)
         {
-            writePending_ = false;
             if (ec) {
                 std::cerr << "Client write error: "
                           << boost::system::system_error(ec).what()
@@ -1592,15 +1588,12 @@ void SocksClient::send_reply(ReplyCode replycode)
         }
     }
     sentReplyType_ = replycode;
-    assert(!writePending_);
-    writePending_ = true;
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_, ba::buffer(outbuf_, outbuf_.size()), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             writePending_ = false;
              if (ec || sentReplyType_ != RplSuccess) {
                  // std::cout << "Connection killed before handshake completed from "
                  //     << client_socket_.remote_endpoint().address()

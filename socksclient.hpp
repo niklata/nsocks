@@ -238,7 +238,6 @@ private:
     inline bool init_splice_pipes() { return true; }
 #endif
 
-    bool writePending_;
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
