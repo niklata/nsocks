@@ -1556,12 +1556,12 @@ void SocksClient::udp_remote_socket_read()
              udp_->out_bufs_.push_back(boost::asio::buffer(udp_->out_header_));
              udp_->out_bufs_.push_back(boost::asio::buffer(udp_->outbuf_));
              udp_->client_socket_.async_send_to
-                 (udp_->out_bufs_, udp_->client_remote_endpoint_,
+                 (udp_->out_bufs_, udp_->client_remote_endpoint_, strand_.wrap(
                   [this, sfd](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
                   {
                       udp_remote_socket_read();
-                  });
+                  }));
          }));
 }
 
