@@ -223,8 +223,6 @@ private:
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
     boost::asio::posix::stream_descriptor pToClient_;
-    bool pToRemote_reading_;
-    bool pToClient_reading_;
     bool init_splice_pipes();
     void terminate_client();
     void terminate_remote();
@@ -244,8 +242,6 @@ private:
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
-    bool client_socket_reading_;
-    bool remote_socket_reading_;
 
     inline void set_remote_socket_options()
     {

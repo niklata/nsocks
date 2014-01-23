@@ -296,11 +296,9 @@ SocksClient::SocksClient(ba::io_service &io_service,
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_(io_service), pToClient_(io_service),
-          pToRemote_reading_(false), pToClient_reading_(false),
 #endif
           writePending_(false),
-          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
-          client_socket_reading_(false), remote_socket_reading_(false)
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
 {
     ++socks_alive_count;
     client_socket_.non_blocking(true);
@@ -846,9 +844,6 @@ void SocksClient::terminate_remote()
 // Write data read from the client socket to the connect socket.
 void SocksClient::do_client_socket_connect_read()
 {
-    if (client_socket_reading_)
-        return;
-    client_socket_reading_ = true;
     auto sfd = shared_from_this();
     // Client is trying to send data to the remote server.  Splice it to the
     // pToRemote_ pipe.
@@ -857,17 +852,18 @@ void SocksClient::do_client_socket_connect_read()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             client_socket_reading_ = false;
              if (ec) {
-                 terminate_client();
-                 return;
-             }
-             auto bytes = client_socket_.available();
-             if (!bytes) {
+                 std::cerr << "\nEC-C=" << ec << "\n";
                  terminate_client();
                  return;
              }
              try {
+                 auto bytes = client_socket_.available();
+                 if (!bytes) {
+                     std::cerr << "\nZEROBYTES-C\n";
+                     terminate_client();
+                     return;
+                 }
                  spliceClientToPipe(bytes);
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
@@ -877,8 +873,6 @@ void SocksClient::do_client_socket_connect_read()
              }
              try {
                  splicePipeToRemote();
-                 if (pToRemote_len_)
-                     do_sdToRemote_read();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
@@ -892,9 +886,6 @@ void SocksClient::do_client_socket_connect_read()
 // Write data read from the connect socket to the client socket.
 void SocksClient::do_remote_socket_read()
 {
-    if (remote_socket_reading_)
-        return;
-    remote_socket_reading_ = true;
     auto sfd = shared_from_this();
     // Remote server is trying to send data to the client.  Splice it to the
     // pToClient_ pipe.
@@ -903,17 +894,18 @@ void SocksClient::do_remote_socket_read()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             remote_socket_reading_ = false;
              if (ec) {
-                 terminate_remote();
-                 return;
-             }
-             auto bytes = remote_socket_.available();
-             if (!bytes) {
+                 std::cerr << "\nEC-R=" << ec << "\n";
                  terminate_remote();
                  return;
              }
              try {
+                 auto bytes = remote_socket_.available();
+                 if (!bytes) {
+                     std::cerr << "\nZEROBYTES-R\n";
+                     terminate_remote();
+                     return;
+                 }
                  spliceRemoteToPipe(bytes);
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
@@ -923,8 +915,6 @@ void SocksClient::do_remote_socket_read()
              }
              try {
                  splicePipeToClient();
-                 if (pToClient_len_)
-                     do_sdToClient_read();
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
@@ -937,9 +927,6 @@ void SocksClient::do_remote_socket_read()
 
 void SocksClient::do_sdToRemote_read()
 {
-    if (pToRemote_reading_)
-        return;
-    pToRemote_reading_ = true;
     //std::cerr << "Polling sdToRemote for reads.\n";
     auto sfd = shared_from_this();
     // The pToRemote_ pipe has data.  Splice it to remote_socket_.
@@ -948,7 +935,6 @@ void SocksClient::do_sdToRemote_read()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             pToRemote_reading_ = false;
              if (ec) {
                  std::cerr << "crPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
@@ -972,9 +958,6 @@ void SocksClient::do_sdToRemote_read()
 
 void SocksClient::do_sdToClient_read()
 {
-    if (pToClient_reading_)
-        return;
-    pToClient_reading_ = true;
     //std::cerr << "Polling sdToClient for reads.\n";
     auto sfd = shared_from_this();
     // The pToClient_ pipe has data.  Splice it to client_socket_.
@@ -983,7 +966,6 @@ void SocksClient::do_sdToClient_read()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             pToClient_reading_ = false;
              if (ec) {
                  std::cerr << "rcPIPE error: "
                            << boost::system::system_error(ec).what() << "\n";
