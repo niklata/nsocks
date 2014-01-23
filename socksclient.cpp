@@ -1073,7 +1073,7 @@ void SocksClient::do_client_socket_connect_read()
              client_buf_.commit(bytes_xferred);
              // Client is trying to send data to the remote server.  Write it
              // to the remote_socket_.
-             ba::async_write(remote_socket_, client_buf_,
+             ba::async_write(remote_socket_, client_buf_, strand_.wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1083,7 +1083,7 @@ void SocksClient::do_client_socket_connect_read()
                                  }
                                  client_buf_.consume(bytes_xferred);
                                  do_client_socket_connect_read();
-                             });
+                             }));
          }));
 }
 
@@ -1105,7 +1105,7 @@ void SocksClient::do_remote_socket_read()
              remote_buf_.commit(bytes_xferred);
              // Remote server is trying to send data to the client.  Write it
              // to the client_socket_.
-             ba::async_write(client_socket_, remote_buf_,
+             ba::async_write(client_socket_, remote_buf_, strand_.wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1115,7 +1115,7 @@ void SocksClient::do_remote_socket_read()
                                  }
                                  remote_buf_.consume(bytes_xferred);
                                  do_remote_socket_read();
-                             });
+                             }));
          }));
 }
 
