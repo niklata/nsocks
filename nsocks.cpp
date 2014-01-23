@@ -74,9 +74,16 @@ static std::vector<std::unique_ptr<ClientListener>> listeners;
 static int nsocks_uid, nsocks_gid;
 static std::size_t num_worker_threads = 1;
 
-static void sighandler(int sig)
+static boost::asio::signal_set asio_signal_set(io_service);
+
+static void process_signals()
 {
-    io_service.stop();
+    asio_signal_set.add(SIGINT);
+    asio_signal_set.add(SIGTERM);
+    asio_signal_set.async_wait(
+        [](const boost::system::error_code &, int signum) {
+            io_service.stop();
+        });
 }
 
 static void fix_signals(void) {
@@ -91,15 +98,6 @@ static void fix_signals(void) {
     sigaddset(&mask, SIGHUP);
     if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0)
         suicide("sigprocmask failed");
-
-    struct sigaction sa;
-    memset(&sa, 0, sizeof (struct sigaction));
-    sa.sa_handler = sighandler;
-    sigemptyset(&sa.sa_mask);
-    sigaddset(&sa.sa_mask, SIGINT);
-    sigaddset(&sa.sa_mask, SIGTERM);
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
 }
 
 #if 0
@@ -456,6 +454,7 @@ int main(int ac, char *av[])
     gflags_log_name = const_cast<char *>("nsocks");
 
     process_options(ac, av);
+    process_signals();
 
     if (num_worker_threads > 1) {
         std::vector<std::thread> threads;
