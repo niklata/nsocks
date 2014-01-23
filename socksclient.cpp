@@ -30,8 +30,6 @@
 #include <unordered_map>
 #include <atomic>
 #include <mutex>
-#include <boost/thread/shared_mutex.hpp>
-#include <boost/thread/locks.hpp>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -157,7 +155,7 @@ public:
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {
-        std::lock_guard<boost::shared_mutex> wl(lock_);
+        std::lock_guard<std::mutex> wl(lock_);
         ssc->setClientType(client_type_);
         hash_.emplace(ssc.get(), ssc);
         assert(ct_);
@@ -166,13 +164,13 @@ public:
     }
     bool remove(SocksClient* sc)
     {
-        std::lock_guard<boost::shared_mutex> wl(lock_);
+        std::lock_guard<std::mutex> wl(lock_);
         return !!hash_.erase(sc);
     }
     boost::optional<std::shared_ptr<SocksClient>>
     find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
     {
-        boost::shared_lock<boost::shared_mutex> rl(lock_);
+        std::lock_guard<std::mutex> wl(lock_);
         for (auto &i: hash_) {
             if (i.second->matches_dst(addr, port))
                 return i.second;
@@ -181,7 +179,7 @@ public:
     }
     std::size_t size() const { return hash_.size(); }
 private:
-    boost::shared_mutex lock_;
+    std::mutex lock_;
     SocksClientType client_type_;
     std::unique_ptr<ephConnTracker> &ct_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
