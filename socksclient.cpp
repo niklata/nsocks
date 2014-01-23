@@ -406,7 +406,8 @@ void SocksClient::cancel()
 
 void SocksClient::terminate()
 {
-    assert(state_ != STATE_TERMINATED);
+    if (state_ == STATE_TERMINATED)
+        return;
     state_ = STATE_TERMINATED;
     cancel();
     untrack();
