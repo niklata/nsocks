@@ -217,8 +217,8 @@ private:
 
 #ifdef USE_SPLICE
     // Used for splice().
-    size_t pToRemote_len_;
-    size_t pToClient_len_;
+    std::atomic<std::size_t> pToRemote_len_;
+    std::atomic<std::size_t> pToClient_len_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
