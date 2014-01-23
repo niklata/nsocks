@@ -28,7 +28,6 @@
 
 #include <iostream>
 #include <unordered_map>
-#include <atomic>
 #include <mutex>
 
 #include <unistd.h>
@@ -85,15 +84,10 @@ public:
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {
-        bool set_timer(false);
-        {
-            std::lock_guard<std::mutex> wl(lock_);
-            hash_[hidx_].emplace(ssc.get(), ssc);
-            if (swapTimer_.expires_from_now() <=
-                boost::posix_time::time_duration(0,0,0,0))
-                set_timer = true;
-        }
-        if (set_timer)
+        std::lock_guard<std::mutex> wl(lock_);
+        hash_[hidx_].emplace(ssc.get(), ssc);
+        if (swapTimer_.expires_from_now() <=
+            boost::posix_time::time_duration(0,0,0,0))
             setTimer();
     }
     bool remove(std::size_t hidx, SocksClient* sc)
@@ -102,14 +96,14 @@ public:
         return !!hash_[hidx].erase(sc);
     }
     bool remove(SocksClient* sc) {
-        if (!remove(hidx_, sc))
-            return remove(hidx_ ^ 1, sc);
+        std::size_t hi = hidx_;
+        if (!remove(hi, sc))
+            return remove(hi ^ 1, sc);
         return true;
     }
     std::size_t size() { return hash_[0].size() + hash_[1].size(); }
 private:
     void doSwap() {
-        std::lock_guard<std::mutex> wl(lock_);
         std::size_t hnext = hidx_ ^ 1;
         // std::cerr << "doSwap wiped " << hash_[hnext].size()
         //           << " items from hash " << hnext << "\n";
@@ -119,20 +113,20 @@ private:
         hidx_ = hnext;
     }
     void setTimer(void) {
-        std::lock_guard<std::mutex> wl(lock_);
         swapTimer_.expires_from_now(boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
                                   if (error)
                                       return;
+                                  std::lock_guard<std::mutex> wl(lock_);
                                   doSwap();
                                   if (size())
                                       setTimer();
                               });
     }
     std::mutex lock_;
-    std::size_t cyclefreq_;
-    std::size_t hidx_;
+    const std::size_t cyclefreq_;
+    std::atomic<std::size_t> hidx_;
     ba::deadline_timer swapTimer_;
     std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_[2];
 };

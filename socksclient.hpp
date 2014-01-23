@@ -31,6 +31,7 @@
 
 #include <string>
 #include <memory>
+#include <atomic>
 #include <netdb.h>
 
 #include <boost/asio.hpp>
@@ -206,7 +207,7 @@ private:
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     boost::asio::ip::tcp::resolver tcp_resolver_;
-    SocksClientState state_;
+    std::atomic<SocksClientState> state_;
     SocksClientType client_type_;
     CommandCode cmd_code_;
     AddressType addr_type_;
