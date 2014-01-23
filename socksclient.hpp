@@ -226,8 +226,8 @@ private:
     bool init_splice_pipes();
     void terminate_client();
     void terminate_remote();
-    void do_sdToRemote_read();
-    void do_sdToClient_read();
+    void flushPipeToRemote();
+    void flushPipeToClient();
     void spliceClientToPipe(std::size_t bytes);
     void spliceRemoteToPipe(std::size_t bytes);
     void splicePipeToClient();

@@ -816,9 +816,15 @@ void SocksClient::terminate_client()
     if (state_ != STATE_TERMINATED) {
         if (remote_socket_.is_open() && pToRemote_len_ > 0) {
             boost::system::error_code ec;
-            remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
             remote_socket_.cancel(ec);
-            do_sdToRemote_read();
+            remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+            try {
+                splicePipeToRemote();
+            } catch (const std::runtime_error &e) {
+                terminate();
+            }
+            if (pToRemote_len_ > 0)
+                strand_.post([this]() { flushPipeToRemote(); });
         } else
             terminate();
     }
@@ -830,9 +836,15 @@ void SocksClient::terminate_remote()
     if (state_ != STATE_TERMINATED) {
         if (client_socket_.is_open() && pToClient_len_ > 0) {
             boost::system::error_code ec;
-            client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
             client_socket_.cancel(ec);
-            do_sdToClient_read();
+            client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+            try {
+                splicePipeToClient();
+            } catch (const std::runtime_error &e) {
+                terminate();
+            }
+            if (pToClient_len_ > 0)
+                strand_.post([this]() { flushPipeToClient(); });
         } else
             terminate();
     }
@@ -850,8 +862,12 @@ void SocksClient::do_client_socket_connect_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "\nEC-C=" << ec << "\n";
-                 terminate_client();
+                 if (ec == ba::error::operation_aborted) {
+                     std::cerr << "\nEC-C=operation_aborted\n";
+                 } else {
+                     std::cerr << "\nEC-C=" << ec << "\n";
+                     terminate_client();
+                 }
                  return;
              }
              try {
@@ -892,8 +908,12 @@ void SocksClient::do_remote_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "\nEC-R=" << ec << "\n";
-                 terminate_remote();
+                 if (ec == ba::error::operation_aborted) {
+                     std::cerr << "\nEC-R=operation_aborted\n";
+                 } else {
+                     std::cerr << "\nEC-R=" << ec << "\n";
+                     terminate_remote();
+                 }
                  return;
              }
              try {
@@ -922,7 +942,7 @@ void SocksClient::do_remote_socket_read()
          }));
 }
 
-void SocksClient::do_sdToRemote_read()
+void SocksClient::flushPipeToRemote()
 {
     //std::cerr << "Polling sdToRemote for reads.\n";
     auto sfd = shared_from_this();
@@ -933,27 +953,32 @@ void SocksClient::do_sdToRemote_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "crPIPE error: "
-                           << boost::system::system_error(ec).what() << "\n";
-                 terminate_remote();
+                 if (ec == ba::error::operation_aborted) {
+                     std::cerr << "flushPipeToRemote aborted\n";
+                 } else {
+                     std::cerr << "flushPipeToRemote error: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
+                     terminate();
+                 }
                  return;
              }
              try {
                  splicePipeToRemote();
                  if (pToRemote_len_ > 0)
-                     do_sdToRemote_read();
-                 else if (!pToClient_.is_open())
+                     flushPipeToRemote();
+                 else
                      terminate();
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_sdToRemote_read() TERMINATE: "
+                 std::cerr << "flushPipeToRemote() TERMINATE: "
                            << e.what() << "\n";
-                 terminate_remote();
+                 terminate();
                  return;
              }
          }));
 }
 
-void SocksClient::do_sdToClient_read()
+void SocksClient::flushPipeToClient()
 {
     //std::cerr << "Polling sdToClient for reads.\n";
     auto sfd = shared_from_this();
@@ -964,21 +989,26 @@ void SocksClient::do_sdToClient_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "rcPIPE error: "
-                           << boost::system::system_error(ec).what() << "\n";
-                 terminate_client();
+                 if (ec == ba::error::operation_aborted) {
+                     std::cerr << "flushPipeToClient aborted\n";
+                 } else {
+                     std::cerr << "flushPipeToClient error: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
+                     terminate();
+                 }
                  return;
              }
              try {
                  splicePipeToClient();
                  if (pToClient_len_ > 0)
-                     do_sdToClient_read();
-                 else if (!pToRemote_.is_open())
+                     flushPipeToClient();
+                 else
                      terminate();
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_sdToClient_read() TERMINATE: "
+                 std::cerr << "flushPipeToClient() TERMINATE: "
                            << e.what() << "\n";
-                 terminate_client();
+                 terminate();
                  return;
              }
          }));
