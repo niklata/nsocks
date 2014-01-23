@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <thread>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -71,6 +72,7 @@ namespace po = boost::program_options;
 boost::asio::io_service io_service;
 static std::vector<std::unique_ptr<ClientListener>> listeners;
 static int nsocks_uid, nsocks_gid;
+static std::size_t num_worker_threads = 1;
 
 static void sighandler(int sig)
 {
@@ -181,6 +183,8 @@ static po::variables_map fetch_options(int ac, char *av[])
          "user name that nsocks should run as")
         ("group,g", po::value<std::string>(),
          "group name that nsocks should run as")
+        ("threads,T", po::value<std::size_t>()->default_value(1),
+         "number of worker threads that nsocks should use")
         ("chunksize,S", po::value<std::size_t>(),
          "size of memory buffer used to proxy data between sockets")
         ("listenqueue,L", po::value<std::size_t>(),
@@ -353,6 +357,8 @@ static void process_options(int ac, char *av[])
             } else suicide("invalid gid specified");
         }
     }
+    if (vm.count("threads"))
+        num_worker_threads = vm["threads"].as<std::size_t>();
     if (vm.count("chunksize")) {
         auto t = vm["chunksize"].as<std::size_t>();
         set_buffer_chunk_size(t);
@@ -451,7 +457,14 @@ int main(int ac, char *av[])
 
     process_options(ac, av);
 
-    io_service.run();
+    if (num_worker_threads > 1) {
+        std::vector<std::thread> threads;
+        for (std::size_t i = 0; i < num_worker_threads; ++i)
+            threads.emplace_back([]() { io_service.run(); });
+        for (std::size_t i = 0; i < threads.size(); ++i)
+            threads[i].join();
+    } else
+        io_service.run();
 
     std::exit(EXIT_SUCCESS);
 }

@@ -194,6 +194,8 @@ private:
         std::unique_ptr<UDPFrags> frags_;
     };
 
+    boost::asio::strand strand_;
+
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     std::string dst_hostname_;
