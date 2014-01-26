@@ -872,12 +872,19 @@ void SocksClient::do_client_socket_connect_read()
              }
              try {
                  auto bytes = client_socket_.available();
-                 if (!bytes) {
-                     std::cerr << "\nZEROBYTES-C\n";
-                     terminate_client();
-                     return;
+                 if (bytes) {
+                     spliceClientToPipe(bytes);
+                 } else {
+                     std::cerr << "\nZEROBYTES-C";
+                     if (pToClient_len_ == 0) {
+                         std::cerr << " -> terminate_client()\n";
+                         terminate_client();
+                         return;
+                     } else {
+                         std::cerr << " -> splicePipeToClient()\n";
+                         splicePipeToClient();
+                     }
                  }
-                 spliceClientToPipe(bytes);
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << e.what() << "\n";
@@ -918,12 +925,19 @@ void SocksClient::do_remote_socket_read()
              }
              try {
                  auto bytes = remote_socket_.available();
-                 if (!bytes) {
-                     std::cerr << "\nZEROBYTES-R\n";
-                     terminate_remote();
-                     return;
+                 if (bytes) {
+                     spliceRemoteToPipe(bytes);
+                 } else {
+                     std::cerr << "\nZEROBYTES-R";
+                     if (pToRemote_len_ == 0) {
+                         std::cerr << " -> terminate_remote()\n";
+                         terminate_remote();
+                         return;
+                     } else {
+                         std::cerr << " -> splicePipeToRemote()\n";
+                         splicePipeToRemote();
+                     }
                  }
-                 spliceRemoteToPipe(bytes);
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << e.what() << "\n";
