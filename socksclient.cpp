@@ -289,6 +289,9 @@ static std::atomic<std::size_t> socks_alive_count;
 SocksClient::SocksClient(ba::io_service &io_service,
                          ba::ip::tcp::socket socket)
         : strand_(io_service),
+#ifndef USE_SPLICE
+          strandR_(io_service),
+#endif
           client_socket_(std::move(socket)), remote_socket_(io_service),
           tcp_resolver_(io_service), state_(STATE_WAITGREET),
           client_type_(SCT_INIT), ibSiz_(0),
@@ -1091,7 +1094,7 @@ void SocksClient::do_remote_socket_read()
         = remote_buf_.prepare(buffer_chunk_size);
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::buffer(ibm), strand_.wrap(
+        (ba::buffer(ibm), strandR_.wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1102,7 +1105,7 @@ void SocksClient::do_remote_socket_read()
              remote_buf_.commit(bytes_xferred);
              // Remote server is trying to send data to the client.  Write it
              // to the client_socket_.
-             ba::async_write(client_socket_, remote_buf_, strand_.wrap(
+             ba::async_write(client_socket_, remote_buf_, strandR_.wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
