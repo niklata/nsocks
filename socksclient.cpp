@@ -958,9 +958,8 @@ void SocksClient::do_remote_socket_read()
 
 void SocksClient::flushPipeToRemote()
 {
-    //std::cerr << "Polling sdToRemote for reads.\n";
+    std::cerr << "\nflushPipeToRemote()\n";
     auto sfd = shared_from_this();
-    // The pToRemote_ pipe has data.  Splice it to remote_socket_.
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
@@ -979,24 +978,24 @@ void SocksClient::flushPipeToRemote()
              }
              try {
                  splicePipeToRemote();
-                 if (pToRemote_len_ > 0)
-                     flushPipeToRemote();
-                 else
-                     terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "flushPipeToRemote() TERMINATE: "
                            << e.what() << "\n";
                  terminate();
                  return;
              }
+             if (pToRemote_len_ == 0) {
+                 terminate();
+                 return;
+             }
+             flushPipeToRemote();
          }));
 }
 
 void SocksClient::flushPipeToClient()
 {
-    //std::cerr << "Polling sdToClient for reads.\n";
+    std::cerr << "\nflushPipeToClient()\n";
     auto sfd = shared_from_this();
-    // The pToClient_ pipe has data.  Splice it to client_socket_.
     sdToClient_.async_read_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
@@ -1015,16 +1014,17 @@ void SocksClient::flushPipeToClient()
              }
              try {
                  splicePipeToClient();
-                 if (pToClient_len_ > 0)
-                     flushPipeToClient();
-                 else
-                     terminate();
              } catch (const std::runtime_error &e) {
                  std::cerr << "flushPipeToClient() TERMINATE: "
                            << e.what() << "\n";
                  terminate();
                  return;
              }
+             if (pToClient_len_ == 0) {
+                 terminate();
+                 return;
+             }
+             flushPipeToClient();
          }));
 }
 
