@@ -48,7 +48,6 @@
 #include "make_unique.hpp"
 
 #define MAX_BIND_TRIES 10
-#define SPLICE_SIZE (1024 * 1024)
 
 namespace ba = boost::asio;
 
@@ -797,24 +796,6 @@ bool SocksClient::init_splice_pipes()
     return true;
 }
 
-// Can throw std::runtime_error
-static size_t spliceit(int infd, int outfd)
-{
-  retry:
-    auto spliced = splice(infd, NULL, outfd, NULL, SPLICE_SIZE,
-                          SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
-    if (spliced <= 0) {
-        if (spliced == 0)
-            throw std::out_of_range("eof");
-        switch (errno) {
-            case EAGAIN: return 0;
-            case EINTR: goto retry;
-            default: throw std::runtime_error(strerror(errno));
-        }
-    }
-    return spliced;
-}
-
 void SocksClient::terminate_client()
 {
     close_client_socket();
@@ -823,12 +804,9 @@ void SocksClient::terminate_client()
             boost::system::error_code ec;
             remote_socket_.cancel(ec);
             remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            try {
-                splicePipeToRemote();
-            } catch (...) {
+            if (!splicePipeToRemote())
                 terminate();
-            }
-            if (pToRemote_len_ > 0)
+            else if (pToRemote_len_ > 0)
                 strand_.post([this]() { flushPipeToRemote(); });
         } else
             terminate();
@@ -843,12 +821,9 @@ void SocksClient::terminate_remote()
             boost::system::error_code ec;
             client_socket_.cancel(ec);
             client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            try {
-                splicePipeToClient();
-            } catch (...) {
+            if (!splicePipeToClient())
                 terminate();
-            }
-            if (pToClient_len_ > 0)
+            else if (pToClient_len_ > 0)
                 strand_.post([this]() { flushPipeToClient(); });
         } else
             terminate();
@@ -885,9 +860,7 @@ void SocksClient::do_client_socket_connect_read()
                      return;
                  } else {
                      std::cerr << " -> splicePipeToClient()\n";
-                     try {
-                         splicePipeToClient();
-                     } catch (...) {
+                     if (!splicePipeToClient()) {
                          terminate_client();
                          return;
                      }
@@ -898,9 +871,7 @@ void SocksClient::do_client_socket_connect_read()
                  terminate_client();
                  return;
              }
-             try {
-                 splicePipeToRemote();
-             } catch (...) {
+             if (!splicePipeToRemote()) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
                            << "\n";
                  terminate_remote();
@@ -940,9 +911,7 @@ void SocksClient::do_remote_socket_read()
                      return;
                  } else {
                      std::cerr << " -> splicePipeToRemote()\n";
-                     try {
-                         splicePipeToRemote();
-                     } catch (...) {
+                     if (!splicePipeToRemote()) {
                          terminate_remote();
                          return;
                      }
@@ -953,9 +922,7 @@ void SocksClient::do_remote_socket_read()
                  terminate_remote();
                  return;
              }
-             try {
-                 splicePipeToClient();
-             } catch (...) {
+             if (!splicePipeToClient()) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
                            << "\n";
                  terminate_client();
@@ -985,9 +952,7 @@ void SocksClient::flushPipeToRemote()
                  }
                  return;
              }
-             try {
-                 splicePipeToRemote();
-             } catch (...) {
+             if (!splicePipeToRemote()) {
                  std::cerr << "flushPipeToRemote() TERMINATE: " << "\n";
                  terminate();
                  return;
@@ -1020,9 +985,7 @@ void SocksClient::flushPipeToClient()
                  }
                  return;
              }
-             try {
-                 splicePipeToClient();
-             } catch (...) {
+             if (!splicePipeToClient()) {
                  std::cerr << "flushPipeToClient() TERMINATE: " << "\n";
                  terminate();
                  return;
@@ -1033,30 +996,6 @@ void SocksClient::flushPipeToClient()
              }
              flushPipeToClient();
          }));
-}
-
-void SocksClient::spliceClientToPipe()
-{
-    pToRemote_len_ += spliceit(client_socket_.native_handle(),
-                               pToRemote_.native_handle());
-}
-
-void SocksClient::spliceRemoteToPipe()
-{
-    pToClient_len_ += spliceit(remote_socket_.native_handle(),
-                               pToClient_.native_handle());
-}
-
-void SocksClient::splicePipeToClient()
-{
-    pToClient_len_ -= spliceit(sdToClient_.native_handle(),
-                               client_socket_.native_handle());
-}
-
-void SocksClient::splicePipeToRemote()
-{
-    pToRemote_len_ -= spliceit(sdToRemote_.native_handle(),
-                               remote_socket_.native_handle());
 }
 #else
 // Write data read from the client socket to the connect socket.

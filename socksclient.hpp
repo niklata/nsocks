@@ -37,6 +37,8 @@
 #include <boost/asio.hpp>
 #include <boost/utility.hpp>
 
+#define SPLICE_SIZE (1024 * 1024)
+
 enum SocksClientType {
     SCT_INIT = 0,
     SCT_CONNECT,
@@ -76,6 +78,24 @@ public:
     }
 
 private:
+    // Can throw std::runtime_error or std::out_of_range
+    static size_t spliceit(int infd, int outfd)
+    {
+      retry:
+        auto spliced = splice(infd, NULL, outfd, NULL, SPLICE_SIZE,
+                              SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
+        if (spliced <= 0) {
+            if (spliced == 0)
+                throw std::out_of_range("eof");
+            switch (errno) {
+                case EAGAIN: return 0;
+                case EINTR: goto retry;
+                default: throw std::runtime_error(strerror(errno));
+            }
+        }
+        return spliced;
+    }
+
     enum ParseState {
         ParseInvalid,
         ParseBadPort,
@@ -231,10 +251,35 @@ private:
     void terminate_remote();
     void flushPipeToRemote();
     void flushPipeToClient();
-    void spliceClientToPipe();
-    void spliceRemoteToPipe();
-    void splicePipeToClient();
-    void splicePipeToRemote();
+    inline void spliceClientToPipe()
+    {
+        pToRemote_len_ += spliceit(client_socket_.native_handle(),
+                                   pToRemote_.native_handle());
+    }
+
+    inline void spliceRemoteToPipe()
+    {
+        pToClient_len_ += spliceit(remote_socket_.native_handle(),
+                                   pToClient_.native_handle());
+    }
+
+    inline bool splicePipeToClient()
+    {
+        try {
+            pToClient_len_ -= spliceit(sdToClient_.native_handle(),
+                                       client_socket_.native_handle());
+        } catch (...) {return false; }
+        return true;
+    }
+
+    inline bool splicePipeToRemote()
+    {
+        try {
+            pToRemote_len_ -= spliceit(sdToRemote_.native_handle(),
+                                       remote_socket_.native_handle());
+        } catch (...) {return false; }
+        return true;
+    }
 #else
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
@@ -322,6 +367,8 @@ extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_udp_allow_masks;
+
+#undef SPLICE_SIZE
 
 #endif /* NK_SOCKSCLIENT_H */
 
