@@ -231,8 +231,8 @@ private:
     void terminate_remote();
     void flushPipeToRemote();
     void flushPipeToClient();
-    void spliceClientToPipe(std::size_t bytes);
-    void spliceRemoteToPipe(std::size_t bytes);
+    void spliceClientToPipe();
+    void spliceRemoteToPipe();
     void splicePipeToClient();
     void splicePipeToRemote();
 #else
