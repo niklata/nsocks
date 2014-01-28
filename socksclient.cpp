@@ -841,10 +841,10 @@ void SocksClient::do_client_socket_connect_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec == ba::error::operation_aborted) {
-                     std::cerr << "\nEC-C=operation_aborted\n";
-                 } else {
-                     std::cerr << "\nEC-C=" << ec << "\n";
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "EC-C: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
                      terminate_client();
                  }
                  return;
@@ -852,13 +852,11 @@ void SocksClient::do_client_socket_connect_read()
              try {
                  auto x = spliceClientToPipe();
                  if (!x) {
-                     std::cerr << "\nZEROBYTES-C";
                      if (pToClient_len_ == 0) {
-                         std::cerr << " -> terminate_client()\n";
                          terminate_client();
                          return;
                      } else {
-                         std::cerr << " -> splicePipeToClient()\n";
+                         std::cerr << "\nZEROBYTES-C -> splicePipeToClient()\n";
                          if (!splicePipeToClient()) {
                              terminate_client();
                              return;
@@ -893,10 +891,10 @@ void SocksClient::do_remote_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec == ba::error::operation_aborted) {
-                     std::cerr << "\nEC-R=operation_aborted\n";
-                 } else {
-                     std::cerr << "\nEC-R=" << ec << "\n";
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "EC-R: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
                      terminate_remote();
                  }
                  return;
@@ -904,13 +902,11 @@ void SocksClient::do_remote_socket_read()
              try {
                  auto x = spliceRemoteToPipe();
                  if (!x) {
-                     std::cerr << "\nZEROBYTES-R";
                      if (pToRemote_len_ == 0) {
-                         std::cerr << " -> terminate_remote()\n";
                          terminate_remote();
                          return;
                      } else {
-                         std::cerr << " -> splicePipeToRemote()\n";
+                         std::cerr << "\nZEROBYTES-R -> splicePipeToRemote()\n";
                          if (!splicePipeToRemote()) {
                              terminate_remote();
                              return;
@@ -943,9 +939,7 @@ void SocksClient::flushPipeToRemote()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec == ba::error::operation_aborted) {
-                     std::cerr << "flushPipeToRemote aborted\n";
-                 } else {
+                 if (ec != ba::error::operation_aborted) {
                      std::cerr << "flushPipeToRemote error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
@@ -976,9 +970,7 @@ void SocksClient::flushPipeToClient()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec == ba::error::operation_aborted) {
-                     std::cerr << "flushPipeToClient aborted\n";
-                 } else {
+                 if (ec != ba::error::operation_aborted) {
                      std::cerr << "flushPipeToClient error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
