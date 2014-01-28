@@ -761,18 +761,6 @@ SocksClient::errorToReplyCode(const boost::system::error_code &ec)
     return rc;
 }
 
-static const char * const replyCodeString[] = {
-    "Success",
-    "Fail",
-    "Deny",
-    "NetUnreach",
-    "HostUnreach",
-    "ConnRefused",
-    "TTLExpired",
-    "RplCmdNotSupp",
-    "RplAddrNotSupp",
-};
-
 #ifdef USE_SPLICE
 bool SocksClient::init_splice_pipes()
 {
@@ -1524,6 +1512,18 @@ void SocksClient::send_reply_binds(ba::ip::tcp::endpoint ep)
     outbuf_.append(1, portu.b[1]);
 }
 
+static const char * const replyCodeString[] = {
+    "Success",
+    "Fail",
+    "Deny",
+    "NetUnreach",
+    "HostUnreach",
+    "ConnRefused",
+    "TTLExpired",
+    "RplCmdNotSupp",
+    "RplAddrNotSupp",
+};
+
 void SocksClient::send_reply(ReplyCode replycode)
 {
     outbuf_.clear();
@@ -1558,14 +1558,13 @@ void SocksClient::send_reply(ReplyCode replycode)
                      std::size_t bytes_xferred)
          {
              if (ec || sentReplyType_ != RplSuccess) {
-                 // std::cout << "Connection killed before handshake completed from "
-                 //     << client_socket_.remote_endpoint().address()
-                 //     << " to "
-                 //     << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                 //         : dst_hostname_)
-                 //     << ":" << dst_port_
-                 //     << " with reply code='" << replyCodeString[sentReplyType_]
-                 //     << "'\n";
+                 std::cout << "REJECT @"
+                     << client_socket_.remote_endpoint().address()
+                     << " (none) -> "
+                     << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                               : dst_hostname_)
+                     << ":" << dst_port_
+                     << " [" << replyCodeString[sentReplyType_] << "]\n";
                  terminate();
                  return;
              }
