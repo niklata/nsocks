@@ -34,7 +34,6 @@
 #include <sys/types.h>
 #include <pwd.h>
 
-#include <boost/optional.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/dynamic_bitset.hpp>
 
@@ -851,18 +850,19 @@ void SocksClient::do_client_socket_connect_read()
                  return;
              }
              try {
-                 spliceClientToPipe();
-             } catch (const std::out_of_range &) {
-                 std::cerr << "\nZEROBYTES-C";
-                 if (pToClient_len_ == 0) {
-                     std::cerr << " -> terminate_client()\n";
-                     terminate_client();
-                     return;
-                 } else {
-                     std::cerr << " -> splicePipeToClient()\n";
-                     if (!splicePipeToClient()) {
+                 auto x = spliceClientToPipe();
+                 if (!x) {
+                     std::cerr << "\nZEROBYTES-C";
+                     if (pToClient_len_ == 0) {
+                         std::cerr << " -> terminate_client()\n";
                          terminate_client();
                          return;
+                     } else {
+                         std::cerr << " -> splicePipeToClient()\n";
+                         if (!splicePipeToClient()) {
+                             terminate_client();
+                             return;
+                         }
                      }
                  }
              } catch (const std::runtime_error &e) {
@@ -902,18 +902,19 @@ void SocksClient::do_remote_socket_read()
                  return;
              }
              try {
-                 spliceRemoteToPipe();
-             } catch (const std::out_of_range &) {
-                 std::cerr << "\nZEROBYTES-R";
-                 if (pToRemote_len_ == 0) {
-                     std::cerr << " -> terminate_remote()\n";
-                     terminate_remote();
-                     return;
-                 } else {
-                     std::cerr << " -> splicePipeToRemote()\n";
-                     if (!splicePipeToRemote()) {
+                 auto x = spliceRemoteToPipe();
+                 if (!x) {
+                     std::cerr << "\nZEROBYTES-R";
+                     if (pToRemote_len_ == 0) {
+                         std::cerr << " -> terminate_remote()\n";
                          terminate_remote();
                          return;
+                     } else {
+                         std::cerr << " -> splicePipeToRemote()\n";
+                         if (!splicePipeToRemote()) {
+                             terminate_remote();
+                             return;
+                         }
                      }
                  }
              } catch (const std::runtime_error &e) {

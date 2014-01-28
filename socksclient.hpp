@@ -36,6 +36,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/utility.hpp>
+#include <boost/optional.hpp>
 
 #define SPLICE_SIZE (1024 * 1024)
 
@@ -78,17 +79,17 @@ public:
     }
 
 private:
-    // Can throw std::runtime_error or std::out_of_range
-    static size_t spliceit(int infd, int outfd)
+    // Can throw std::runtime_error
+    static inline boost::optional<std::size_t> spliceit(int infd, int outfd)
     {
       retry:
         auto spliced = splice(infd, NULL, outfd, NULL, SPLICE_SIZE,
                               SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
         if (spliced <= 0) {
             if (spliced == 0)
-                throw std::out_of_range("eof");
+                return boost::optional<std::size_t>();
             switch (errno) {
-                case EAGAIN: return 0;
+                case EAGAIN: return boost::optional<std::size_t>(0);
                 case EINTR: goto retry;
                 default: throw std::runtime_error(strerror(errno));
             }
@@ -251,23 +252,31 @@ private:
     void terminate_remote();
     void flushPipeToRemote();
     void flushPipeToClient();
-    inline void spliceClientToPipe()
+    inline bool spliceClientToPipe()
     {
-        pToRemote_len_ += spliceit(client_socket_.native_handle(),
-                                   pToRemote_.native_handle());
+        auto n = spliceit(client_socket_.native_handle(),
+                          pToRemote_.native_handle());
+        if (!n) return false;
+        pToRemote_len_ += *n;
+        return true;
     }
 
-    inline void spliceRemoteToPipe()
+    inline bool spliceRemoteToPipe()
     {
-        pToClient_len_ += spliceit(remote_socket_.native_handle(),
-                                   pToClient_.native_handle());
+        auto n = spliceit(remote_socket_.native_handle(),
+                          pToClient_.native_handle());
+        if (!n) return false;
+        pToClient_len_ += *n;
+        return true;
     }
 
     inline bool splicePipeToClient()
     {
         try {
-            pToClient_len_ -= spliceit(sdToClient_.native_handle(),
-                                       client_socket_.native_handle());
+            auto n = spliceit(sdToClient_.native_handle(),
+                              client_socket_.native_handle());
+            if (!n) return false;
+            pToClient_len_ -= *n;
         } catch (...) {return false; }
         return true;
     }
@@ -275,8 +284,10 @@ private:
     inline bool splicePipeToRemote()
     {
         try {
-            pToRemote_len_ -= spliceit(sdToRemote_.native_handle(),
-                                       remote_socket_.native_handle());
+            auto n = spliceit(sdToRemote_.native_handle(),
+                              remote_socket_.native_handle());
+            if (!n) return false;
+            pToRemote_len_ -= *n;
         } catch (...) {return false; }
         return true;
     }
