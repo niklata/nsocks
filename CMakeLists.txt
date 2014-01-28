@@ -94,8 +94,21 @@ endif()
 
 if (${OSNAME} STREQUAL "Linux")
   message("Detected that the current host is a Linux system.")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLINUX -DHAVE_CLEARENV")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DLINUX -DHAVE_CLEARENV")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto -DLINUX -DHAVE_CLEARENV")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto -DLINUX -DHAVE_CLEARENV")
+  execute_process(
+    COMMAND cc --version
+    COMMAND grep gcc
+    COMMAND cut -b -3
+    COMMAND tr "\n" " "
+    COMMAND sed "s/ //"
+    OUTPUT_VARIABLE GCC_STRING
+    )
+  if (${GCC_STRING} STREQUAL "gcc")
+    message("Detected that compiler is gcc.  Using LTO.")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto")
+  endif()
   execute_process(
     COMMAND uname -r
     COMMAND tr "\n" " "
