@@ -1230,7 +1230,7 @@ void SocksClient::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_), strand_.wrap(
+        (ba::buffer(inBytes_.data(), inBytes_.size()), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
