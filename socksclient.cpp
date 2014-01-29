@@ -287,10 +287,7 @@ static std::atomic<std::size_t> socks_alive_count;
 
 SocksClient::SocksClient(ba::io_service &io_service,
                          ba::ip::tcp::socket socket)
-        : strand_(io_service),
-#ifndef USE_SPLICE
-          strandR_(io_service),
-#endif
+        : strand_(io_service), strandR_(io_service),
           client_socket_(std::move(socket)), remote_socket_(io_service),
           tcp_resolver_(io_service), state_(STATE_WAITGREET),
           client_type_(SCT_INIT), ibSiz_(0),
@@ -811,7 +808,7 @@ void SocksClient::terminate_remote()
                 return;
             }
             if (pToClient_len_ > 0) {
-                strand_.post([this]() { flushPipeToClient(); });
+                strandR_.post([this]() { flushPipeToClient(); });
                 return;
             }
         }
@@ -872,7 +869,7 @@ void SocksClient::do_remote_socket_read()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
+        (ba::null_buffers(), strandR_.wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -951,7 +948,7 @@ void SocksClient::flushPipeToClient()
     std::cerr << "\nflushPipeToClient()\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
+        (ba::null_buffers(), strandR_.wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {

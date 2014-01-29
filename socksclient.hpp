@@ -217,9 +217,7 @@ private:
     };
 
     boost::asio::strand strand_;
-#ifndef USE_SPLICE
     boost::asio::strand strandR_;
-#endif
 
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
