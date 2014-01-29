@@ -65,6 +65,9 @@ void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 static std::size_t buffer_chunk_size = 4096;
 void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
 
+static unsigned int max_buffer_ms = 250;
+void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
+
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
@@ -905,7 +908,7 @@ void SocksClient::kickClientPipeTimer()
         cPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
         std::cerr << "\nkickClientPipeTimer\n";
         cPipeTimer_.expires_from_now
-            (boost::posix_time::milliseconds(250));
+            (boost::posix_time::milliseconds(max_buffer_ms));
         cPipeTimer_.async_wait
             (strandR_.wrap(
                 [this](const boost::system::error_code& error)
@@ -928,7 +931,7 @@ void SocksClient::kickRemotePipeTimer()
         rPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
         std::cerr << "\nkickRemotePipeTimer\n";
         rPipeTimer_.expires_from_now
-            (boost::posix_time::milliseconds(250));
+            (boost::posix_time::milliseconds(max_buffer_ms));
         rPipeTimer_.async_wait
             (strand_.wrap(
                 [this](const boost::system::error_code& error)

@@ -367,6 +367,7 @@ private:
 
 void set_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
+void set_max_buffer_ms(unsigned int n);
 
 extern void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
 extern void init_bind_port_assigner(uint16_t lowport, uint16_t highport);

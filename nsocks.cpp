@@ -185,6 +185,8 @@ static po::variables_map fetch_options(int ac, char *av[])
          "number of worker threads that nsocks should use")
         ("chunksize,S", po::value<std::size_t>(),
          "size of memory buffer used to proxy data between sockets")
+        ("max-buffer-ms", po::value<unsigned int>()->default_value(250),
+         "max milliseconds that data can stay buffered in splice pipeline")
         ("listenqueue,L", po::value<std::size_t>(),
          "maximum number of pending client connections")
         ("disable-ipv6", "disable proxy to ipv6 destinations")
@@ -360,6 +362,10 @@ static void process_options(int ac, char *av[])
     if (vm.count("chunksize")) {
         auto t = vm["chunksize"].as<std::size_t>();
         set_buffer_chunk_size(t);
+    }
+    if (vm.count("max-buffer-ms")) {
+        auto t = vm["max-buffer-ms"].as<unsigned int>();
+        set_max_buffer_ms(t);
     }
     if (vm.count("listenqueue")) {
         auto t = vm["listenqueue"].as<std::size_t>();
