@@ -785,12 +785,16 @@ void SocksClient::terminate_client()
             boost::system::error_code ec;
             remote_socket_.cancel(ec);
             remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            if (!splicePipeToRemote())
+            if (!splicePipeToRemote()) {
                 terminate();
-            else if (pToRemote_len_ > 0)
+                return;
+            }
+            if (pToRemote_len_ > 0) {
                 strand_.post([this]() { flushPipeToRemote(); });
-        } else
-            terminate();
+                return;
+            }
+        }
+        terminate();
     }
 }
 
@@ -802,12 +806,16 @@ void SocksClient::terminate_remote()
             boost::system::error_code ec;
             client_socket_.cancel(ec);
             client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            if (!splicePipeToClient())
+            if (!splicePipeToClient()) {
                 terminate();
-            else if (pToClient_len_ > 0)
+                return;
+            }
+            if (pToClient_len_ > 0) {
                 strand_.post([this]() { flushPipeToClient(); });
-        } else
-            terminate();
+                return;
+            }
+        }
+        terminate();
     }
 }
 
