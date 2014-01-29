@@ -835,18 +835,9 @@ void SocksClient::do_client_socket_connect_read()
                  return;
              }
              try {
-                 auto x = spliceClientToPipe();
-                 if (!x) {
-                     if (pToClient_len_ == 0) {
-                         terminate_client();
-                         return;
-                     } else {
-                         std::cerr << "\nZEROBYTES-C -> splicePipeToClient()\n";
-                         if (!splicePipeToClient()) {
-                             terminate_client();
-                             return;
-                         }
-                     }
+                 if (!spliceClientToPipe()) {
+                     flushPipeToClient();
+                     return;
                  }
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_client_socket_connect_read() TERMINATE: "
@@ -883,18 +874,9 @@ void SocksClient::do_remote_socket_read()
                  return;
              }
              try {
-                 auto x = spliceRemoteToPipe();
-                 if (!x) {
-                     if (pToRemote_len_ == 0) {
-                         terminate_remote();
-                         return;
-                     } else {
-                         std::cerr << "\nZEROBYTES-R -> splicePipeToRemote()\n";
-                         if (!splicePipeToRemote()) {
-                             terminate_remote();
-                             return;
-                         }
-                     }
+                 if (!spliceRemoteToPipe()) {
+                     flushPipeToRemote();
+                     return;
                  }
              } catch (const std::runtime_error &e) {
                  std::cerr << "do_remote_socket_read() TERMINATE: "
@@ -914,6 +896,10 @@ void SocksClient::do_remote_socket_read()
 
 void SocksClient::flushPipeToRemote()
 {
+    if (pToRemote_len_ == 0) {
+        terminate_remote();
+        return;
+    }
     std::cerr << "\nflushPipeToRemote()\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
@@ -926,17 +912,13 @@ void SocksClient::flushPipeToRemote()
                      std::cerr << "flushPipeToRemote error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate();
+                     terminate_remote();
                  }
                  return;
              }
              if (!splicePipeToRemote()) {
                  std::cerr << "flushPipeToRemote() TERMINATE: " << "\n";
-                 terminate();
-                 return;
-             }
-             if (pToRemote_len_ == 0) {
-                 terminate();
+                 terminate_remote();
                  return;
              }
              flushPipeToRemote();
@@ -945,6 +927,10 @@ void SocksClient::flushPipeToRemote()
 
 void SocksClient::flushPipeToClient()
 {
+    if (pToClient_len_ == 0) {
+        terminate_client();
+        return;
+    }
     std::cerr << "\nflushPipeToClient()\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
@@ -957,17 +943,13 @@ void SocksClient::flushPipeToClient()
                      std::cerr << "flushPipeToClient error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate();
+                     terminate_client();
                  }
                  return;
              }
              if (!splicePipeToClient()) {
                  std::cerr << "flushPipeToClient() TERMINATE: " << "\n";
-                 terminate();
-                 return;
-             }
-             if (pToClient_len_ == 0) {
-                 terminate();
+                 terminate_client();
                  return;
              }
              flushPipeToClient();
