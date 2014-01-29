@@ -900,12 +900,11 @@ void SocksClient::do_remote_socket_read()
          }));
 }
 
-static bool false_bool(false);
-
 void SocksClient::kickClientPipeTimer()
 {
+    bool cmpbool(false);
     if (pToClient_len_ > 0 &&
-        cPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
+        cPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
         std::cerr << "\nkickClientPipeTimer\n";
         cPipeTimer_.expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms));
@@ -927,8 +926,9 @@ void SocksClient::kickClientPipeTimer()
 
 void SocksClient::kickRemotePipeTimer()
 {
+    bool cmpbool(false);
     if (pToRemote_len_ > 0 &&
-        rPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
+        rPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
         std::cerr << "\nkickRemotePipeTimer\n";
         rPipeTimer_.expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms));
