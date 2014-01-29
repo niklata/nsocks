@@ -1566,7 +1566,7 @@ void SocksClient::send_reply(ReplyCode replycode)
              outbuf_.erase(0, bytes_xferred);
              if (!bound_) {
                  strand_.post([this]() { do_client_socket_connect_read(); });
-                 strand_.post([this]() { do_remote_socket_read(); });
+                 strandR_.post([this]() { do_remote_socket_read(); });
              }
          }));
 }
