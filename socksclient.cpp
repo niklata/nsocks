@@ -724,12 +724,6 @@ void SocksClient::dispatch_tcp_connect()
                  send_reply(RplFail);
                  return;
              }
-             // std::cout << "TCP Connect from "
-             //           << client_socket_.remote_endpoint().address()
-             //           << " to "
-             //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
-             //                                     : dst_hostname_)
-             //           << ":" << dst_port_ << "\n";
              send_reply(RplSuccess);
          }));
     std::cout << "TCP Connect @" << client_socket_.remote_endpoint().address()
@@ -821,8 +815,6 @@ void SocksClient::terminate_remote()
 void SocksClient::do_client_socket_connect_read()
 {
     auto sfd = shared_from_this();
-    // Client is trying to send data to the remote server.  Splice it to the
-    // pToRemote_ pipe.
     client_socket_.async_read_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
@@ -871,8 +863,6 @@ void SocksClient::do_client_socket_connect_read()
 void SocksClient::do_remote_socket_read()
 {
     auto sfd = shared_from_this();
-    // Remote server is trying to send data to the client.  Splice it to the
-    // pToClient_ pipe.
     remote_socket_.async_read_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
