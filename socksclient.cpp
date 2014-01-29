@@ -292,7 +292,8 @@ SocksClient::SocksClient(ba::io_service &io_service,
           tcp_resolver_(io_service), state_(STATE_WAITGREET),
           client_type_(SCT_INIT), ibSiz_(0),
 #ifdef USE_SPLICE
-          pToRemote_len_(0), pToClient_len_(0),
+          pToRemote_len_(0), rPipeTimer_(io_service), rPipeTimerSet_(false),
+          pToClient_len_(0), cPipeTimer_(io_service), cPipeTimerSet_(false),
           sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_(io_service), pToClient_(io_service),
 #endif
@@ -851,6 +852,7 @@ void SocksClient::do_client_socket_connect_read()
                  terminate_remote();
                  return;
              }
+             kickRemotePipeTimer();
              do_client_socket_connect_read();
          }));
 }
@@ -890,8 +892,57 @@ void SocksClient::do_remote_socket_read()
                  terminate_client();
                  return;
              }
+             kickClientPipeTimer();
              do_remote_socket_read();
          }));
+}
+
+static bool false_bool(false);
+
+void SocksClient::kickClientPipeTimer()
+{
+    if (pToClient_len_ > 0 &&
+        cPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
+        std::cerr << "\nkickClientPipeTimer\n";
+        cPipeTimer_.expires_from_now
+            (boost::posix_time::milliseconds(250));
+        cPipeTimer_.async_wait
+            (strandR_.wrap(
+                [this](const boost::system::error_code& error)
+                {
+                    cPipeTimerSet_ = false;
+                    if (error)
+                        return;
+                    if (!splicePipeToClient()) {
+                        terminate_client();
+                        return;
+                    }
+                    kickClientPipeTimer();
+                }));
+    }
+}
+
+void SocksClient::kickRemotePipeTimer()
+{
+    if (pToRemote_len_ > 0 &&
+        rPipeTimerSet_.compare_exchange_strong(false_bool, true)) {
+        std::cerr << "\nkickRemotePipeTimer\n";
+        rPipeTimer_.expires_from_now
+            (boost::posix_time::milliseconds(250));
+        rPipeTimer_.async_wait
+            (strand_.wrap(
+                [this](const boost::system::error_code& error)
+                {
+                    rPipeTimerSet_ = false;
+                    if (error)
+                        return;
+                    if (!splicePipeToRemote()) {
+                        terminate_remote();
+                        return;
+                    }
+                    kickRemotePipeTimer();
+                }));
+    }
 }
 
 void SocksClient::flushPipeToRemote()

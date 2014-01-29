@@ -240,7 +240,11 @@ private:
 #ifdef USE_SPLICE
     // Used for splice().
     std::atomic<std::size_t> pToRemote_len_;
+    boost::asio::deadline_timer rPipeTimer_;
+    std::atomic<bool> rPipeTimerSet_;
     std::atomic<std::size_t> pToClient_len_;
+    boost::asio::deadline_timer cPipeTimer_;
+    std::atomic<bool> cPipeTimerSet_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
@@ -250,6 +254,8 @@ private:
     void terminate_remote();
     void flushPipeToRemote();
     void flushPipeToClient();
+    void kickClientPipeTimer();
+    void kickRemotePipeTimer();
     inline bool spliceClientToPipe()
     {
         auto n = spliceit(client_socket_.native_handle(),
