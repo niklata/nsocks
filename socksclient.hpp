@@ -51,13 +51,6 @@ class SocksClient
     : public std::enable_shared_from_this<SocksClient>, boost::noncopyable
 {
 public:
-    enum SocksClientState {
-        STATE_WAITGREET,
-        STATE_WAITCONNRQ,
-        STATE_GOTCONNRQ,
-        STATE_TERMINATED
-    };
-
     SocksClient(boost::asio::io_service &io_service,
                 boost::asio::ip::tcp::socket socket);
     ~SocksClient();
@@ -65,12 +58,12 @@ public:
     void terminate();
 
     inline void start() {
-        read_handshake();
+        read_greet();
     }
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
     }
-    inline void set_terminated() { state_ = STATE_TERMINATED; }
+    inline void set_terminated() { terminated_ = true; }
     bool matches_dst(const boost::asio::ip::address &addr,
                      uint16_t port) const;
     inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
@@ -229,7 +222,7 @@ private:
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     boost::asio::ip::tcp::resolver tcp_resolver_;
-    std::atomic<SocksClientState> state_;
+    std::atomic<bool> terminated_;
     SocksClientType client_type_;
     CommandCode cmd_code_;
     AddressType addr_type_;
@@ -310,9 +303,10 @@ private:
         remote_socket_.non_blocking(true);
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
     }
-    void read_handshake();
-    bool process_greet();
-    ReplyCode process_connrq();
+    void read_greet();
+    void read_conn_request();
+    boost::optional<bool> process_greet();
+    boost::optional<ReplyCode> process_connrq();
     void dispatch_connrq();
 
     void dispatch_tcp_connect();

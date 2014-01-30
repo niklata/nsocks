@@ -292,7 +292,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
                          ba::ip::tcp::socket socket)
         : strand_(io_service), strandR_(io_service),
           client_socket_(std::move(socket)), remote_socket_(io_service),
-          tcp_resolver_(io_service), state_(STATE_WAITGREET),
+          tcp_resolver_(io_service), terminated_(false),
           client_type_(SCT_INIT), ibSiz_(0),
 #ifdef USE_SPLICE
           pToRemote_len_(0), rPipeTimer_(io_service), rPipeTimerSet_(false),
@@ -309,7 +309,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
 
 SocksClient::~SocksClient()
 {
-    if (state_ != STATE_TERMINATED)
+    if (!terminated_)
         untrack();
     --socks_alive_count;
     std::cout << "Connection to "
@@ -408,9 +408,9 @@ void SocksClient::cancel()
 
 void SocksClient::terminate()
 {
-    if (state_ == STATE_TERMINATED)
+    if (terminated_)
         return;
-    state_ = STATE_TERMINATED;
+    terminated_ = true;
     cancel();
     untrack();
     // std::cout << "Connection to "
@@ -419,7 +419,7 @@ void SocksClient::terminate()
     //           << ":" << dst_port_ << " called terminate().\n";
 }
 
-void SocksClient::read_handshake()
+void SocksClient::read_greet()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
@@ -429,31 +429,58 @@ void SocksClient::read_handshake()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "Client read error: "
-                           << boost::system::system_error(ec).what()
-                           << std::endl;
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "read_greet() error: "
+                               << boost::system::system_error(ec).what()
+                               << std::endl;
+                     terminate();
+                 }
                  return;
              }
              if (!bytes_xferred)
                  return;
              ibSiz_ += bytes_xferred;
-             if (state_ == STATE_WAITGREET) {
-                 if (!process_greet()) {
-                     std::cerr << "process_greet(): returned false -> terminate!\n";
+             auto x = process_greet();
+             if (x) {
+                 if (*x)
+                     read_conn_request();
+                 else {
+                     std::cerr << "process_greet(): bad input -> terminate!\n";
                      terminate();
-                     return;
                  }
-             } else if (state_ == STATE_WAITCONNRQ) {
-                 // On failure we will terminate via the send_reply() response.
-                 auto rc = process_connrq();
-                 if (rc != RplSuccess) {
-                     send_reply(rc);
-                     state_ = STATE_GOTCONNRQ;
+             } else
+                 read_greet();
+         }));
+}
+
+void SocksClient::read_conn_request()
+{
+    auto sfd = shared_from_this();
+    client_socket_.async_read_some
+        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
+         strand_.wrap(
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "read_conn_request() error: "
+                               << boost::system::system_error(ec).what()
+                               << std::endl;
+                     terminate();
                  }
+                 return;
              }
-             if (state_ == STATE_WAITGREET || state_ == STATE_WAITCONNRQ)
-                 read_handshake();
+             if (!bytes_xferred)
+                 return;
+             ibSiz_ += bytes_xferred;
+             auto rc = process_connrq();
+             if (rc) {
+                 // On failure we will terminate via the send_reply() response.
+                 if (*rc != RplSuccess)
+                     send_reply(*rc);
+             } else
+                 read_conn_request();
          }));
 }
 
@@ -461,24 +488,23 @@ void SocksClient::read_handshake()
 static const char reply_greetz[2] = {'\x5','\x0'};
 
 // Returns false if the object needs to be destroyed by the caller.
-// State can change: STATE_WAITGREET -> STATE_WAITCONNRQ
-bool SocksClient::process_greet()
+boost::optional<bool> SocksClient::process_greet()
 {
-    if (state_ != STATE_WAITGREET)
+    if (terminated_)
         return false;
 
     size_t poff = 0;
 
     // We only accept Socks5.
     if (poff == ibSiz_)
-        return true;
+        return boost::optional<bool>();
     if (inBytes_[poff] != 0x05)
         return false;
     ++poff;
 
     // Number of authentication methods supported.
     if (poff == ibSiz_)
-        return true;
+        return boost::optional<bool>();
     size_t nauth = static_cast<uint8_t>(inBytes_[poff]);
     ++poff;
 
@@ -489,7 +515,7 @@ bool SocksClient::process_greet()
     if (ibSiz_ > aendsiz)
         return false;
     if (ibSiz_ < aendsiz)
-        return true;
+        return boost::optional<bool>();
     for (;poff < aendsiz; ++poff) {
         uint8_t atype = static_cast<uint8_t>(inBytes_[poff]);
         if (atype == 0x0)
@@ -510,37 +536,34 @@ bool SocksClient::process_greet()
         [this, sfd](const boost::system::error_code &ec,
                     std::size_t bytes_xferred)
         {
-            if (ec) {
-                std::cerr << "Client write error: "
+            if (ec && ec != ba::error::operation_aborted) {
+                std::cerr << "failed writing reply_greetz: "
                           << boost::system::system_error(ec).what()
                           << std::endl;
                 terminate();
-                return;
             }
         }));
-    state_ = STATE_WAITCONNRQ;
     return true;
 }
 
 // Returns false if the object needs to be destroyed by the caller.
-// State can change: STATE_WAITCONNRQ -> STATE_GOTCONNRQ
-SocksClient::ReplyCode SocksClient::process_connrq()
+boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
 {
-    if (state_ != STATE_WAITCONNRQ)
+    if (terminated_)
         return RplFail;
 
     size_t poff = 0;
 
     // We only accept Socks5.
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     if (inBytes_[poff] != 0x05)
         return RplFail;
     ++poff;
 
     // Client command.
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     switch (static_cast<uint8_t>(inBytes_[poff])) {
     case 0x1: cmd_code_ = CmdTCPConnect; break;
     case 0x2: cmd_code_ = CmdTCPBind; break;
@@ -551,14 +574,14 @@ SocksClient::ReplyCode SocksClient::process_connrq()
 
     // Must be zero (reserved).
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     if (inBytes_[poff] != 0x0)
         return RplFail;
     ++poff;
 
     // Address type.
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     switch (static_cast<uint8_t>(inBytes_[poff])) {
     case 0x1: addr_type_ = AddrIPv4; break;
     case 0x3: addr_type_ = AddrDNS; break;
@@ -569,7 +592,7 @@ SocksClient::ReplyCode SocksClient::process_connrq()
 
     // Destination address.
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     switch (addr_type_) {
         case AddrIPv4: {
             // ibSiz_ = 10, poff = 4
@@ -609,13 +632,12 @@ SocksClient::ReplyCode SocksClient::process_connrq()
 
     // Destination port.
     if (poff == ibSiz_)
-        return RplSuccess;
+        return boost::optional<SocksClient::ReplyCode>();
     if (ibSiz_ - poff != 2)
         return RplFail;
     uint16_t tmp;
     memcpy(&tmp, inBytes_.data() + poff, 2);
     dst_port_ = ntohs(tmp);
-    state_ = STATE_GOTCONNRQ;
     ibSiz_ = 0;
     dispatch_connrq();
     return RplSuccess;
@@ -781,7 +803,7 @@ bool SocksClient::init_splice_pipes()
 void SocksClient::terminate_client()
 {
     close_client_socket();
-    if (state_ != STATE_TERMINATED) {
+    if (!terminated_) {
         if (remote_socket_.is_open() && pToRemote_len_ > 0) {
             boost::system::error_code ec;
             remote_socket_.cancel(ec);
@@ -802,7 +824,7 @@ void SocksClient::terminate_client()
 void SocksClient::terminate_remote()
 {
     close_remote_socket();
-    if (state_ != STATE_TERMINATED) {
+    if (!terminated_) {
         if (client_socket_.is_open() && pToClient_len_ > 0) {
             boost::system::error_code ec;
             client_socket_.cancel(ec);
