@@ -656,7 +656,8 @@ void SocksClient::dispatch_connrq()
                              ba::ip::tcp::resolver::iterator it)
                  {
                      if (ec) {
-                         send_reply(RplHostUnreach);
+                         if (ec != ba::error::operation_aborted)
+                             send_reply(RplHostUnreach);
                          return;
                      }
                      ba::ip::tcp::resolver::iterator fv4, fv6, rie;
@@ -736,7 +737,8 @@ void SocksClient::dispatch_tcp_connect()
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
-                 send_reply(errorToReplyCode(ec));
+                 if (ec != ba::error::operation_aborted)
+                     send_reply(errorToReplyCode(ec));
                  return;
              }
              set_remote_socket_options();
@@ -1044,7 +1046,8 @@ void SocksClient::do_client_socket_connect_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 terminate();
+                 if (ec != ba::error::operation_aborted)
+                     terminate();
                  return;
              }
              client_buf_.commit(bytes_xferred);
@@ -1055,7 +1058,8 @@ void SocksClient::do_client_socket_connect_read()
                                          std::size_t bytes_xferred)
                              {
                                  if (ec) {
-                                     terminate();
+                                     if (ec != ba::error::operation_aborted)
+                                         terminate();
                                      return;
                                  }
                                  client_buf_.consume(bytes_xferred);
@@ -1076,7 +1080,8 @@ void SocksClient::do_remote_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 terminate();
+                 if (ec != ba::error::operation_aborted)
+                     terminate();
                  return;
              }
              remote_buf_.commit(bytes_xferred);
@@ -1087,7 +1092,8 @@ void SocksClient::do_remote_socket_read()
                                          std::size_t bytes_xferred)
                              {
                                  if (ec) {
-                                     terminate();
+                                     if (ec != ba::error::operation_aborted)
+                                         terminate();
                                      return;
                                  }
                                  remote_buf_.consume(bytes_xferred);
@@ -1276,10 +1282,13 @@ void SocksClient::udp_tcp_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "Client closed TCP socket for UDP associate: "
-                           << boost::system::system_error(ec).what()
-                           << std::endl;
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "Client closed TCP socket for UDP associate: "
+                               << boost::system::system_error(ec).what()
+                               << std::endl;
+                     terminate();
+                 }
+                 return;
              }
              udp_tcp_socket_read();
          }));
@@ -1297,10 +1306,13 @@ void SocksClient::udp_client_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "Error on client UDP socket: "
-                           << boost::system::system_error(ec).what()
-                           << std::endl;
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "Error on client UDP socket: "
+                               << boost::system::system_error(ec).what()
+                               << std::endl;
+                     terminate();
+                 }
+                 return;
              }
              if (udp_->csender_endpoint_ == udp_->client_remote_endpoint_) {
                  std::size_t headersiz = 4;
@@ -1452,7 +1464,8 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
                          ba::ip::udp::resolver::iterator it)
              {
                  if (ec) {
-                     udp_client_socket_read();
+                     if (ec != ba::error::operation_aborted)
+                         udp_client_socket_read();
                      return;
                  }
                  ba::ip::udp::resolver::iterator fv4, fv6, rie;
@@ -1503,10 +1516,13 @@ void SocksClient::udp_remote_socket_read()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cerr << "Error on remote UDP socket: "
-                           << boost::system::system_error(ec).what()
-                           << std::endl;
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "Error on remote UDP socket: "
+                               << boost::system::system_error(ec).what()
+                               << std::endl;
+                     terminate();
+                 }
+                 return;
              }
              // Attach the header.
              auto saddr = udp_->rsender_endpoint_.address();
