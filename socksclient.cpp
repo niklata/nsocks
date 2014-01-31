@@ -90,21 +90,25 @@ public:
         hash_[hidx_].emplace(ssc.get(), ssc);
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
-            setTimer();
+            setTimer(false);
     }
     bool remove(std::size_t hidx, SocksClient* sc)
     {
         std::lock_guard<std::mutex> wl(lock_);
-        return !!hash_[hidx].erase(sc);
+        return remove_nolock(hidx, sc);
     }
     bool remove(SocksClient* sc) {
+        std::lock_guard<std::mutex> wl(lock_);
         std::size_t hi = hidx_;
-        if (!remove(hi, sc))
-            return remove(hi ^ 1, sc);
+        if (!remove_nolock(hi, sc))
+            return remove_nolock(hi ^ 1, sc);
         return true;
     }
     std::size_t size() { return hash_[0].size() + hash_[1].size(); }
 private:
+    inline bool remove_nolock(std::size_t hidx, SocksClient* sc) {
+        return !!hash_[hidx].erase(sc);
+    }
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
         // std::cerr << "doSwap wiped " << hash_[hnext].size()
@@ -114,16 +118,25 @@ private:
         hash_[hnext].clear();
         hidx_ = hnext;
     }
-    void setTimer(void) {
-        swapTimer_.expires_from_now(boost::posix_time::seconds(cyclefreq_));
+    void setTimer(bool expidite) {
+        if (expidite)
+            swapTimer_.expires_from_now
+                (boost::posix_time::seconds(cyclefreq_));
+        else
+            swapTimer_.expires_from_now
+                (boost::posix_time::milliseconds(cyclefreq_ * 100));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
                                   if (error)
                                       return;
-                                  std::lock_guard<std::mutex> wl(lock_);
-                                  doSwap();
-                                  if (size())
-                                      setTimer();
+                                  if (lock_.try_lock()) {
+                                      doSwap();
+                                      auto sz = size();
+                                      lock_.unlock();
+                                      if (sz)
+                                          setTimer(false);
+                                  } else
+                                      setTimer(true);
                               });
     }
     std::mutex lock_;
