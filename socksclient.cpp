@@ -79,10 +79,7 @@ public:
     ~ephConnTracker()
     {
         for (std::size_t j = 0; j < 2; ++j)
-            for (auto &i: hash_[j]) {
-                i.second->cancel();
-                i.second->set_terminated();
-            }
+            hash_cancel(j);
     }
     void store(std::shared_ptr<SocksClient> ssc)
     {
@@ -109,12 +106,17 @@ private:
     inline bool remove_nolock(std::size_t hidx, SocksClient* sc) {
         return !!hash_[hidx].erase(sc);
     }
+    inline void hash_cancel(std::size_t x) {
+        for (auto &i: hash_[x]) {
+            i.second->cancel();
+            i.second->set_terminated();
+        }
+    }
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
         // std::cerr << "doSwap wiped " << hash_[hnext].size()
         //           << " items from hash " << hnext << "\n";
-        for (auto &i: hash_[hnext])
-            i.second->cancel();
+        hash_cancel(hnext);
         hash_[hnext].clear();
         hidx_ = hnext;
     }
