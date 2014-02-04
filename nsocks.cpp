@@ -239,7 +239,7 @@ static po::variables_map fetch_options(int ac, char *av[])
         std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n"
                   << "Copyright (c) 2013-2014 Nicholas J. Kain\n"
                   << av[0] << " [options] addresses...\n"
-                  << gopts << std::endl;
+                  << cmdline_options << std::endl;
         std::exit(EXIT_FAILURE);
     }
     if (vm.count("version")) {
