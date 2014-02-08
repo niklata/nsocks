@@ -275,7 +275,7 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
     if (lowport < 1024 || highport < 1024) {
         std::cout << "For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
                   << "must both be set to non-equal values >= 1024.  BIND requests will be\n"
-                  << "disabled until this configuration problem is corrected.\n";
+                  << "disabled until this configuration problem is corrected." << std::endl;
         g_disable_bind = true;
         return;
     }
@@ -292,7 +292,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
         std::cout << "For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
                   << "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
                   << "ASSOCIATE requests will be disabled until this configuration problem\n"
-                  << "is corrected.\n";
+                  << "is corrected." << std::endl;
         g_disable_udp = true;
         return;
     }
@@ -342,7 +342,7 @@ SocksClient::~SocksClient()
     std::cout << conntracker_connect.size() << ","
               << conntracker_bind.size() << ","
               << conntracker_udp.size()
-              << " / " << socks_alive_count << ")\n";
+              << " / " << socks_alive_count << ")" << std::endl;
 }
 
 void SocksClient::close_client_socket()
@@ -431,7 +431,7 @@ void SocksClient::terminate()
     // std::cout << "Connection to "
     //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
     //                                     : dst_hostname_)
-    //           << ":" << dst_port_ << " called terminate().\n";
+    //           << ":" << dst_port_ << " called terminate()." << std::endl;
 }
 
 void SocksClient::read_greet()
@@ -771,7 +771,7 @@ void SocksClient::dispatch_tcp_connect()
               << " -> "
               << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                         : dst_hostname_)
-              << ":" << dst_port_ << "\n";
+              << ":" << dst_port_ << std::endl;
 }
 
 SocksClient::ReplyCode
@@ -1206,7 +1206,7 @@ void SocksClient::dispatch_tcp_bind()
                  bound_.reset();
                  return;
              }
-             std::cout << "Accepted a connection to a BIND socket.\n";
+             std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
              conntracker_bind.store(shared_from_this());
              close_bind_listen_socket();
@@ -1644,7 +1644,8 @@ void SocksClient::send_reply(ReplyCode replycode)
                      << (addr_type_ != AddrDNS ? dst_address_.to_string()
                                                : dst_hostname_)
                      << ":" << dst_port_
-                     << " [" << replyCodeString[sentReplyType_] << "]\n";
+                     << " [" << replyCodeString[sentReplyType_] << "]"
+                     << std::endl;
                  terminate();
                  return;
              }
@@ -1669,14 +1670,11 @@ ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
 
 void ClientListener::start_accept()
 {
-    // std::cout << "Created a new SocksClient=" << conn.get() << ".\n";
     acceptor_.async_accept
         (socket_, endpoint_,
          [this](const boost::system::error_code &ec)
          {
              if (!ec) {
-                 // std::cout << "Stored a new SocksClient="
-                 //           << conn.get() << ".\n";
                  auto conn = std::make_shared<SocksClient>
                      (acceptor_.get_io_service(), std::move(socket_));
                  conntracker_hs->store(conn);

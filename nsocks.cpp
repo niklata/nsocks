@@ -455,8 +455,19 @@ static void process_options(int ac, char *av[])
 
 }
 
+static void set_iostream_async()
+{
+    // Don't sync with C stdio, and don't sync cin and cout since we're not
+    // interactive and are just streaming messages.
+    std::ios_base::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    std::cout.tie(nullptr);
+}
+
 int main(int ac, char *av[])
 {
+    set_iostream_async();
+
     gflags_log_name = const_cast<char *>("nsocks");
 
     process_options(ac, av);
