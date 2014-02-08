@@ -54,6 +54,7 @@ extern ba::io_service io_service;
 extern bool gParanoid;
 extern bool gChrooted;
 
+bool g_verbose_logs = false;
 bool g_prefer_ipv4 = false;
 bool g_disable_ipv6 = false;
 bool g_disable_bind = false;
@@ -327,22 +328,25 @@ SocksClient::~SocksClient()
     if (!terminated_)
         untrack();
     --socks_alive_count;
-    std::cout << "Connection to "
-              << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                        : dst_hostname_)
-              << ":" << dst_port_ << " DESTRUCTED (total: ";
-    if (conntracker_hs)
-        std::cout << conntracker_hs->size() << ",";
-    else
-        std::cout << "X,";
-    if (conntracker_bindlisten)
-        std::cout << conntracker_bindlisten->size() << "|";
-    else
-        std::cout << "X|";
-    std::cout << conntracker_connect.size() << ","
-              << conntracker_bind.size() << ","
-              << conntracker_udp.size()
-              << " / " << socks_alive_count << ")" << std::endl;
+
+    if (g_verbose_logs) {
+        std::cout << "Connection to "
+                  << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                            : dst_hostname_)
+                  << ":" << dst_port_ << " DESTRUCTED (total: ";
+        if (conntracker_hs)
+            std::cout << conntracker_hs->size() << ",";
+        else
+            std::cout << "X,";
+        if (conntracker_bindlisten)
+            std::cout << conntracker_bindlisten->size() << "|";
+        else
+            std::cout << "X|";
+        std::cout << conntracker_connect.size() << ","
+                  << conntracker_bind.size() << ","
+                  << conntracker_udp.size()
+                  << " / " << socks_alive_count << ")" << std::endl;
+    }
 }
 
 void SocksClient::close_client_socket()
@@ -766,12 +770,15 @@ void SocksClient::dispatch_tcp_connect()
              }
              send_reply(RplSuccess);
          }));
-    std::cout << "TCP Connect @" << client_socket_.remote_endpoint().address()
-              << " " << remote_socket_.local_endpoint().address()
-              << " -> "
-              << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                        : dst_hostname_)
-              << ":" << dst_port_ << std::endl;
+    if (g_verbose_logs) {
+        std::cout << "TCP Connect @"
+                  << client_socket_.remote_endpoint().address()
+                  << " " << remote_socket_.local_endpoint().address()
+                  << " -> "
+                  << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                                            : dst_hostname_)
+                  << ":" << dst_port_ << std::endl;
+    }
 }
 
 SocksClient::ReplyCode

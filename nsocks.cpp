@@ -164,7 +164,7 @@ static po::variables_map fetch_options(int ac, char *av[])
          "path to configuration file")
         ("detach,d", "run as a background daemon (default)")
         ("nodetach,n", "stay attached to TTY")
-        ("quiet,q", "don't print to std(out|err) or log")
+        ("verbose,V", "print details of normal operation")
         ("help,h", "print help message")
         ("version,v", "print version information")
         ;
@@ -319,8 +319,8 @@ static void process_options(int ac, char *av[])
         gflags_detach = 1;
     if (vm.count("nodetach"))
         gflags_detach = 0;
-    if (vm.count("quiet"))
-        gflags_quiet = 1;
+    if (vm.count("verbose"))
+        g_verbose_logs = true;
     if (vm.count("pidfile"))
         pidfile = vm["pidfile"].as<std::string>();
     if (vm.count("chroot"))
