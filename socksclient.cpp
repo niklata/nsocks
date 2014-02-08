@@ -944,7 +944,6 @@ void SocksClient::kickClientPipeTimer()
     bool cmpbool(false);
     if (pToClient_len_ > 0 &&
         cPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
-        std::cerr << "\nkickClientPipeTimer\n";
         cPipeTimer_.expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms));
         cPipeTimer_.async_wait
@@ -968,7 +967,6 @@ void SocksClient::kickRemotePipeTimer()
     bool cmpbool(false);
     if (pToRemote_len_ > 0 &&
         rPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
-        std::cerr << "\nkickRemotePipeTimer\n";
         rPipeTimer_.expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms));
         rPipeTimer_.async_wait
@@ -993,7 +991,6 @@ void SocksClient::flushPipeToRemote()
         terminate_remote();
         return;
     }
-    std::cerr << "\nflushPipeToRemote()\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
@@ -1024,7 +1021,6 @@ void SocksClient::flushPipeToClient()
         terminate_client();
         return;
     }
-    std::cerr << "\nflushPipeToClient()\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strandR_.wrap(
