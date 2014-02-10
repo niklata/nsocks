@@ -353,6 +353,7 @@ void SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
     if (client_socket_.is_open()) {
+        client_socket_.cancel(ec);
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
         client_socket_.close(ec);
     }
@@ -369,6 +370,7 @@ void SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
     if (remote_socket_.is_open()) {
+        remote_socket_.cancel(ec);
         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
         remote_socket_.close(ec);
     }
