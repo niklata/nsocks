@@ -360,7 +360,8 @@ private:
     void start_accept();
 };
 
-void set_buffer_chunk_size(std::size_t size);
+void set_send_buffer_chunk_size(std::size_t size);
+void set_receive_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
 void set_max_buffer_ms(unsigned int n);
 

@@ -47,6 +47,7 @@
 #include "make_unique.hpp"
 
 #define MAX_BIND_TRIES 10
+#define UDP_BUFSIZE 1536
 
 namespace ba = boost::asio;
 
@@ -63,8 +64,12 @@ bool g_disable_udp = false;
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 
-static std::size_t buffer_chunk_size = 4096;
-void set_buffer_chunk_size(std::size_t size) { buffer_chunk_size = size; }
+static std::size_t send_buffer_chunk_size = 768;
+void set_send_buffer_chunk_size(std::size_t size)
+{ send_buffer_chunk_size = size; }
+static std::size_t receive_buffer_chunk_size = 1536;
+void set_receive_buffer_chunk_size(std::size_t size)
+{ receive_buffer_chunk_size = size; }
 
 static unsigned int max_buffer_ms = 250;
 void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
@@ -1061,7 +1066,7 @@ void SocksClient::flushPipeToClient()
 void SocksClient::do_client_socket_connect_read()
 {
     ba::streambuf::mutable_buffers_type ibm
-        = client_buf_.prepare(buffer_chunk_size);
+        = client_buf_.prepare(send_buffer_chunk_size);
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(ibm), strand_.wrap(
@@ -1087,7 +1092,7 @@ void SocksClient::do_client_socket_connect_read()
                                  }
                                  client_buf_.consume(bytes_xferred);
 #ifdef USE_SPLICE
-                                 if (bytes_xferred == buffer_chunk_size) {
+                                 if (bytes_xferred == send_buffer_chunk_size) {
                                      if (init_pipe_client()) {
                                          std::cerr << "client->remote switched to splice\n";
                                          do_client_socket_connect_read_splice();
@@ -1104,7 +1109,7 @@ void SocksClient::do_client_socket_connect_read()
 void SocksClient::do_remote_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
-        = remote_buf_.prepare(buffer_chunk_size);
+        = remote_buf_.prepare(receive_buffer_chunk_size);
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
         (ba::buffer(ibm), strandR_.wrap(
@@ -1130,7 +1135,7 @@ void SocksClient::do_remote_socket_read()
                                  }
                                  remote_buf_.consume(bytes_xferred);
 #ifdef USE_SPLICE
-                                 if (bytes_xferred == buffer_chunk_size) {
+                                 if (bytes_xferred == receive_buffer_chunk_size) {
                                      if (init_pipe_remote()) {
                                          std::cerr << "remote->client switched to splice\n";
                                          do_remote_socket_read_splice();
@@ -1336,7 +1341,7 @@ void SocksClient::udp_tcp_socket_read()
 void SocksClient::udp_client_socket_read()
 {
     udp_->inbuf_.clear();
-    udp_->inbuf_.resize(buffer_chunk_size);
+    udp_->inbuf_.resize(UDP_BUFSIZE);
     auto sfd = shared_from_this();
     udp_->client_socket_.async_receive_from
         (ba::buffer(udp_->inbuf_),
@@ -1547,7 +1552,7 @@ void SocksClient::udp_remote_socket_read()
     udp_->outbuf_.clear();
     udp_->out_header_.clear();
     udp_->out_bufs_.clear();
-    udp_->outbuf_.reserve(buffer_chunk_size);
+    udp_->outbuf_.reserve(UDP_BUFSIZE);
     udp_->remote_socket_.async_receive_from
         (ba::buffer(udp_->outbuf_),
          udp_->rsender_endpoint_, strand_.wrap(

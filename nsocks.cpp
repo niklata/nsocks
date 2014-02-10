@@ -183,8 +183,10 @@ static po::variables_map fetch_options(int ac, char *av[])
          "group name that nsocks should run as")
         ("threads,T", po::value<std::size_t>()->default_value(1),
          "number of worker threads that nsocks should use")
-        ("chunksize,S", po::value<std::size_t>(),
-         "size of memory buffer used to proxy data between sockets")
+        ("send-chunksize", po::value<std::size_t>()->default_value(768),
+         "bytes of ram used as buffer when sending data for a connection")
+        ("receive-chunksize", po::value<std::size_t>()->default_value(1536),
+         "bytes of ram used as buffer when receiving data for a connection")
         ("max-buffer-ms", po::value<unsigned int>()->default_value(250),
          "max milliseconds that data can stay buffered in splice pipeline")
         ("listenqueue,L", po::value<std::size_t>(),
@@ -359,9 +361,13 @@ static void process_options(int ac, char *av[])
     }
     if (vm.count("threads"))
         num_worker_threads = vm["threads"].as<std::size_t>();
-    if (vm.count("chunksize")) {
-        auto t = vm["chunksize"].as<std::size_t>();
-        set_buffer_chunk_size(t);
+    if (vm.count("send-chunksize")) {
+        auto t = vm["send-chunksize"].as<std::size_t>();
+        set_send_buffer_chunk_size(t);
+    }
+    if (vm.count("receive-chunksize")) {
+        auto t = vm["receive-chunksize"].as<std::size_t>();
+        set_receive_buffer_chunk_size(t);
     }
     if (vm.count("max-buffer-ms")) {
         auto t = vm["max-buffer-ms"].as<unsigned int>();
