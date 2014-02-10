@@ -349,37 +349,42 @@ SocksClient::~SocksClient()
     }
 }
 
+static void tcp_socket_close(ba::ip::tcp::socket &s)
+{
+    if (!s.is_open())
+        return;
+    boost::system::error_code ec;
+    s.cancel(ec);
+    s.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+    s.close(ec);
+}
+
+static void sd_close(ba::posix::stream_descriptor &s)
+{
+    if (!s.is_open())
+        return;
+    boost::system::error_code ec;
+    s.cancel(ec);
+    s.close(ec);
+}
+
 void SocksClient::close_client_socket()
 {
-    boost::system::error_code ec;
-    if (client_socket_.is_open()) {
-        client_socket_.cancel(ec);
-        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-        client_socket_.close(ec);
-    }
+    tcp_socket_close(client_socket_);
 #ifdef USE_SPLICE
     pToClient_len_ = 0;
-    if (sdToClient_.is_open())
-        sdToClient_.close(ec);
-    if (pToClient_.is_open())
-        pToClient_.close(ec);
+    sd_close(sdToClient_);
+    sd_close(pToClient_);
 #endif
 }
 
 void SocksClient::close_remote_socket()
 {
-    boost::system::error_code ec;
-    if (remote_socket_.is_open()) {
-        remote_socket_.cancel(ec);
-        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-        remote_socket_.close(ec);
-    }
+    tcp_socket_close(remote_socket_);
 #ifdef USE_SPLICE
     pToRemote_len_ = 0;
-    if (sdToRemote_.is_open())
-        sdToRemote_.close(ec);
-    if (pToRemote_.is_open())
-        pToRemote_.close(ec);
+    sd_close(sdToRemote_);
+    sd_close(pToRemote_);
 #endif
 }
 
