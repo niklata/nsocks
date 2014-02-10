@@ -893,7 +893,7 @@ void SocksClient::do_client_socket_connect_read()
              }
              try {
                  if (!spliceClientToPipe()) {
-                     flushPipeToClient();
+                     strandR_.post([this]() { flushPipeToClient(); });
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -933,7 +933,7 @@ void SocksClient::do_remote_socket_read()
              }
              try {
                  if (!spliceRemoteToPipe()) {
-                     flushPipeToRemote();
+                     strand_.post([this]() { flushPipeToRemote(); });
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -1005,6 +1005,7 @@ void SocksClient::flushPipeToRemote()
         terminate_remote();
         return;
     }
+    std::cerr << "\nflushPipeToRemote\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
@@ -1035,6 +1036,7 @@ void SocksClient::flushPipeToClient()
         terminate_client();
         return;
     }
+    std::cerr << "\nflushPipeToClient\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strandR_.wrap(
