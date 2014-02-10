@@ -242,9 +242,12 @@ private:
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
     boost::asio::posix::stream_descriptor pToClient_;
-    bool init_splice_pipes();
+    bool init_pipe_client();
+    bool init_pipe_remote();
     void terminate_client();
     void terminate_remote();
+    void do_client_socket_connect_read_splice();
+    void do_remote_socket_read_splice();
     void flushPipeToRemote();
     void flushPipeToClient();
     void kickClientPipeTimer();
@@ -288,11 +291,9 @@ private:
         } catch (...) {return false; }
         return true;
     }
-#else
+#endif
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
-    inline bool init_splice_pipes() { return true; }
-#endif
 
     bool auth_none_;
     bool auth_gssapi_;

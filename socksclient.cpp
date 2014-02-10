@@ -771,10 +771,6 @@ void SocksClient::dispatch_tcp_connect()
              // Now we have a live socket, so we need to inform the client
              // and then begin proxying data.
              conntracker_connect.store(shared_from_this());
-             if (!init_splice_pipes()) {
-                 send_reply(RplFail);
-                 return;
-             }
              send_reply(RplSuccess);
          }));
     if (g_verbose_logs) {
@@ -810,22 +806,21 @@ SocksClient::errorToReplyCode(const boost::system::error_code &ec)
 }
 
 #ifdef USE_SPLICE
-bool SocksClient::init_splice_pipes()
+bool SocksClient::init_pipe_client()
 {
-    int err;
     int pipes[2];
-    err = pipe2(pipes, O_NONBLOCK);
-    if (err) {
-        send_reply(RplFail);
+    if (pipe2(pipes, O_NONBLOCK))
         return false;
-    }
     sdToRemote_.assign(pipes[0]);
     pToRemote_.assign(pipes[1]);
-    err = pipe2(pipes, O_NONBLOCK);
-    if (err) {
-        send_reply(RplFail);
+    return true;
+}
+
+bool SocksClient::init_pipe_remote()
+{
+    int pipes[2];
+    if (pipe2(pipes, O_NONBLOCK))
         return false;
-    }
     sdToClient_.assign(pipes[0]);
     pToClient_.assign(pipes[1]);
     return true;
@@ -874,7 +869,7 @@ void SocksClient::terminate_remote()
 }
 
 // Write data read from the client socket to the connect socket.
-void SocksClient::do_client_socket_connect_read()
+void SocksClient::do_client_socket_connect_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
@@ -897,24 +892,24 @@ void SocksClient::do_client_socket_connect_read()
                      return;
                  }
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_client_socket_connect_read() TERMINATE: "
+                 std::cerr << "do_client_socket_connect_read_splice() TERMINATE: "
                            << e.what() << "\n";
                  terminate_client();
                  return;
              }
              if (!splicePipeToRemote()) {
-                 std::cerr << "do_client_socket_connect_read() TERMINATE: "
+                 std::cerr << "do_client_socket_connect_read_splice() TERMINATE: "
                            << "\n";
                  terminate_remote();
                  return;
              }
              kickRemotePipeTimer();
-             do_client_socket_connect_read();
+             do_client_socket_connect_read_splice();
          }));
 }
 
 // Write data read from the connect socket to the client socket.
-void SocksClient::do_remote_socket_read()
+void SocksClient::do_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
@@ -937,19 +932,19 @@ void SocksClient::do_remote_socket_read()
                      return;
                  }
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_remote_socket_read() TERMINATE: "
+                 std::cerr << "do_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
                  terminate_remote();
                  return;
              }
              if (!splicePipeToClient()) {
-                 std::cerr << "do_remote_socket_read() TERMINATE: "
+                 std::cerr << "do_remote_socket_read_splice() TERMINATE: "
                            << "\n";
                  terminate_client();
                  return;
              }
              kickClientPipeTimer();
-             do_remote_socket_read();
+             do_remote_socket_read_splice();
          }));
 }
 
@@ -1060,7 +1055,8 @@ void SocksClient::flushPipeToClient()
              flushPipeToClient();
          }));
 }
-#else
+#endif
+
 // Write data read from the client socket to the connect socket.
 void SocksClient::do_client_socket_connect_read()
 {
@@ -1090,6 +1086,15 @@ void SocksClient::do_client_socket_connect_read()
                                      return;
                                  }
                                  client_buf_.consume(bytes_xferred);
+#ifdef USE_SPLICE
+                                 if (bytes_xferred == buffer_chunk_size) {
+                                     if (init_pipe_client()) {
+                                         std::cerr << "client->remote switched to splice\n";
+                                         do_client_socket_connect_read_splice();
+                                         return;
+                                     }
+                                 } else
+#endif
                                  do_client_socket_connect_read();
                              }));
          }));
@@ -1124,12 +1129,19 @@ void SocksClient::do_remote_socket_read()
                                      return;
                                  }
                                  remote_buf_.consume(bytes_xferred);
+#ifdef USE_SPLICE
+                                 if (bytes_xferred == buffer_chunk_size) {
+                                     if (init_pipe_remote()) {
+                                         std::cerr << "remote->client switched to splice\n";
+                                         do_remote_socket_read_splice();
+                                         return;
+                                     }
+                                 } else
+#endif
                                  do_remote_socket_read();
                              }));
          }));
 }
-
-#endif
 
 bool SocksClient::is_bind_client_allowed() const
 {
@@ -1217,7 +1229,7 @@ void SocksClient::dispatch_tcp_bind()
         (remote_socket_, strand_.wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
-             if (ec || !init_splice_pipes()) {
+             if (ec) {
                  send_reply(RplFail);
                  bound_.reset();
                  return;
