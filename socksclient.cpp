@@ -64,15 +64,21 @@ bool g_disable_udp = false;
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 
-static std::size_t send_buffer_chunk_size = 768;
-void set_send_buffer_chunk_size(std::size_t size)
-{ send_buffer_chunk_size = size; }
-static std::size_t receive_buffer_chunk_size = 1536;
-void set_receive_buffer_chunk_size(std::size_t size)
-{ receive_buffer_chunk_size = size; }
-
 static unsigned int max_buffer_ms = 250;
 void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
+
+std::size_t SocksClient::send_buffer_chunk_size = 768;
+std::size_t SocksClient::receive_buffer_chunk_size = 1536;
+std::size_t SocksClient::send_minsplice_size = 576;
+std::size_t SocksClient::receive_minsplice_size = 1152;
+void SocksClient::set_send_buffer_chunk_size(std::size_t size) {
+    send_buffer_chunk_size = size;
+    send_minsplice_size = size / 4 * 3;
+}
+void SocksClient::set_receive_buffer_chunk_size(std::size_t size) {
+    receive_buffer_chunk_size = size;
+    receive_minsplice_size = size / 4 * 3;
+}
 
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
@@ -1075,32 +1081,35 @@ void SocksClient::do_client_socket_connect_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     terminate();
+                     terminate_client();
                  return;
              }
              client_buf_.commit(bytes_xferred);
              // Client is trying to send data to the remote server.  Write it
              // to the remote_socket_.
+             boost::system::error_code ecx;
+             auto r = remote_socket_.send
+                 (ba::buffer(client_buf_.data(), client_buf_.size()), 0, ecx);
+             client_buf_.consume(r);
+             if (r == bytes_xferred) {
+                 do_client_socket_connect_read_again(r);
+                 return;
+             } else if (r == 0 && ecx != ba::error::would_block) {
+                 if (ecx != ba::error::operation_aborted)
+                     terminate_client();
+                 return;
+             }
              ba::async_write(remote_socket_, client_buf_, strand_.wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
                                  if (ec) {
                                      if (ec != ba::error::operation_aborted)
-                                         terminate();
+                                         terminate_client();
                                      return;
                                  }
                                  client_buf_.consume(bytes_xferred);
-#ifdef USE_SPLICE
-                                 if (bytes_xferred == send_buffer_chunk_size) {
-                                     if (init_pipe_client()) {
-                                         std::cerr << "client->remote switched to splice\n";
-                                         do_client_socket_connect_read_splice();
-                                         return;
-                                     }
-                                 } else
-#endif
-                                 do_client_socket_connect_read();
+                                 do_client_socket_connect_read_again(bytes_xferred);
                              }));
          }));
 }
@@ -1118,32 +1127,35 @@ void SocksClient::do_remote_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     terminate();
+                     terminate_remote();
                  return;
              }
              remote_buf_.commit(bytes_xferred);
              // Remote server is trying to send data to the client.  Write it
              // to the client_socket_.
+             boost::system::error_code ecx;
+             auto r = client_socket_.send
+                 (ba::buffer(remote_buf_.data(), remote_buf_.size()), 0, ecx);
+             remote_buf_.consume(r);
+             if (r == bytes_xferred) {
+                 do_remote_socket_read_again(r);
+                 return;
+             } else if (r == 0 && ecx != ba::error::would_block) {
+                 if (ecx != ba::error::operation_aborted)
+                     terminate_remote();
+                 return;
+             }
              ba::async_write(client_socket_, remote_buf_, strandR_.wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
                                  if (ec) {
                                      if (ec != ba::error::operation_aborted)
-                                         terminate();
+                                         terminate_remote();
                                      return;
                                  }
                                  remote_buf_.consume(bytes_xferred);
-#ifdef USE_SPLICE
-                                 if (bytes_xferred == receive_buffer_chunk_size) {
-                                     if (init_pipe_remote()) {
-                                         std::cerr << "remote->client switched to splice\n";
-                                         do_remote_socket_read_splice();
-                                         return;
-                                     }
-                                 } else
-#endif
-                                 do_remote_socket_read();
+                                 do_remote_socket_read_again(bytes_xferred);
                              }));
          }));
 }

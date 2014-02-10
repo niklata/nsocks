@@ -71,6 +71,9 @@ public:
         return remote_socket_.local_endpoint();
     }
 
+    static void set_send_buffer_chunk_size(std::size_t size);
+    static void set_receive_buffer_chunk_size(std::size_t size);
+
 private:
     // Can throw std::runtime_error
     static inline boost::optional<std::size_t> spliceit(int infd, int outfd)
@@ -291,6 +294,43 @@ private:
         } catch (...) {return false; }
         return true;
     }
+
+    inline void do_client_socket_connect_read_again(size_t bytes_xferred)
+    {
+        // std::cerr << "sbx=" << bytes_xferred << " sms="
+        //           << send_minsplice_size << "\n";
+        if (bytes_xferred >= send_minsplice_size) {
+            if (init_pipe_client()) {
+                std::cerr << "client->remote switched to splice\n";
+                do_client_socket_connect_read_splice();
+                return;
+            } else
+                std::cerr << "init_pipe_client failed\n";
+        }
+        do_client_socket_connect_read();
+    }
+
+    inline void do_remote_socket_read_again(size_t bytes_xferred)
+    {
+        // std::cerr << "rbx=" << bytes_xferred << " rms="
+        //           << receive_minsplice_size << "\n";
+        if (bytes_xferred >= receive_minsplice_size) {
+            if (init_pipe_remote()) {
+                std::cerr << "remote->client switched to splice\n";
+                do_remote_socket_read_splice();
+                return;
+            } else
+                std::cerr << "init_pipe_remote failed\n";
+        }
+        do_remote_socket_read();
+    }
+#else
+    inline void terminate_client() { terminate(); }
+    inline void terminate_remote() { terminate(); }
+    inline void do_remote_socket_read_again(size_t bytes_xferred)
+        { do_remote_socket_read(); }
+    inline void do_client_socket_connect_read_again(size_t bytes_xferred)
+        { do_client_socket_connect_read(); }
 #endif
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
@@ -298,6 +338,11 @@ private:
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
+
+    static std::size_t send_buffer_chunk_size;
+    static std::size_t receive_buffer_chunk_size;
+    static std::size_t send_minsplice_size;
+    static std::size_t receive_minsplice_size;
 
     inline void set_remote_socket_options()
     {
@@ -360,8 +405,6 @@ private:
     void start_accept();
 };
 
-void set_send_buffer_chunk_size(std::size_t size);
-void set_receive_buffer_chunk_size(std::size_t size);
 void set_listen_queuelen(std::size_t len);
 void set_max_buffer_ms(unsigned int n);
 
