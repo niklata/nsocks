@@ -67,10 +67,10 @@ void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 static unsigned int max_buffer_ms = 250;
 void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
 
-std::size_t SocksClient::send_buffer_chunk_size = 768;
-std::size_t SocksClient::receive_buffer_chunk_size = 1536;
-std::size_t SocksClient::send_minsplice_size = 576;
-std::size_t SocksClient::receive_minsplice_size = 1152;
+std::size_t SocksClient::send_buffer_chunk_size = 1024;
+std::size_t SocksClient::receive_buffer_chunk_size = 2048;
+std::size_t SocksClient::send_minsplice_size = 768;
+std::size_t SocksClient::receive_minsplice_size = 1536;
 void SocksClient::set_send_buffer_chunk_size(std::size_t size) {
     send_buffer_chunk_size = size;
     send_minsplice_size = size / 4 * 3;

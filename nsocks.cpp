@@ -183,9 +183,9 @@ static po::variables_map fetch_options(int ac, char *av[])
          "group name that nsocks should run as")
         ("threads,T", po::value<std::size_t>()->default_value(1),
          "number of worker threads that nsocks should use")
-        ("send-chunksize", po::value<std::size_t>()->default_value(768),
+        ("send-chunksize", po::value<std::size_t>()->default_value(1024),
          "bytes of ram used as buffer when sending data for a connection")
-        ("receive-chunksize", po::value<std::size_t>()->default_value(1536),
+        ("receive-chunksize", po::value<std::size_t>()->default_value(2048),
          "bytes of ram used as buffer when receiving data for a connection")
         ("max-buffer-ms", po::value<unsigned int>()->default_value(250),
          "max milliseconds that data can stay buffered in splice pipeline")
