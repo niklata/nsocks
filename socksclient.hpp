@@ -249,8 +249,8 @@ private:
     bool init_pipe_remote();
     void terminate_client();
     void terminate_remote();
-    void do_client_socket_connect_read_splice();
-    void do_remote_socket_read_splice();
+    void tcp_client_socket_read_splice();
+    void tcp_remote_socket_read_splice();
     void flushPipeToRemote();
     void flushPipeToClient();
     void kickClientPipeTimer();
@@ -295,42 +295,42 @@ private:
         return true;
     }
 
-    inline void do_client_socket_connect_read_again(size_t bytes_xferred)
+    inline void tcp_client_socket_read_again(size_t bytes_xferred)
     {
         // std::cerr << "sbx=" << bytes_xferred << " sms="
         //           << send_minsplice_size << "\n";
         if (bytes_xferred >= send_minsplice_size) {
             if (init_pipe_client()) {
                 // std::cerr << "client->remote switched to splice\n";
-                do_client_socket_connect_read_splice();
+                tcp_client_socket_read_splice();
                 return;
             } else
                 std::cerr << "init_pipe_client failed\n";
         }
-        do_client_socket_connect_read();
+        tcp_client_socket_read();
     }
 
-    inline void do_remote_socket_read_again(size_t bytes_xferred)
+    inline void tcp_remote_socket_read_again(size_t bytes_xferred)
     {
         // std::cerr << "rbx=" << bytes_xferred << " rms="
         //           << receive_minsplice_size << "\n";
         if (bytes_xferred >= receive_minsplice_size) {
             if (init_pipe_remote()) {
                 // std::cerr << "remote->client switched to splice\n";
-                do_remote_socket_read_splice();
+                tcp_remote_socket_read_splice();
                 return;
             } else
                 std::cerr << "init_pipe_remote failed\n";
         }
-        do_remote_socket_read();
+        tcp_remote_socket_read();
     }
 #else
     inline void terminate_client() { terminate(); }
     inline void terminate_remote() { terminate(); }
-    inline void do_remote_socket_read_again(size_t bytes_xferred)
-        { do_remote_socket_read(); }
-    inline void do_client_socket_connect_read_again(size_t bytes_xferred)
-        { do_client_socket_connect_read(); }
+    inline void tcp_remote_socket_read_again(size_t bytes_xferred)
+        { tcp_remote_socket_read(); }
+    inline void tcp_client_socket_read_again(size_t bytes_xferred)
+        { tcp_client_socket_read(); }
 #endif
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
@@ -360,8 +360,8 @@ private:
 
     bool is_dst_denied(const boost::asio::ip::address &addr) const;
 
-    void do_client_socket_connect_read();
-    void do_remote_socket_read();
+    void tcp_client_socket_read();
+    void tcp_remote_socket_read();
 
     bool is_bind_client_allowed() const;
     void dispatch_tcp_bind();

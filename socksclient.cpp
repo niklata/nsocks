@@ -880,7 +880,7 @@ void SocksClient::terminate_remote()
 }
 
 // Write data read from the client socket to the connect socket.
-void SocksClient::do_client_socket_connect_read_splice()
+void SocksClient::tcp_client_socket_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
@@ -903,24 +903,24 @@ void SocksClient::do_client_socket_connect_read_splice()
                      return;
                  }
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_client_socket_connect_read_splice() TERMINATE: "
+                 std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
                  terminate_client();
                  return;
              }
              if (!splicePipeToRemote()) {
-                 std::cerr << "do_client_socket_connect_read_splice() TERMINATE: "
-                           << "\n";
+                 std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
+                              "splicePipeToRemote() returned false\n";
                  terminate_remote();
                  return;
              }
              kickRemotePipeTimer();
-             do_client_socket_connect_read_splice();
+             tcp_client_socket_read_splice();
          }));
 }
 
 // Write data read from the connect socket to the client socket.
-void SocksClient::do_remote_socket_read_splice()
+void SocksClient::tcp_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
@@ -943,19 +943,19 @@ void SocksClient::do_remote_socket_read_splice()
                      return;
                  }
              } catch (const std::runtime_error &e) {
-                 std::cerr << "do_remote_socket_read_splice() TERMINATE: "
+                 std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
                  terminate_remote();
                  return;
              }
              if (!splicePipeToClient()) {
-                 std::cerr << "do_remote_socket_read_splice() TERMINATE: "
-                           << "\n";
+                 std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
+                              "splicePipeToClient() returned false\n";
                  terminate_client();
                  return;
              }
              kickClientPipeTimer();
-             do_remote_socket_read_splice();
+             tcp_remote_socket_read_splice();
          }));
 }
 
@@ -1028,7 +1028,8 @@ void SocksClient::flushPipeToRemote()
                  return;
              }
              if (!splicePipeToRemote()) {
-                 std::cerr << "flushPipeToRemote() TERMINATE: " << "\n";
+                 std::cerr << "flushPipeToRemote() TERMINATE: "
+                              "splicePipeToRemote() returned false\n";
                  terminate_remote();
                  return;
              }
@@ -1059,7 +1060,8 @@ void SocksClient::flushPipeToClient()
                  return;
              }
              if (!splicePipeToClient()) {
-                 std::cerr << "flushPipeToClient() TERMINATE: " << "\n";
+                 std::cerr << "flushPipeToClient() TERMINATE: "
+                              "splicePipeToClient() returned false\n";
                  terminate_client();
                  return;
              }
@@ -1069,7 +1071,7 @@ void SocksClient::flushPipeToClient()
 #endif
 
 // Write data read from the client socket to the connect socket.
-void SocksClient::do_client_socket_connect_read()
+void SocksClient::tcp_client_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = client_buf_.prepare(send_buffer_chunk_size);
@@ -1092,7 +1094,7 @@ void SocksClient::do_client_socket_connect_read()
                  (ba::buffer(client_buf_.data(), client_buf_.size()), 0, ecx);
              client_buf_.consume(r);
              if (r == bytes_xferred) {
-                 do_client_socket_connect_read_again(r);
+                 tcp_client_socket_read_again(r);
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
@@ -1109,13 +1111,13 @@ void SocksClient::do_client_socket_connect_read()
                                      return;
                                  }
                                  client_buf_.consume(bytes_xferred);
-                                 do_client_socket_connect_read_again(bytes_xferred);
+                                 tcp_client_socket_read_again(bytes_xferred);
                              }));
          }));
 }
 
 // Write data read from the connect socket to the client socket.
-void SocksClient::do_remote_socket_read()
+void SocksClient::tcp_remote_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = remote_buf_.prepare(receive_buffer_chunk_size);
@@ -1138,7 +1140,7 @@ void SocksClient::do_remote_socket_read()
                  (ba::buffer(remote_buf_.data(), remote_buf_.size()), 0, ecx);
              remote_buf_.consume(r);
              if (r == bytes_xferred) {
-                 do_remote_socket_read_again(r);
+                 tcp_remote_socket_read_again(r);
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
@@ -1155,7 +1157,7 @@ void SocksClient::do_remote_socket_read()
                                      return;
                                  }
                                  remote_buf_.consume(bytes_xferred);
-                                 do_remote_socket_read_again(bytes_xferred);
+                                 tcp_remote_socket_read_again(bytes_xferred);
                              }));
          }));
 }
@@ -1696,8 +1698,8 @@ void SocksClient::send_reply(ReplyCode replycode)
              }
              outbuf_.erase(0, bytes_xferred);
              if (!bound_) {
-                 strand_.post([this]() { do_client_socket_connect_read(); });
-                 strandR_.post([this]() { do_remote_socket_read(); });
+                 strand_.post([this]() { tcp_client_socket_read(); });
+                 strandR_.post([this]() { tcp_remote_socket_read(); });
              }
          }));
 }
