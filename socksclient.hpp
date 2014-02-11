@@ -301,7 +301,7 @@ private:
         //           << send_minsplice_size << "\n";
         if (bytes_xferred >= send_minsplice_size) {
             if (init_pipe_client()) {
-                std::cerr << "client->remote switched to splice\n";
+                // std::cerr << "client->remote switched to splice\n";
                 do_client_socket_connect_read_splice();
                 return;
             } else
@@ -316,7 +316,7 @@ private:
         //           << receive_minsplice_size << "\n";
         if (bytes_xferred >= receive_minsplice_size) {
             if (init_pipe_remote()) {
-                std::cerr << "remote->client switched to splice\n";
+                // std::cerr << "remote->client switched to splice\n";
                 do_remote_socket_read_splice();
                 return;
             } else
