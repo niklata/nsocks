@@ -362,38 +362,47 @@ SocksClient::~SocksClient()
 
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
 {
-    if (!s.is_open())
-        return;
     boost::system::error_code ec;
-    s.cancel(ec);
     s.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
     s.close(ec);
 }
 
 #ifdef USE_SPLICE
-static inline void sd_close(ba::posix::stream_descriptor &s)
+static inline void pipe_close_raw(ba::posix::stream_descriptor &sa,
+                                  ba::posix::stream_descriptor &sb)
 {
-    if (!s.is_open())
-        return;
     boost::system::error_code ec;
-    s.cancel(ec);
-    s.close(ec);
+    auto sao = sa.is_open();
+    auto sbo = sb.is_open();
+    if (sao)
+        sa.cancel(ec);
+    if (sbo)
+        sb.cancel(ec);
+    if (sao)
+        sa.close(ec);
+    if (sbo)
+        sb.close(ec);
 }
 
 static inline bool pipe_close(ba::posix::stream_descriptor &sa,
                               ba::posix::stream_descriptor &sb,
                               std::atomic<std::size_t> &p_len,
+                              ba::ip::tcp::socket &s_reader,
                               ba::ip::tcp::socket &s_writer)
 {
     boost::system::error_code ec;
     bool ret(false);
+    auto sro = s_reader.is_open();
+    if (sro)
+        s_reader.cancel(ec);
     if (s_writer.is_open()) {
         ret = true;
         s_writer.cancel(ec);
     }
     p_len = 0;
-    sd_close(sa);
-    sd_close(sb);
+    pipe_close_raw(sa, sb);
+    if (sro)
+        tcp_socket_close(s_reader);
     if (ret)
         s_writer.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
     return ret;
@@ -403,20 +412,29 @@ bool SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
     cPipeTimer_.cancel(ec);
-    tcp_socket_close(client_socket_);
-    return pipe_close(sdToClient_, pToClient_, pToClient_len_, remote_socket_);
+    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
+                      client_socket_, remote_socket_);
 }
 
 bool SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
     rPipeTimer_.cancel(ec);
-    tcp_socket_close(remote_socket_);
-    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_, client_socket_);
+    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
+                      remote_socket_, client_socket_);
 }
 #else
-bool SocksClient::close_client_socket() { tcp_socket_close(client_socket_); return false; }
-bool SocksClient::close_remote_socket() { tcp_socket_close(remote_socket_); return false; }
+static inline void close_cr_socket(ba::ip::tcp::socket &s)
+{
+    if (!s.is_open())
+        return;
+    boost::system::error_code ec;
+    s.cancel(ec);
+    tcp_socket_close(s);
+}
+
+bool SocksClient::close_client_socket() { close_cr_socket(client_socket_); return false; }
+bool SocksClient::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
 #endif
 
 void SocksClient::close_bind_listen_socket()
