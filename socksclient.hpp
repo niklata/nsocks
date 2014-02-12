@@ -251,10 +251,12 @@ private:
     void terminate_remote();
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void flushPipeToRemote();
-    void flushPipeToClient();
+    void flushPipeToRemote(bool closing);
+    void flushPipeToClient(bool closing);
     void kickClientPipeTimer();
     void kickRemotePipeTimer();
+
+    // If we get EAGAIN here, then it means that the pipe is full.
     inline bool spliceClientToPipe()
     {
         auto n = spliceit(client_socket_.native_handle(),
@@ -263,7 +265,6 @@ private:
         pToRemote_len_ += *n;
         return true;
     }
-
     inline bool spliceRemoteToPipe()
     {
         auto n = spliceit(remote_socket_.native_handle(),
@@ -283,7 +284,6 @@ private:
         } catch (...) {return false; }
         return true;
     }
-
     inline bool splicePipeToRemote()
     {
         try {
@@ -309,7 +309,6 @@ private:
         }
         tcp_client_socket_read();
     }
-
     inline void tcp_remote_socket_read_again(size_t bytes_xferred)
     {
         // std::cerr << "rbx=" << bytes_xferred << " rms="

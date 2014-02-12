@@ -850,7 +850,7 @@ void SocksClient::terminate_client()
                 return;
             }
             if (pToRemote_len_ > 0) {
-                strand_.post([this]() { flushPipeToRemote(); });
+                strand_.post([this]() { flushPipeToRemote(true); });
                 return;
             }
         }
@@ -871,7 +871,7 @@ void SocksClient::terminate_remote()
                 return;
             }
             if (pToClient_len_ > 0) {
-                strandR_.post([this]() { flushPipeToClient(); });
+                strandR_.post([this]() { flushPipeToClient(true); });
                 return;
             }
         }
@@ -899,7 +899,7 @@ void SocksClient::tcp_client_socket_read_splice()
              }
              try {
                  if (!spliceClientToPipe()) {
-                     strandR_.post([this]() { flushPipeToClient(); });
+                     strandR_.post([this]() { flushPipeToClient(false); });
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -939,7 +939,7 @@ void SocksClient::tcp_remote_socket_read_splice()
              }
              try {
                  if (!spliceRemoteToPipe()) {
-                     strand_.post([this]() { flushPipeToRemote(); });
+                     strand_.post([this]() { flushPipeToRemote(false); });
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -1005,18 +1005,21 @@ void SocksClient::kickRemotePipeTimer()
     }
 }
 
-void SocksClient::flushPipeToRemote()
+void SocksClient::flushPipeToRemote(bool closing)
 {
     if (pToRemote_len_ == 0) {
-        terminate_remote();
+        if (closing)
+            terminate_remote();
+        else
+            strandR_.post([this]() { tcp_remote_socket_read_splice(); });
         return;
     }
-    std::cerr << "\nflushPipeToRemote\n";
+    std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd, closing](const boost::system::error_code &ec,
+                              std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -1033,22 +1036,25 @@ void SocksClient::flushPipeToRemote()
                  terminate_remote();
                  return;
              }
-             flushPipeToRemote();
+             flushPipeToRemote(closing);
          }));
 }
 
-void SocksClient::flushPipeToClient()
+void SocksClient::flushPipeToClient(bool closing)
 {
     if (pToClient_len_ == 0) {
-        terminate_client();
+        if (closing)
+            terminate_client();
+        else
+            strand_.post([this]() { tcp_client_socket_read_splice(); });
         return;
     }
-    std::cerr << "\nflushPipeToClient\n";
+    std::cerr << "\nflushPipeToClient(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strandR_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd, closing](const boost::system::error_code &ec,
+                              std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -1065,7 +1071,7 @@ void SocksClient::flushPipeToClient()
                  terminate_client();
                  return;
              }
-             flushPipeToClient();
+             flushPipeToClient(closing);
          }));
 }
 #endif
