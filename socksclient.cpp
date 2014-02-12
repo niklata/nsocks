@@ -412,7 +412,7 @@ bool SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
     cPipeTimer_.cancel(ec);
-    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
+    return pipe_close(pToClient_, sdToClient_, pToClient_len_,
                       client_socket_, remote_socket_);
 }
 
@@ -420,7 +420,7 @@ bool SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
     rPipeTimer_.cancel(ec);
-    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
+    return pipe_close(pToRemote_, sdToRemote_, pToRemote_len_,
                       remote_socket_, client_socket_);
 }
 #else
