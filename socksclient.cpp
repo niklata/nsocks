@@ -360,7 +360,7 @@ SocksClient::~SocksClient()
     }
 }
 
-static void tcp_socket_close(ba::ip::tcp::socket &s)
+static inline void tcp_socket_close(ba::ip::tcp::socket &s)
 {
     if (!s.is_open())
         return;
@@ -370,7 +370,8 @@ static void tcp_socket_close(ba::ip::tcp::socket &s)
     s.close(ec);
 }
 
-static void sd_close(ba::posix::stream_descriptor &s)
+#ifdef USE_SPLICE
+static inline void sd_close(ba::posix::stream_descriptor &s)
 {
     if (!s.is_open())
         return;
@@ -379,25 +380,44 @@ static void sd_close(ba::posix::stream_descriptor &s)
     s.close(ec);
 }
 
-void SocksClient::close_client_socket()
+static inline bool pipe_close(ba::posix::stream_descriptor &sa,
+                              ba::posix::stream_descriptor &sb,
+                              std::atomic<std::size_t> &p_len,
+                              ba::ip::tcp::socket &s_writer)
 {
-    tcp_socket_close(client_socket_);
-#ifdef USE_SPLICE
-    pToClient_len_ = 0;
-    sd_close(sdToClient_);
-    sd_close(pToClient_);
-#endif
+    boost::system::error_code ec;
+    bool ret(false);
+    if (s_writer.is_open()) {
+        ret = true;
+        s_writer.cancel(ec);
+    }
+    p_len = 0;
+    sd_close(sa);
+    sd_close(sb);
+    if (ret)
+        s_writer.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+    return ret;
 }
 
-void SocksClient::close_remote_socket()
+bool SocksClient::close_client_socket()
 {
-    tcp_socket_close(remote_socket_);
-#ifdef USE_SPLICE
-    pToRemote_len_ = 0;
-    sd_close(sdToRemote_);
-    sd_close(pToRemote_);
-#endif
+    boost::system::error_code ec;
+    cPipeTimer_.cancel(ec);
+    tcp_socket_close(client_socket_);
+    return pipe_close(sdToClient_, pToClient_, pToClient_len_, remote_socket_);
 }
+
+bool SocksClient::close_remote_socket()
+{
+    boost::system::error_code ec;
+    rPipeTimer_.cancel(ec);
+    tcp_socket_close(remote_socket_);
+    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_, client_socket_);
+}
+#else
+bool SocksClient::close_client_socket() { tcp_socket_close(client_socket_); return false; }
+bool SocksClient::close_remote_socket() { tcp_socket_close(remote_socket_); return false; }
+#endif
 
 void SocksClient::close_bind_listen_socket()
 {
@@ -839,44 +859,34 @@ bool SocksClient::init_pipe_remote()
 
 void SocksClient::terminate_client()
 {
-    close_client_socket();
-    if (!terminated_) {
-        if (remote_socket_.is_open() && pToRemote_len_ > 0) {
-            boost::system::error_code ec;
-            remote_socket_.cancel(ec);
-            remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            if (!splicePipeToRemote()) {
-                terminate();
-                return;
-            }
+    bool remote_open = close_client_socket();
+    if (terminated_)
+        return;
+    if (remote_open && pToRemote_len_ > 0) {
+        if (splicePipeToRemote()) {
             if (pToRemote_len_ > 0) {
                 strand_.post([this]() { flushPipeToRemote(true); });
                 return;
             }
         }
-        terminate();
     }
+    terminate();
 }
 
 void SocksClient::terminate_remote()
 {
-    close_remote_socket();
-    if (!terminated_) {
-        if (client_socket_.is_open() && pToClient_len_ > 0) {
-            boost::system::error_code ec;
-            client_socket_.cancel(ec);
-            client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-            if (!splicePipeToClient()) {
-                terminate();
-                return;
-            }
+    bool client_open = close_remote_socket();
+    if (terminated_)
+        return;
+    if (client_open && pToClient_len_ > 0) {
+        if (splicePipeToClient()) {
             if (pToClient_len_ > 0) {
                 strandR_.post([this]() { flushPipeToClient(true); });
                 return;
             }
         }
-        terminate();
     }
+    terminate();
 }
 
 // Write data read from the client socket to the connect socket.
@@ -899,7 +909,10 @@ void SocksClient::tcp_client_socket_read_splice()
              }
              try {
                  if (!spliceClientToPipe()) {
-                     strandR_.post([this]() { flushPipeToClient(false); });
+                     if (pToRemote_len_ > 0)
+                         flushPipeToRemote(false);
+                     else
+                         terminate_client();
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -939,7 +952,10 @@ void SocksClient::tcp_remote_socket_read_splice()
              }
              try {
                  if (!spliceRemoteToPipe()) {
-                     strand_.post([this]() { flushPipeToRemote(false); });
+                     if (pToClient_len_ > 0)
+                         flushPipeToClient(false);
+                     else
+                         terminate_remote();
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -1011,7 +1027,7 @@ void SocksClient::flushPipeToRemote(bool closing)
         if (closing)
             terminate_remote();
         else
-            strandR_.post([this]() { tcp_remote_socket_read_splice(); });
+            tcp_client_socket_read_splice();
         return;
     }
     std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
@@ -1046,7 +1062,7 @@ void SocksClient::flushPipeToClient(bool closing)
         if (closing)
             terminate_client();
         else
-            strand_.post([this]() { tcp_client_socket_read_splice(); });
+            tcp_remote_socket_read_splice();
         return;
     }
     std::cerr << "\nflushPipeToClient(" << closing << ")\n";

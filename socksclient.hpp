@@ -381,8 +381,8 @@ private:
     void send_reply(ReplyCode replycode);
     void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
     void untrack();
-    void close_client_socket();
-    void close_remote_socket();
+    bool close_client_socket();
+    bool close_remote_socket();
     void close_bind_listen_socket();
     void close_udp_sockets();
 
