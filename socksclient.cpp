@@ -1130,11 +1130,12 @@ void SocksClient::tcp_client_socket_read()
              // Client is trying to send data to the remote server.  Write it
              // to the remote_socket_.
              boost::system::error_code ecx;
+             auto cbs = client_buf_.size();
              auto r = remote_socket_.send
-                 (ba::buffer(client_buf_.data(), client_buf_.size()), 0, ecx);
+                 (ba::buffer(client_buf_.data(), cbs), 0, ecx);
              client_buf_.consume(r);
-             if (r == bytes_xferred) {
-                 tcp_client_socket_read_again(r);
+             if (r == cbs) {
+                 tcp_client_socket_read_again(r, client_buf_.size() == 0);
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
@@ -1151,7 +1152,8 @@ void SocksClient::tcp_client_socket_read()
                                      return;
                                  }
                                  client_buf_.consume(bytes_xferred);
-                                 tcp_client_socket_read_again(bytes_xferred);
+                                 tcp_client_socket_read_again
+                                     (bytes_xferred, client_buf_.size() == 0);
                              }));
          }));
 }
@@ -1176,11 +1178,12 @@ void SocksClient::tcp_remote_socket_read()
              // Remote server is trying to send data to the client.  Write it
              // to the client_socket_.
              boost::system::error_code ecx;
+             auto rbs = remote_buf_.size();
              auto r = client_socket_.send
-                 (ba::buffer(remote_buf_.data(), remote_buf_.size()), 0, ecx);
+                 (ba::buffer(remote_buf_.data(), rbs), 0, ecx);
              remote_buf_.consume(r);
-             if (r == bytes_xferred) {
-                 tcp_remote_socket_read_again(r);
+             if (r == rbs) {
+                 tcp_remote_socket_read_again(r, remote_buf_.size() == 0);
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
@@ -1197,7 +1200,8 @@ void SocksClient::tcp_remote_socket_read()
                                      return;
                                  }
                                  remote_buf_.consume(bytes_xferred);
-                                 tcp_remote_socket_read_again(bytes_xferred);
+                                 tcp_remote_socket_read_again
+                                     (bytes_xferred, remote_buf_.size() == 0);
                              }));
          }));
 }

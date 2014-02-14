@@ -295,11 +295,12 @@ private:
         return true;
     }
 
-    inline void tcp_client_socket_read_again(size_t bytes_xferred)
+    inline void tcp_client_socket_read_again(size_t bytes_xferred,
+                                             bool splice_ok)
     {
         // std::cerr << "sbx=" << bytes_xferred << " sms="
         //           << send_minsplice_size << "\n";
-        if (bytes_xferred >= send_minsplice_size) {
+        if (splice_ok && bytes_xferred >= send_minsplice_size) {
             if (init_pipe_client()) {
                 // std::cerr << "client->remote switched to splice\n";
                 tcp_client_socket_read_splice();
@@ -309,11 +310,12 @@ private:
         }
         tcp_client_socket_read();
     }
-    inline void tcp_remote_socket_read_again(size_t bytes_xferred)
+    inline void tcp_remote_socket_read_again(size_t bytes_xferred,
+                                             bool splice_ok)
     {
         // std::cerr << "rbx=" << bytes_xferred << " rms="
         //           << receive_minsplice_size << "\n";
-        if (bytes_xferred >= receive_minsplice_size) {
+        if (splice_ok && bytes_xferred >= receive_minsplice_size) {
             if (init_pipe_remote()) {
                 // std::cerr << "remote->client switched to splice\n";
                 tcp_remote_socket_read_splice();
