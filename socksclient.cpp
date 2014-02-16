@@ -1090,10 +1090,8 @@ void SocksClient::flushPipeToRemote(bool closing)
     if (pToRemote_len_ == 0) {
         if (closing)
             terminate_remote();
-        else {
-            close_pipe_to_remote();
-            tcp_client_socket_read();
-        }
+        else
+            tcp_client_socket_read_splice();
         return;
     }
     //std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
@@ -1127,10 +1125,8 @@ void SocksClient::flushPipeToClient(bool closing)
     if (pToClient_len_ == 0) {
         if (closing)
             terminate_client();
-        else {
-            close_pipe_to_client();
-            tcp_remote_socket_read();
-        }
+        else
+            tcp_remote_socket_read_splice();
         return;
     }
     //std::cerr << "\nflushPipeToClient(" << closing << ")\n";
