@@ -408,10 +408,31 @@ static inline bool pipe_close(ba::posix::stream_descriptor &sa,
     return ret;
 }
 
+void SocksClient::close_pipe_to_client()
+{
+    boost::system::error_code ec;
+    assert(pToClient_len_ == 0);
+    cPipeTimer_.cancel(ec);
+    sdToClient_.cancel(ec);
+    pToClient_len_ = 0;
+    pipe_close_raw(pToClient_, sdToClient_);
+}
+
+void SocksClient::close_pipe_to_remote()
+{
+    boost::system::error_code ec;
+    assert(pToRemote_len_ == 0);
+    rPipeTimer_.cancel(ec);
+    sdToRemote_.cancel(ec);
+    pToRemote_len_ = 0;
+    pipe_close_raw(pToRemote_, sdToRemote_);
+}
+
 bool SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
     cPipeTimer_.cancel(ec);
+    sdToClient_.cancel(ec);
     return pipe_close(pToClient_, sdToClient_, pToClient_len_,
                       client_socket_, remote_socket_);
 }
@@ -420,6 +441,7 @@ bool SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
     rPipeTimer_.cancel(ec);
+    sdToRemote_.cancel(ec);
     return pipe_close(pToRemote_, sdToRemote_, pToRemote_len_,
                       remote_socket_, client_socket_);
 }
@@ -928,11 +950,19 @@ void SocksClient::tcp_client_socket_read_splice()
              try {
                  if (!spliceClientToPipe()) {
                      if (pToRemote_len_ > 0)
-                         flushPipeToRemote(false);
+                         flushPipeToRemote(true);
                      else
                          terminate_client();
                      return;
                  }
+             } catch (const std::out_of_range &) {
+                 if (pToRemote_len_ > 0)
+                     flushPipeToRemote(false);
+                 else {
+                     close_pipe_to_remote();
+                     tcp_client_socket_read();
+                 }
+                 return;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
@@ -971,11 +1001,19 @@ void SocksClient::tcp_remote_socket_read_splice()
              try {
                  if (!spliceRemoteToPipe()) {
                      if (pToClient_len_ > 0)
-                         flushPipeToClient(false);
+                         flushPipeToClient(true);
                      else
                          terminate_remote();
                      return;
                  }
+             } catch (const std::out_of_range &) {
+                 if (pToClient_len_ > 0)
+                     flushPipeToClient(false);
+                 else {
+                     close_pipe_to_client();
+                     tcp_remote_socket_read();
+                 }
+                 return;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
@@ -1044,11 +1082,13 @@ void SocksClient::flushPipeToRemote(bool closing)
     if (pToRemote_len_ == 0) {
         if (closing)
             terminate_remote();
-        else
-            tcp_client_socket_read_splice();
+        else {
+            close_pipe_to_remote();
+            tcp_client_socket_read();
+        }
         return;
     }
-    std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
+    //std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
@@ -1079,11 +1119,13 @@ void SocksClient::flushPipeToClient(bool closing)
     if (pToClient_len_ == 0) {
         if (closing)
             terminate_client();
-        else
-            tcp_remote_socket_read_splice();
+        else {
+            close_pipe_to_client();
+            tcp_remote_socket_read();
+        }
         return;
     }
-    std::cerr << "\nflushPipeToClient(" << closing << ")\n";
+    //std::cerr << "\nflushPipeToClient(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strandR_.wrap(

@@ -75,7 +75,8 @@ public:
     static void set_receive_buffer_chunk_size(std::size_t size);
 
 private:
-    // Can throw std::runtime_error
+    // Can throw std::runtime_error or std::out_of_range
+    // Return of boost::optional<std::size_t>() implies EOF
     static inline boost::optional<std::size_t> spliceit(int infd, int outfd)
     {
       retry:
@@ -85,7 +86,7 @@ private:
             if (spliced == 0)
                 return boost::optional<std::size_t>();
             switch (errno) {
-                case EAGAIN: return boost::optional<std::size_t>(0);
+                case EAGAIN: throw std::out_of_range("pipe full");
                 case EINTR: goto retry;
                 default: throw std::runtime_error(strerror(errno));
             }
@@ -247,6 +248,8 @@ private:
     boost::asio::posix::stream_descriptor pToClient_;
     bool init_pipe_client();
     bool init_pipe_remote();
+    void close_pipe_to_client();
+    void close_pipe_to_remote();
     void terminate_client();
     void terminate_remote();
     void tcp_client_socket_read_splice();
@@ -256,7 +259,11 @@ private:
     void kickClientPipeTimer();
     void kickRemotePipeTimer();
 
-    // If we get EAGAIN here, then it means that the pipe is full.
+    // If we get EAGAIN here, then it means either that the pipe is full
+    // or the source socket has effectively hung up (in which case trying
+    // to poll again on the socket would busy-wait).  Thus, to distinguish
+    // between the cases, it's necessary to check to see how much data
+    // is in the pipe.
     inline bool spliceClientToPipe()
     {
         auto n = spliceit(client_socket_.native_handle(),
@@ -281,7 +288,11 @@ private:
                               client_socket_.native_handle());
             if (!n) return false;
             pToClient_len_ -= *n;
-        } catch (...) {return false; }
+        } catch (const std::out_of_range &) {
+            return true;
+        } catch (...) {
+            return false;
+        }
         return true;
     }
     inline bool splicePipeToRemote()
@@ -291,7 +302,11 @@ private:
                               remote_socket_.native_handle());
             if (!n) return false;
             pToRemote_len_ -= *n;
-        } catch (...) {return false; }
+        } catch (const std::out_of_range &) {
+            return true;
+        } catch (...) {
+            return false;
+        }
         return true;
     }
 
