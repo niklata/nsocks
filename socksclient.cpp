@@ -948,21 +948,25 @@ void SocksClient::tcp_client_socket_read_splice()
                  return;
              }
              try {
-                 if (!spliceClientToPipe()) {
+                 auto n = spliceit(client_socket_.native_handle(),
+                                   pToRemote_.native_handle());
+                 if (!n) {
                      if (pToRemote_len_ > 0)
                          flushPipeToRemote(true);
                      else
                          terminate_client();
                      return;
                  }
-             } catch (const std::out_of_range &) {
-                 if (pToRemote_len_ > 0)
-                     flushPipeToRemote(false);
-                 else {
-                     close_pipe_to_remote();
-                     tcp_client_socket_read();
+                 if (*n == 0) {
+                     if (pToRemote_len_ > 0)
+                         flushPipeToRemote(false);
+                     else {
+                         close_pipe_to_remote();
+                         tcp_client_socket_read();
+                     }
+                     return;
                  }
-                 return;
+                 pToRemote_len_ += *n;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
@@ -999,21 +1003,25 @@ void SocksClient::tcp_remote_socket_read_splice()
                  return;
              }
              try {
-                 if (!spliceRemoteToPipe()) {
+                 auto n = spliceit(remote_socket_.native_handle(),
+                                   pToClient_.native_handle());
+                 if (!n) {
                      if (pToClient_len_ > 0)
                          flushPipeToClient(true);
                      else
                          terminate_remote();
                      return;
                  }
-             } catch (const std::out_of_range &) {
-                 if (pToClient_len_ > 0)
-                     flushPipeToClient(false);
-                 else {
-                     close_pipe_to_client();
-                     tcp_remote_socket_read();
+                 if (*n == 0) {
+                     if (pToClient_len_ > 0)
+                         flushPipeToClient(false);
+                     else {
+                         close_pipe_to_client();
+                         tcp_remote_socket_read();
+                     }
+                     return;
                  }
-                 return;
+                 pToClient_len_ += *n;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
