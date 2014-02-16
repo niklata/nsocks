@@ -269,7 +269,6 @@ private:
             auto n = spliceit(sdToClient_.native_handle(),
                               client_socket_.native_handle());
             if (!n) return false;
-            if (*n == 0) return true;
             pToClient_len_ -= *n;
             return true;
         } catch (...) {
@@ -282,7 +281,6 @@ private:
             auto n = spliceit(sdToRemote_.native_handle(),
                               remote_socket_.native_handle());
             if (!n) return false;
-            if (*n == 0) return true;
             pToRemote_len_ -= *n;
             return true;
         } catch (...) {
