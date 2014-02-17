@@ -902,14 +902,8 @@ void SocksClient::terminate_client()
     bool remote_open = close_client_socket();
     if (terminated_)
         return;
-    if (remote_open && pToRemote_len_ > 0) {
-        if (splicePipeToRemote()) {
-            if (pToRemote_len_ > 0) {
-                strand_.post([this]() { flushPipeToRemote(true); });
-                return;
-            }
-        }
-    }
+    if (remote_open && pToRemote_len_ > 0)
+        flushPipeToRemote(true);
     terminate();
 }
 
@@ -918,14 +912,8 @@ void SocksClient::terminate_remote()
     bool client_open = close_remote_socket();
     if (terminated_)
         return;
-    if (client_open && pToClient_len_ > 0) {
-        if (splicePipeToClient()) {
-            if (pToClient_len_ > 0) {
-                strandR_.post([this]() { flushPipeToClient(true); });
-                return;
-            }
-        }
-    }
+    if (client_open && pToClient_len_ > 0)
+        flushPipeToClient(true);
     terminate();
 }
 
@@ -951,10 +939,7 @@ void SocksClient::tcp_client_socket_read_splice()
                  auto n = spliceit(client_socket_.native_handle(),
                                    pToRemote_.native_handle());
                  if (!n) {
-                     if (pToRemote_len_ > 0)
-                         flushPipeToRemote(true);
-                     else
-                         terminate_client();
+                     terminate_client();
                      return;
                  }
                  if (*n == 0) {
@@ -1008,10 +993,7 @@ void SocksClient::tcp_remote_socket_read_splice()
                  auto n = spliceit(remote_socket_.native_handle(),
                                    pToClient_.native_handle());
                  if (!n) {
-                     if (pToClient_len_ > 0)
-                         flushPipeToClient(true);
-                     else
-                         terminate_remote();
+                     terminate_remote();
                      return;
                  }
                  if (*n == 0) {
