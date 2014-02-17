@@ -973,13 +973,15 @@ void SocksClient::tcp_client_socket_read_splice()
                  terminate_client();
                  return;
              }
-             if (!splicePipeToRemote()) {
+             auto n = splicePipeToRemote();
+             if (!n) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                               "splicePipeToRemote() returned false\n";
                  terminate_remote();
                  return;
              }
-             kickRemotePipeTimer();
+             if (*n > 0)
+                 kickRemotePipeTimer();
              tcp_client_socket_read_splice();
          }));
 }
@@ -1028,13 +1030,15 @@ void SocksClient::tcp_remote_socket_read_splice()
                  terminate_remote();
                  return;
              }
-             if (!splicePipeToClient()) {
+             auto n = splicePipeToClient();
+             if (!n) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                               "splicePipeToClient() returned false\n";
                  terminate_client();
                  return;
              }
-             kickClientPipeTimer();
+             if (*n > 0)
+                 kickClientPipeTimer();
              tcp_remote_socket_read_splice();
          }));
 }
@@ -1085,16 +1089,13 @@ void SocksClient::kickRemotePipeTimer()
     }
 }
 
-void SocksClient::flushPipeToRemote(bool closing)
+void SocksClient::doFlushPipeToRemote(bool closing)
 {
     if (pToRemote_len_ == 0) {
-        if (closing)
-            terminate_remote();
-        else
-            tcp_client_socket_read_splice();
+        if (closing) terminate_remote();
+        else tcp_client_socket_read_splice();
         return;
     }
-    //std::cerr << "\nflushPipeToRemote(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_.wrap(
@@ -1103,7 +1104,7 @@ void SocksClient::flushPipeToRemote(bool closing)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "flushPipeToRemote error: "
+                     std::cerr << "doFlushPipeToRemote error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
                      terminate_remote();
@@ -1111,25 +1112,22 @@ void SocksClient::flushPipeToRemote(bool closing)
                  return;
              }
              if (!splicePipeToRemote()) {
-                 std::cerr << "flushPipeToRemote() TERMINATE: "
+                 std::cerr << "doFlushPipeToRemote() TERMINATE: "
                               "splicePipeToRemote() returned false\n";
                  terminate_remote();
                  return;
              }
-             flushPipeToRemote(closing);
+             doFlushPipeToRemote(closing);
          }));
 }
 
-void SocksClient::flushPipeToClient(bool closing)
+void SocksClient::doFlushPipeToClient(bool closing)
 {
     if (pToClient_len_ == 0) {
-        if (closing)
-            terminate_client();
-        else
-            tcp_remote_socket_read_splice();
+        if (closing) terminate_client();
+        else tcp_remote_socket_read_splice();
         return;
     }
-    //std::cerr << "\nflushPipeToClient(" << closing << ")\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strandR_.wrap(
@@ -1138,7 +1136,7 @@ void SocksClient::flushPipeToClient(bool closing)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "flushPipeToClient error: "
+                     std::cerr << "doFlushPipeToClient error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
                      terminate_client();
@@ -1146,12 +1144,12 @@ void SocksClient::flushPipeToClient(bool closing)
                  return;
              }
              if (!splicePipeToClient()) {
-                 std::cerr << "flushPipeToClient() TERMINATE: "
+                 std::cerr << "doFlushPipeToClient() TERMINATE: "
                               "splicePipeToClient() returned false\n";
                  terminate_client();
                  return;
              }
-             flushPipeToClient(closing);
+             doFlushPipeToClient(closing);
          }));
 }
 #endif

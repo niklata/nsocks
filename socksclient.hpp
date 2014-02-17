@@ -258,34 +258,56 @@ private:
     void terminate_remote();
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void flushPipeToRemote(bool closing);
-    void flushPipeToClient(bool closing);
+    void doFlushPipeToRemote(bool closing);
+    void doFlushPipeToClient(bool closing);
     void kickClientPipeTimer();
     void kickRemotePipeTimer();
 
-    inline bool splicePipeToClient()
+    inline boost::optional<std::size_t> splicePipeToClient()
     {
         try {
             auto n = spliceit(sdToClient_.native_handle(),
                               client_socket_.native_handle());
-            if (!n) return false;
-            pToClient_len_ -= *n;
-            return true;
+            if (n)
+                pToClient_len_ -= *n;
+            return n;
         } catch (...) {
-            return false;
+            return boost::optional<std::size_t>();
         }
     }
-    inline bool splicePipeToRemote()
+    inline boost::optional<std::size_t> splicePipeToRemote()
     {
         try {
             auto n = spliceit(sdToRemote_.native_handle(),
                               remote_socket_.native_handle());
-            if (!n) return false;
-            pToRemote_len_ -= *n;
-            return true;
+            if (n)
+                pToRemote_len_ -= *n;
+            return n;
         } catch (...) {
-            return false;
+            return boost::optional<std::size_t>();
         }
+    }
+
+    inline void flushPipeToRemote(bool closing)
+    {
+        if (!splicePipeToRemote()) {
+            std::cerr << "flushPipeToRemote() TERMINATE: "
+                "splicePipeToRemote() returned false\n";
+            terminate_remote();
+            return;
+        }
+        doFlushPipeToRemote(closing);
+    }
+
+    inline void flushPipeToClient(bool closing)
+    {
+        if (!splicePipeToClient()) {
+            std::cerr << "flushPipeToClient() TERMINATE: "
+                "splicePipeToClient() returned false\n";
+            terminate_client();
+            return;
+        }
+        doFlushPipeToClient(closing);
     }
 
     inline void tcp_client_socket_read_again(size_t bytes_xferred,
