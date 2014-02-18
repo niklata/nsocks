@@ -28,6 +28,7 @@
 
 #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 #include <unistd.h>
@@ -82,6 +83,9 @@ void SocksClient::set_receive_buffer_chunk_size(std::size_t size) {
 
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
+
+static std::unique_ptr <boost::asio::strand> strand_C;
+static std::unique_ptr <boost::asio::strand> strand_R;
 
 class ephConnTracker : boost::noncopyable
 {
@@ -201,6 +205,13 @@ public:
         return boost::optional<std::shared_ptr<SocksClient>>();
     }
     std::size_t size() const { return hash_.size(); }
+    std::shared_ptr<SocksClient> get(SocksClient *t) {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto x = hash_.find(t);
+        if (x != hash_.end())
+            return x->second;
+        throw std::out_of_range("dne");
+    }
 private:
     std::mutex lock_;
     SocksClientType client_type_;
@@ -212,8 +223,23 @@ static connTracker conntracker_connect(SCT_CONNECT, conntracker_hs);
 static connTracker conntracker_bind(SCT_BIND, conntracker_bindlisten);
 static connTracker conntracker_udp(SCT_UDP, conntracker_hs);
 
+#ifdef USE_SPLICE
+static std::unordered_set<SocksClient*> cpipe_hasdata;
+static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
+static std::atomic<bool> cPipeTimerSet;
+static std::unordered_set<SocksClient*> rpipe_hasdata;
+static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
+static std::atomic<bool> rPipeTimerSet;
+#endif
+
 void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {
+    strand_C = nk::make_unique<boost::asio::strand>(io_service);
+    strand_R = nk::make_unique<boost::asio::strand>(io_service);
+#ifdef USE_SPLICE
+    cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
+    rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
+#endif
     conntracker_hs = nk::make_unique<ephConnTracker>
         (io_service, hs_secs);
     conntracker_bindlisten = nk::make_unique<ephConnTracker>
@@ -317,13 +343,11 @@ static std::atomic<std::size_t> socks_alive_count;
 
 SocksClient::SocksClient(ba::io_service &io_service,
                          ba::ip::tcp::socket socket)
-        : strand_(io_service), strandR_(io_service),
-          client_socket_(std::move(socket)), remote_socket_(io_service),
+        : client_socket_(std::move(socket)), remote_socket_(io_service),
           tcp_resolver_(io_service), terminated_(false),
           client_type_(SCT_INIT), ibSiz_(0),
 #ifdef USE_SPLICE
-          pToRemote_len_(0), rPipeTimer_(io_service), rPipeTimerSet_(false),
-          pToClient_len_(0), cPipeTimer_(io_service), cPipeTimerSet_(false),
+          pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_(io_service), pToClient_(io_service),
 #endif
@@ -412,7 +436,6 @@ void SocksClient::close_pipe_to_client()
 {
     boost::system::error_code ec;
     assert(pToClient_len_ == 0);
-    cPipeTimer_.cancel(ec);
     sdToClient_.cancel(ec);
     pToClient_len_ = 0;
     pipe_close_raw(pToClient_, sdToClient_);
@@ -422,7 +445,6 @@ void SocksClient::close_pipe_to_remote()
 {
     boost::system::error_code ec;
     assert(pToRemote_len_ == 0);
-    rPipeTimer_.cancel(ec);
     sdToRemote_.cancel(ec);
     pToRemote_len_ = 0;
     pipe_close_raw(pToRemote_, sdToRemote_);
@@ -431,7 +453,6 @@ void SocksClient::close_pipe_to_remote()
 bool SocksClient::close_client_socket()
 {
     boost::system::error_code ec;
-    cPipeTimer_.cancel(ec);
     sdToClient_.cancel(ec);
     return pipe_close(pToClient_, sdToClient_, pToClient_len_,
                       client_socket_, remote_socket_);
@@ -440,7 +461,6 @@ bool SocksClient::close_client_socket()
 bool SocksClient::close_remote_socket()
 {
     boost::system::error_code ec;
-    rPipeTimer_.cancel(ec);
     sdToRemote_.cancel(ec);
     return pipe_close(pToRemote_, sdToRemote_, pToRemote_len_,
                       remote_socket_, client_socket_);
@@ -521,7 +541,7 @@ void SocksClient::read_greet()
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
-         strand_.wrap(
+         strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -555,7 +575,7 @@ void SocksClient::read_conn_request()
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
-         strand_.wrap(
+         strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -629,7 +649,7 @@ boost::optional<bool> SocksClient::process_greet()
     auto sfd = shared_from_this();
     ba::async_write(
         client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
-        strand_.wrap(
+        strand_C->wrap(
         [this, sfd](const boost::system::error_code &ec,
                     std::size_t bytes_xferred)
         {
@@ -748,7 +768,7 @@ void SocksClient::dispatch_connrq()
         auto sfd = shared_from_this();
         try {
             tcp_resolver_.async_resolve
-                (query, strand_.wrap(
+                (query, strand_C->wrap(
                  [this, sfd](const boost::system::error_code &ec,
                              ba::ip::tcp::resolver::iterator it)
                  {
@@ -830,7 +850,7 @@ void SocksClient::dispatch_tcp_connect()
     auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
     auto sfd = shared_from_this();
     remote_socket_.async_connect
-        (ep, strand_.wrap(
+        (ep, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
@@ -917,12 +937,100 @@ void SocksClient::terminate_remote()
     terminate();
 }
 
+static void kickClientPipeTimer()
+{
+    bool cmpbool(false);
+    if (cPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
+        cPipeTimer->expires_from_now
+            (boost::posix_time::milliseconds(max_buffer_ms));
+        cPipeTimer->async_wait(strand_R->wrap(
+            [](const boost::system::error_code& error)
+                {
+                    cPipeTimerSet = false;
+                    if (error)
+                        return;
+                    bool remains(false);
+                    for (auto &i: cpipe_hasdata) {
+                        try {
+                            auto x = conntracker_connect.get(i);
+                            remains |= x->kickClientPipe();
+                        } catch (const std::out_of_range &) {}
+                    }
+                    for (auto &i: cpipe_hasdata) {
+                        try {
+                            auto x = conntracker_bind.get(i);
+                            remains |= x->kickClientPipe();
+                        } catch (const std::out_of_range &) {}
+                    }
+                    cpipe_hasdata.clear();
+                    if (remains)
+                        kickClientPipeTimer();
+                }));
+    }
+}
+
+static void kickRemotePipeTimer()
+{
+    bool cmpbool(false);
+    if (rPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
+        rPipeTimer->expires_from_now
+            (boost::posix_time::milliseconds(max_buffer_ms));
+        rPipeTimer->async_wait(strand_C->wrap(
+            [](const boost::system::error_code& error)
+                {
+                    rPipeTimerSet = false;
+                    if (error)
+                        return;
+                    bool remains(false);
+                    for (auto &i: rpipe_hasdata) {
+                        try {
+                            auto x = conntracker_connect.get(i);
+                            remains |= x->kickRemotePipe();
+                        } catch (const std::out_of_range &) {}
+                    }
+                    for (auto &i: rpipe_hasdata) {
+                        try {
+                            auto x = conntracker_bind.get(i);
+                            remains |= x->kickRemotePipe();
+                        } catch (const std::out_of_range &) {}
+                    }
+                    rpipe_hasdata.clear();
+                    if (remains)
+                        kickRemotePipeTimer();
+                }));
+    }
+}
+
+// XXX: Only kick if the data has sat in the pipe for too long.
+bool SocksClient::kickClientPipe()
+{
+    size_t l = pToClient_len_;
+    if (l == 0)
+        return false;
+    auto n = splicePipeToClient();
+    if (!n)
+        return false;
+    return l - *n > 0;
+}
+
+// XXX: Only kick if the data has sat in the pipe for too long.
+bool SocksClient::kickRemotePipe()
+{
+    size_t l = pToRemote_len_;
+    if (l == 0)
+        return false;
+    auto n = splicePipeToRemote();
+    if (!n)
+        return false;
+    return l - *n > 0;
+}
+
 // Write data read from the client socket to the connect socket.
 void SocksClient::tcp_client_socket_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
+        (ba::null_buffers(), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -963,8 +1071,10 @@ void SocksClient::tcp_client_socket_read_splice()
              auto n = splicePipeToRemote();
              if (!n)
                  return;
-             if (*n > 0)
+             if (*n > 0 && !rpipe_hasdata.count(this)) {
+                 rpipe_hasdata.insert(this);
                  kickRemotePipeTimer();
+             }
              tcp_client_socket_read_splice();
          }));
 }
@@ -974,7 +1084,7 @@ void SocksClient::tcp_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::null_buffers(), strandR_.wrap(
+        (ba::null_buffers(), strand_R->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1015,52 +1125,12 @@ void SocksClient::tcp_remote_socket_read_splice()
              auto n = splicePipeToClient();
              if (!n)
                  return;
-             if (*n > 0)
+             if (*n > 0 && !cpipe_hasdata.count(this)) {
+                 cpipe_hasdata.insert(this);
                  kickClientPipeTimer();
+             }
              tcp_remote_socket_read_splice();
          }));
-}
-
-void SocksClient::kickClientPipeTimer()
-{
-    bool cmpbool(false);
-    if (pToClient_len_ > 0 &&
-        cPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
-        cPipeTimer_.expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms));
-        cPipeTimer_.async_wait
-            (strandR_.wrap(
-                [this](const boost::system::error_code& error)
-                {
-                    cPipeTimerSet_ = false;
-                    if (error)
-                        return;
-                    if (!splicePipeToClient())
-                        return;
-                    kickClientPipeTimer();
-                }));
-    }
-}
-
-void SocksClient::kickRemotePipeTimer()
-{
-    bool cmpbool(false);
-    if (pToRemote_len_ > 0 &&
-        rPipeTimerSet_.compare_exchange_strong(cmpbool, true)) {
-        rPipeTimer_.expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms));
-        rPipeTimer_.async_wait
-            (strand_.wrap(
-                [this](const boost::system::error_code& error)
-                {
-                    rPipeTimerSet_ = false;
-                    if (error)
-                        return;
-                    if (!splicePipeToRemote())
-                        return;
-                    kickRemotePipeTimer();
-                }));
-    }
 }
 
 void SocksClient::doFlushPipeToRemote(bool closing)
@@ -1072,7 +1142,7 @@ void SocksClient::doFlushPipeToRemote(bool closing)
     }
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
+        (ba::null_buffers(), strand_C->wrap(
          [this, sfd, closing](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
          {
@@ -1100,7 +1170,7 @@ void SocksClient::doFlushPipeToClient(bool closing)
     }
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
-        (ba::null_buffers(), strandR_.wrap(
+        (ba::null_buffers(), strand_R->wrap(
          [this, sfd, closing](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
          {
@@ -1127,7 +1197,7 @@ void SocksClient::tcp_client_socket_read()
         = client_buf_.prepare(send_buffer_chunk_size);
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(ibm), strand_.wrap(
+        (ba::buffer(ibm), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1152,7 +1222,7 @@ void SocksClient::tcp_client_socket_read()
                      terminate_client();
                  return;
              }
-             ba::async_write(remote_socket_, client_buf_, strand_.wrap(
+             ba::async_write(remote_socket_, client_buf_, strand_C->wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1175,7 +1245,7 @@ void SocksClient::tcp_remote_socket_read()
         = remote_buf_.prepare(receive_buffer_chunk_size);
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::buffer(ibm), strandR_.wrap(
+        (ba::buffer(ibm), strand_R->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1200,7 +1270,7 @@ void SocksClient::tcp_remote_socket_read()
                      terminate_remote();
                  return;
              }
-             ba::async_write(client_socket_, remote_buf_, strandR_.wrap(
+             ba::async_write(client_socket_, remote_buf_, strand_R->wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1299,7 +1369,7 @@ void SocksClient::dispatch_tcp_bind()
 
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
-        (remote_socket_, strand_.wrap(
+        (remote_socket_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
@@ -1389,7 +1459,7 @@ void SocksClient::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_.data(), inBytes_.size()), strand_.wrap(
+        (ba::buffer(inBytes_.data(), inBytes_.size()), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1413,7 +1483,7 @@ void SocksClient::udp_client_socket_read()
     auto sfd = shared_from_this();
     udp_->client_socket_.async_receive_from
         (ba::buffer(udp_->inbuf_),
-         udp_->csender_endpoint_, strand_.wrap(
+         udp_->csender_endpoint_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1556,7 +1626,7 @@ void SocksClient::udp_proxy_packet()
     auto sfd = shared_from_this();
     udp_->remote_socket_.async_send_to
         (ba::buffer(udp_->inbuf_.data() + udp_->poffset_, udp_->psize_),
-         ba::ip::udp::endpoint(udp_->daddr_, udp_->dport_), 0, strand_.wrap(
+         ba::ip::udp::endpoint(udp_->daddr_, udp_->dport_), 0, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1571,7 +1641,7 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
     auto sfd = shared_from_this();
     try {
         udp_->resolver_.async_resolve
-            (query, strand_.wrap(
+            (query, strand_C->wrap(
              [this, sfd](const boost::system::error_code &ec,
                          ba::ip::udp::resolver::iterator it)
              {
@@ -1623,7 +1693,7 @@ void SocksClient::udp_remote_socket_read()
     udp_->outbuf_.reserve(UDP_BUFSIZE);
     udp_->remote_socket_.async_receive_from
         (ba::buffer(udp_->outbuf_),
-         udp_->rsender_endpoint_, strand_.wrap(
+         udp_->rsender_endpoint_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1661,7 +1731,7 @@ void SocksClient::udp_remote_socket_read()
              udp_->out_bufs_.push_back(boost::asio::buffer(udp_->out_header_));
              udp_->out_bufs_.push_back(boost::asio::buffer(udp_->outbuf_));
              udp_->client_socket_.async_send_to
-                 (udp_->out_bufs_, udp_->client_remote_endpoint_, strand_.wrap(
+                 (udp_->out_bufs_, udp_->client_remote_endpoint_, strand_C->wrap(
                   [this, sfd](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
                   {
@@ -1734,7 +1804,7 @@ void SocksClient::send_reply(ReplyCode replycode)
     sentReplyType_ = replycode;
     auto sfd = shared_from_this();
     ba::async_write
-        (client_socket_, ba::buffer(outbuf_, outbuf_.size()), strand_.wrap(
+        (client_socket_, ba::buffer(outbuf_, outbuf_.size()), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1752,8 +1822,8 @@ void SocksClient::send_reply(ReplyCode replycode)
              }
              outbuf_.erase(0, bytes_xferred);
              if (!bound_) {
-                 strand_.post([this]() { tcp_client_socket_read(); });
-                 strandR_.post([this]() { tcp_remote_socket_read(); });
+                 strand_C->post([this]() { tcp_client_socket_read(); });
+                 strand_R->post([this]() { tcp_remote_socket_read(); });
              }
          }));
 }

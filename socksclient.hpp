@@ -217,9 +217,6 @@ private:
         std::unique_ptr<UDPFrags> frags_;
     };
 
-    boost::asio::strand strand_;
-    boost::asio::strand strandR_;
-
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     std::string dst_hostname_;
@@ -241,11 +238,7 @@ private:
 #ifdef USE_SPLICE
     // Used for splice().
     std::atomic<std::size_t> pToRemote_len_;
-    boost::asio::deadline_timer rPipeTimer_;
-    std::atomic<bool> rPipeTimerSet_;
     std::atomic<std::size_t> pToClient_len_;
-    boost::asio::deadline_timer cPipeTimer_;
-    std::atomic<bool> cPipeTimerSet_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
@@ -260,8 +253,10 @@ private:
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(bool closing);
     void doFlushPipeToClient(bool closing);
-    void kickClientPipeTimer();
-    void kickRemotePipeTimer();
+public:
+    bool kickClientPipe();
+    bool kickRemotePipe();
+private:
 
     inline boost::optional<std::size_t> splicePipeToClient()
     {
