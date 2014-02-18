@@ -247,18 +247,20 @@ private:
     bool init_pipe_remote();
     void close_pipe_to_client();
     void close_pipe_to_remote();
-    void terminate_client();
-    void terminate_remote();
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(bool closing);
     void doFlushPipeToClient(bool closing);
 public:
-    bool kickClientPipe();
-    bool kickRemotePipe();
+    void terminate_client();
+    void terminate_remote();
+    bool kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v);
+    bool kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v);
 private:
+    void kickClientPipeBG();
+    void kickRemotePipeBG();
 
-    inline boost::optional<std::size_t> splicePipeToClient()
+    inline boost::optional<std::size_t> splicePipeToClient(bool noterm = false)
     {
         try {
             auto n = spliceit(sdToClient_.native_handle(),
@@ -267,13 +269,15 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToClient: TERMINATE/"
-                      << e.what() <<"/\n";
-            terminate_client();
+            if (!noterm) {
+                std::cerr << "splicePipeToClient: TERMINATE/"
+                          << e.what() <<"/\n";
+                terminate_client();
+            }
             return boost::optional<std::size_t>();
         }
     }
-    inline boost::optional<std::size_t> splicePipeToRemote()
+    inline boost::optional<std::size_t> splicePipeToRemote(bool noterm = false)
     {
         try {
             auto n = spliceit(sdToRemote_.native_handle(),
@@ -282,32 +286,26 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToRemote: TERMINATE/"
-                      << e.what() <<"/\n";
-            terminate_remote();
+            if (!noterm) {
+                std::cerr << "splicePipeToRemote: TERMINATE/"
+                          << e.what() <<"/\n";
+                terminate_remote();
+            }
             return boost::optional<std::size_t>();
         }
     }
 
     inline void flushPipeToRemote(bool closing)
     {
-        if (!splicePipeToRemote()) {
-            std::cerr << "flushPipeToRemote() TERMINATE: "
-                "splicePipeToRemote() returned false\n";
-            terminate_remote();
+        if (!splicePipeToRemote())
             return;
-        }
         doFlushPipeToRemote(closing);
     }
 
     inline void flushPipeToClient(bool closing)
     {
-        if (!splicePipeToClient()) {
-            std::cerr << "flushPipeToClient() TERMINATE: "
-                "splicePipeToClient() returned false\n";
-            terminate_client();
+        if (!splicePipeToClient())
             return;
-        }
         doFlushPipeToClient(closing);
     }
 

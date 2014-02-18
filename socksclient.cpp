@@ -205,18 +205,12 @@ public:
         return boost::optional<std::shared_ptr<SocksClient>>();
     }
     std::size_t size() const { return hash_.size(); }
-    std::shared_ptr<SocksClient> get(SocksClient *t) {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto x = hash_.find(t);
-        if (x != hash_.end())
-            return x->second;
-        throw std::out_of_range("dne");
-    }
-private:
+
     std::mutex lock_;
+    std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
+private:
     SocksClientType client_type_;
     std::unique_ptr<ephConnTracker> &ct_;
-    std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
 };
 
 static connTracker conntracker_connect(SCT_CONNECT, conntracker_hs);
@@ -949,20 +943,32 @@ static void kickClientPipeTimer()
                     cPipeTimerSet = false;
                     if (error)
                         return;
+                    std::vector<std::weak_ptr<SocksClient>> kv;
                     bool remains(false);
-                    for (auto &i: cpipe_hasdata) {
-                        try {
-                            auto x = conntracker_connect.get(i);
-                            remains |= x->kickClientPipe();
-                        } catch (const std::out_of_range &) {}
+                    {
+                        for (auto &i: cpipe_hasdata) {
+                            std::lock_guard<std::mutex> wl
+                                (conntracker_connect.lock_);
+                            auto x = conntracker_connect.hash_.find(i);
+                            if (x != conntracker_connect.hash_.end())
+                                remains |= x->second->kickClientPipe(kv);
+                        }
                     }
-                    for (auto &i: cpipe_hasdata) {
-                        try {
-                            auto x = conntracker_bind.get(i);
-                            remains |= x->kickClientPipe();
-                        } catch (const std::out_of_range &) {}
+                    {
+                        for (auto &i: cpipe_hasdata) {
+                            std::lock_guard<std::mutex> wl
+                                (conntracker_bind.lock_);
+                            auto x = conntracker_bind.hash_.find(i);
+                            if (x != conntracker_bind.hash_.end())
+                                remains |= x->second->kickClientPipe(kv);
+                        }
                     }
                     cpipe_hasdata.clear();
+                    for (auto &i: kv) {
+                        auto k = i.lock();
+                        if (k)
+                            k->terminate_client();
+                    }
                     if (remains)
                         kickClientPipeTimer();
                 }));
@@ -981,20 +987,32 @@ static void kickRemotePipeTimer()
                     rPipeTimerSet = false;
                     if (error)
                         return;
+                    std::vector<std::weak_ptr<SocksClient>> kv;
                     bool remains(false);
-                    for (auto &i: rpipe_hasdata) {
-                        try {
-                            auto x = conntracker_connect.get(i);
-                            remains |= x->kickRemotePipe();
-                        } catch (const std::out_of_range &) {}
+                    {
+                        for (auto &i: rpipe_hasdata) {
+                            std::lock_guard<std::mutex> wl
+                                (conntracker_connect.lock_);
+                            auto x = conntracker_connect.hash_.find(i);
+                            if (x != conntracker_connect.hash_.end())
+                                remains |= x->second->kickRemotePipe(kv);
+                        }
                     }
-                    for (auto &i: rpipe_hasdata) {
-                        try {
-                            auto x = conntracker_bind.get(i);
-                            remains |= x->kickRemotePipe();
-                        } catch (const std::out_of_range &) {}
+                    {
+                        for (auto &i: rpipe_hasdata) {
+                            std::lock_guard<std::mutex> wl
+                                (conntracker_bind.lock_);
+                            auto x = conntracker_bind.hash_.find(i);
+                            if (x != conntracker_bind.hash_.end())
+                                remains |= x->second->kickRemotePipe(kv);
+                        }
                     }
                     rpipe_hasdata.clear();
+                    for (auto &i: kv) {
+                        auto k = i.lock();
+                        if (k)
+                            k->terminate_remote();
+                    }
                     if (remains)
                         kickRemotePipeTimer();
                 }));
@@ -1002,27 +1020,91 @@ static void kickRemotePipeTimer()
 }
 
 // XXX: Only kick if the data has sat in the pipe for too long.
-bool SocksClient::kickClientPipe()
+bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v)
 {
     size_t l = pToClient_len_;
     if (l == 0)
         return false;
-    auto n = splicePipeToClient();
-    if (!n)
+    auto n = splicePipeToClient(true);
+    if (!n) {
+        v.emplace_back(shared_from_this());
         return false;
-    return l - *n > 0;
+    }
+    if (l - *n > 0) {
+        strand_R->post([this]() { kickClientPipeBG(); });
+        return true;
+    }
+    std::cerr << "kicked client pipe\n";
+    return false;
+}
+
+void SocksClient::kickClientPipeBG()
+{
+    std::cerr << "kicked client pipe (more left)\n";
+    auto sfd = shared_from_this();
+    sdToClient_.async_read_some
+        (ba::null_buffers(), strand_R->wrap(
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "kickClientPipeBG error: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
+                     terminate_client();
+                 }
+                 return;
+             }
+             if (!splicePipeToClient())
+                 return;
+             if (pToClient_len_ > 0)
+                 kickClientPipeBG();
+         }));
 }
 
 // XXX: Only kick if the data has sat in the pipe for too long.
-bool SocksClient::kickRemotePipe()
+bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v)
 {
     size_t l = pToRemote_len_;
     if (l == 0)
         return false;
-    auto n = splicePipeToRemote();
-    if (!n)
+    auto n = splicePipeToRemote(true);
+    if (!n) {
+        v.emplace_back(shared_from_this());
         return false;
-    return l - *n > 0;
+    }
+    if (l - *n > 0) {
+        strand_C->post([this]() { kickRemotePipeBG(); });
+        return true;
+    }
+    std::cerr << "kicked remote pipe\n";
+    return false;
+}
+
+void SocksClient::kickRemotePipeBG()
+{
+    std::cerr << "kicked remote pipe (more left)\n";
+    auto sfd = shared_from_this();
+    sdToRemote_.async_read_some
+        (ba::null_buffers(), strand_C->wrap(
+            [this, sfd](const boost::system::error_code &ec,
+                        std::size_t bytes_xferred)
+            {
+                if (ec) {
+                    if (ec != ba::error::operation_aborted) {
+                        std::cerr << "kickRemotePipeBG error: "
+                                  << boost::system::system_error(ec).what()
+                                  << "\n";
+                        terminate_remote();
+                    }
+                    return;
+                }
+                if (!splicePipeToRemote())
+                    return;
+                if (pToRemote_len_ > 0)
+                    kickRemotePipeBG();
+            }));
 }
 
 // Write data read from the client socket to the connect socket.
