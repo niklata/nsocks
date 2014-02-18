@@ -936,7 +936,7 @@ static void kickClientPipeTimer()
     bool cmpbool(false);
     if (cPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
         cPipeTimer->expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms));
+            (boost::posix_time::milliseconds(max_buffer_ms / 2U));
         cPipeTimer->async_wait(strand_R->wrap(
             [](const boost::system::error_code& error)
                 {
@@ -945,13 +945,14 @@ static void kickClientPipeTimer()
                         return;
                     std::vector<std::weak_ptr<SocksClient>> kv;
                     bool remains(false);
+                    auto now = std::chrono::high_resolution_clock::now();
                     {
                         for (auto &i: cpipe_hasdata) {
                             std::lock_guard<std::mutex> wl
                                 (conntracker_connect.lock_);
                             auto x = conntracker_connect.hash_.find(i);
                             if (x != conntracker_connect.hash_.end())
-                                remains |= x->second->kickClientPipe(kv);
+                                remains |= x->second->kickClientPipe(kv, now);
                         }
                     }
                     {
@@ -960,7 +961,7 @@ static void kickClientPipeTimer()
                                 (conntracker_bind.lock_);
                             auto x = conntracker_bind.hash_.find(i);
                             if (x != conntracker_bind.hash_.end())
-                                remains |= x->second->kickClientPipe(kv);
+                                remains |= x->second->kickClientPipe(kv, now);
                         }
                     }
                     cpipe_hasdata.clear();
@@ -980,7 +981,7 @@ static void kickRemotePipeTimer()
     bool cmpbool(false);
     if (rPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
         rPipeTimer->expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms));
+            (boost::posix_time::milliseconds(max_buffer_ms / 2U));
         rPipeTimer->async_wait(strand_C->wrap(
             [](const boost::system::error_code& error)
                 {
@@ -989,13 +990,14 @@ static void kickRemotePipeTimer()
                         return;
                     std::vector<std::weak_ptr<SocksClient>> kv;
                     bool remains(false);
+                    auto now = std::chrono::high_resolution_clock::now();
                     {
                         for (auto &i: rpipe_hasdata) {
                             std::lock_guard<std::mutex> wl
                                 (conntracker_connect.lock_);
                             auto x = conntracker_connect.hash_.find(i);
                             if (x != conntracker_connect.hash_.end())
-                                remains |= x->second->kickRemotePipe(kv);
+                                remains |= x->second->kickRemotePipe(kv, now);
                         }
                     }
                     {
@@ -1004,7 +1006,7 @@ static void kickRemotePipeTimer()
                                 (conntracker_bind.lock_);
                             auto x = conntracker_bind.hash_.find(i);
                             if (x != conntracker_bind.hash_.end())
-                                remains |= x->second->kickRemotePipe(kv);
+                                remains |= x->second->kickRemotePipe(kv, now);
                         }
                     }
                     rpipe_hasdata.clear();
@@ -1019,12 +1021,15 @@ static void kickRemotePipeTimer()
     }
 }
 
-// XXX: Only kick if the data has sat in the pipe for too long.
-bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v)
+bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v,
+                                 const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToClient_len_;
     if (l == 0)
         return false;
+    if (std::chrono::duration_cast<std::chrono::milliseconds>
+        (remote_read_ts_ - now).count() < max_buffer_ms / 2U)
+        return true;
     auto n = splicePipeToClient(true);
     if (!n) {
         v.emplace_back(shared_from_this());
@@ -1032,7 +1037,7 @@ bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v)
     }
     if (l - *n > 0) {
         strand_R->post([this]() { kickClientPipeBG(); });
-        return true;
+        return false;
     }
     std::cerr << "kicked client pipe\n";
     return false;
@@ -1058,17 +1063,24 @@ void SocksClient::kickClientPipeBG()
              }
              if (!splicePipeToClient())
                  return;
+             auto now = std::chrono::high_resolution_clock::now();
+             if (std::chrono::duration_cast<std::chrono::milliseconds>
+                 (remote_read_ts_ - now).count() < max_buffer_ms / 2U)
+                 return;
              if (pToClient_len_ > 0)
                  kickClientPipeBG();
          }));
 }
 
-// XXX: Only kick if the data has sat in the pipe for too long.
-bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v)
+bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v,
+                                 const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToRemote_len_;
     if (l == 0)
         return false;
+    if (std::chrono::duration_cast<std::chrono::milliseconds>
+        (client_read_ts_ - now).count() < max_buffer_ms / 2U)
+        return true;
     auto n = splicePipeToRemote(true);
     if (!n) {
         v.emplace_back(shared_from_this());
@@ -1076,7 +1088,7 @@ bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v)
     }
     if (l - *n > 0) {
         strand_C->post([this]() { kickRemotePipeBG(); });
-        return true;
+        return false;
     }
     std::cerr << "kicked remote pipe\n";
     return false;
@@ -1101,6 +1113,10 @@ void SocksClient::kickRemotePipeBG()
                     return;
                 }
                 if (!splicePipeToRemote())
+                    return;
+                auto now = std::chrono::high_resolution_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>
+                    (client_read_ts_ - now).count() < max_buffer_ms / 2U)
                     return;
                 if (pToRemote_len_ > 0)
                     kickRemotePipeBG();
@@ -1154,6 +1170,7 @@ void SocksClient::tcp_client_socket_read_splice()
              if (!n)
                  return;
              if (*n > 0 && !rpipe_hasdata.count(this)) {
+                 client_read_ts_ = std::chrono::high_resolution_clock::now();
                  rpipe_hasdata.insert(this);
                  kickRemotePipeTimer();
              }
@@ -1208,6 +1225,7 @@ void SocksClient::tcp_remote_socket_read_splice()
              if (!n)
                  return;
              if (*n > 0 && !cpipe_hasdata.count(this)) {
+                 remote_read_ts_ = std::chrono::high_resolution_clock::now();
                  cpipe_hasdata.insert(this);
                  kickClientPipeTimer();
              }

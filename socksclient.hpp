@@ -239,6 +239,8 @@ private:
     // Used for splice().
     std::atomic<std::size_t> pToRemote_len_;
     std::atomic<std::size_t> pToClient_len_;
+    std::chrono::high_resolution_clock::time_point client_read_ts_;
+    std::chrono::high_resolution_clock::time_point remote_read_ts_;
     boost::asio::posix::stream_descriptor sdToRemote_;
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
@@ -254,8 +256,10 @@ private:
 public:
     void terminate_client();
     void terminate_remote();
-    bool kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v);
-    bool kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v);
+    bool kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v,
+                        const std::chrono::high_resolution_clock::time_point &now);
+    bool kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v,
+                        const std::chrono::high_resolution_clock::time_point &now);
 private:
     void kickClientPipeBG();
     void kickRemotePipeBG();
