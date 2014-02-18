@@ -1166,10 +1166,9 @@ void SocksClient::tcp_client_socket_read_splice()
                  terminate_client();
                  return;
              }
-             auto n = splicePipeToRemote();
-             if (!n)
+             if (!splicePipeToRemote())
                  return;
-             if (*n > 0 && !rpipe_hasdata.count(this)) {
+             if (pToRemote_len_ > 0 && !rpipe_hasdata.count(this)) {
                  client_read_ts_ = std::chrono::high_resolution_clock::now();
                  rpipe_hasdata.insert(this);
                  kickRemotePipeTimer();
@@ -1221,10 +1220,9 @@ void SocksClient::tcp_remote_socket_read_splice()
                  terminate_remote();
                  return;
              }
-             auto n = splicePipeToClient();
-             if (!n)
+             if (!splicePipeToClient())
                  return;
-             if (*n > 0 && !cpipe_hasdata.count(this)) {
+             if (pToClient_len_ > 0 && !cpipe_hasdata.count(this)) {
                  remote_read_ts_ = std::chrono::high_resolution_clock::now();
                  cpipe_hasdata.insert(this);
                  kickClientPipeTimer();
