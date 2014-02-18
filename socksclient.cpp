@@ -959,12 +959,8 @@ void SocksClient::tcp_client_socket_read_splice()
                  return;
              }
              auto n = splicePipeToRemote();
-             if (!n) {
-                 std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
-                              "splicePipeToRemote() returned false\n";
-                 terminate_remote();
+             if (!n)
                  return;
-             }
              if (*n > 0)
                  kickRemotePipeTimer();
              tcp_client_socket_read_splice();
@@ -1013,12 +1009,8 @@ void SocksClient::tcp_remote_socket_read_splice()
                  return;
              }
              auto n = splicePipeToClient();
-             if (!n) {
-                 std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
-                              "splicePipeToClient() returned false\n";
-                 terminate_client();
+             if (!n)
                  return;
-             }
              if (*n > 0)
                  kickClientPipeTimer();
              tcp_remote_socket_read_splice();
@@ -1039,10 +1031,8 @@ void SocksClient::kickClientPipeTimer()
                     cPipeTimerSet_ = false;
                     if (error)
                         return;
-                    if (!splicePipeToClient()) {
-                        terminate_client();
+                    if (!splicePipeToClient())
                         return;
-                    }
                     kickClientPipeTimer();
                 }));
     }
@@ -1062,10 +1052,8 @@ void SocksClient::kickRemotePipeTimer()
                     rPipeTimerSet_ = false;
                     if (error)
                         return;
-                    if (!splicePipeToRemote()) {
-                        terminate_remote();
+                    if (!splicePipeToRemote())
                         return;
-                    }
                     kickRemotePipeTimer();
                 }));
     }
@@ -1093,12 +1081,8 @@ void SocksClient::doFlushPipeToRemote(bool closing)
                  }
                  return;
              }
-             if (!splicePipeToRemote()) {
-                 std::cerr << "doFlushPipeToRemote() TERMINATE: "
-                              "splicePipeToRemote() returned false\n";
-                 terminate_remote();
+             if (!splicePipeToRemote())
                  return;
-             }
              doFlushPipeToRemote(closing);
          }));
 }
@@ -1125,12 +1109,8 @@ void SocksClient::doFlushPipeToClient(bool closing)
                  }
                  return;
              }
-             if (!splicePipeToClient()) {
-                 std::cerr << "doFlushPipeToClient() TERMINATE: "
-                              "splicePipeToClient() returned false\n";
-                 terminate_client();
+             if (!splicePipeToClient())
                  return;
-             }
              doFlushPipeToClient(closing);
          }));
 }

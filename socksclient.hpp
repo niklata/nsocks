@@ -268,10 +268,13 @@ private:
         try {
             auto n = spliceit(sdToClient_.native_handle(),
                               client_socket_.native_handle());
-            if (n)
-                pToClient_len_ -= *n;
+            if (n) pToClient_len_ -= *n;
+            else throw std::runtime_error("EOF");
             return n;
-        } catch (...) {
+        } catch (const std::runtime_error &e) {
+            std::cerr << "splicePipeToClient: TERMINATE/"
+                      << e.what() <<"/\n";
+            terminate_client();
             return boost::optional<std::size_t>();
         }
     }
@@ -280,10 +283,13 @@ private:
         try {
             auto n = spliceit(sdToRemote_.native_handle(),
                               remote_socket_.native_handle());
-            if (n)
-                pToRemote_len_ -= *n;
+            if (n) pToRemote_len_ -= *n;
+            else throw std::runtime_error("EOF");
             return n;
-        } catch (...) {
+        } catch (const std::runtime_error &e) {
+            std::cerr << "splicePipeToRemote: TERMINATE/"
+                      << e.what() <<"/\n";
+            terminate_remote();
             return boost::optional<std::size_t>();
         }
     }
