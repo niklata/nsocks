@@ -935,6 +935,8 @@ void SocksClient::tcp_client_socket_read_splice()
                  }
                  return;
              }
+             if (pToRemote_len_ > 0 && !splicePipeToRemote())
+                 return;
              try {
                  auto n = spliceit(client_socket_.native_handle(),
                                    pToRemote_.native_handle());
@@ -985,6 +987,8 @@ void SocksClient::tcp_remote_socket_read_splice()
                  }
                  return;
              }
+             if (pToClient_len_ > 0 && !splicePipeToClient())
+                 return;
              try {
                  auto n = spliceit(remote_socket_.native_handle(),
                                    pToClient_.native_handle());
