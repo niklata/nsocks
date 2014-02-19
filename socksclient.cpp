@@ -854,21 +854,21 @@ void SocksClient::dispatch_tcp_connect()
                      send_reply(errorToReplyCode(ec));
                  return;
              }
+             if (g_verbose_logs) {
+                 std::cout << "TCP Connect @"
+                           << client_socket_.remote_endpoint().address()
+                           << " " << remote_socket_.local_endpoint().address()
+                           << " -> "
+                           << (addr_type_ != AddrDNS ? dst_address_.to_string()
+                               : dst_hostname_)
+                           << ":" << dst_port_ << std::endl;
+             }
              set_remote_socket_options();
              // Now we have a live socket, so we need to inform the client
              // and then begin proxying data.
              conntracker_connect.store(shared_from_this());
              send_reply(RplSuccess);
          }));
-    if (g_verbose_logs) {
-        std::cout << "TCP Connect @"
-                  << client_socket_.remote_endpoint().address()
-                  << " " << remote_socket_.local_endpoint().address()
-                  << " -> "
-                  << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                            : dst_hostname_)
-                  << ":" << dst_port_ << std::endl;
-    }
 }
 
 SocksClient::ReplyCode
