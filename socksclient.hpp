@@ -209,23 +209,34 @@ private:
         std::unique_ptr<UDPFrags> frags_;
     };
 
-    // Maximum packet size for handshakes is 262
-    std::unique_ptr<std::array<char, 272>> inBytes_;
+    struct S5Handshake {
+        S5Handshake(boost::asio::io_service &io_service)
+                : tcp_resolver_(io_service), ibSiz_(0),
+                  auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
+            {}
+        boost::asio::ip::tcp::resolver tcp_resolver_;
+        std::string outbuf_;
+        ReplyCode sentReplyType_;
+        // Maximum packet size for handshakes is 262
+        std::array<char, 272> inBytes_;
+        uint16_t ibSiz_;
+        bool auth_none_;
+        bool auth_gssapi_;
+        bool auth_unpw_;
+    };
+
     std::string dst_hostname_;
-    std::string outbuf_;
+    std::unique_ptr<S5Handshake> handshake_;
     std::unique_ptr<BoundSocket> bound_;
     std::unique_ptr<UDPAssoc> udp_;
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
-    boost::asio::ip::tcp::resolver tcp_resolver_;
     std::atomic<bool> terminated_;
-    SocksClientType client_type_;
-    CommandCode cmd_code_;
-    AddressType addr_type_;
-    ReplyCode sentReplyType_;
+    SocksClientType client_type_; // for now keep (untrack() demux)
+    CommandCode cmd_code_; // for now keep (untrack() demux)
+    AddressType addr_type_; // replace with dst_hostname.size() > 0
     uint16_t dst_port_;
-    uint16_t ibSiz_;
 
 #ifdef USE_SPLICE
     // Used for splice().
@@ -345,10 +356,6 @@ private:
 #endif
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
-
-    bool auth_none_;
-    bool auth_gssapi_;
-    bool auth_unpw_;
 
     static std::size_t send_buffer_chunk_size;
     static std::size_t receive_buffer_chunk_size;
