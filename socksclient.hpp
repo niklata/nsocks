@@ -218,7 +218,7 @@ private:
     };
 
     // Maximum packet size for handshakes is 262
-    std::array<char, 272> inBytes_;
+    std::unique_ptr<std::array<char, 272>> inBytes_;
     std::string dst_hostname_;
     std::string outbuf_;
     std::unique_ptr<BoundSocket> bound_;

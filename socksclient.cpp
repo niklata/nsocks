@@ -350,6 +350,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
     ++socks_alive_count;
     client_socket_.non_blocking(true);
     client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+    inBytes_ = nk::make_unique<std::array<char, 272>>();
 }
 
 SocksClient::~SocksClient()
@@ -534,7 +535,7 @@ void SocksClient::read_greet()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
+        (ba::buffer(inBytes_->data() + ibSiz_, inBytes_->size() - ibSiz_),
          strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -568,7 +569,7 @@ void SocksClient::read_conn_request()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
+        (ba::buffer(inBytes_->data() + ibSiz_, inBytes_->size() - ibSiz_),
          strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -609,14 +610,14 @@ boost::optional<bool> SocksClient::process_greet()
     // We only accept Socks5.
     if (poff == ibSiz_)
         return boost::optional<bool>();
-    if (inBytes_[poff] != 0x05)
+    if ((*inBytes_)[poff] != 0x05)
         return false;
     ++poff;
 
     // Number of authentication methods supported.
     if (poff == ibSiz_)
         return boost::optional<bool>();
-    size_t nauth = static_cast<uint8_t>(inBytes_[poff]);
+    size_t nauth = static_cast<uint8_t>((*inBytes_)[poff]);
     ++poff;
 
     // Types of authentication methods supported.
@@ -628,7 +629,7 @@ boost::optional<bool> SocksClient::process_greet()
     if (ibSiz_ < aendsiz)
         return boost::optional<bool>();
     for (;poff < aendsiz; ++poff) {
-        uint8_t atype = static_cast<uint8_t>(inBytes_[poff]);
+        uint8_t atype = static_cast<uint8_t>((*inBytes_)[poff]);
         if (atype == 0x0)
             auth_none_ = true;
         if (atype == 0x1)
@@ -668,14 +669,14 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     // We only accept Socks5.
     if (poff == ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
-    if (inBytes_[poff] != 0x05)
+    if ((*inBytes_)[poff] != 0x05)
         return RplFail;
     ++poff;
 
     // Client command.
     if (poff == ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    switch (static_cast<uint8_t>((*inBytes_)[poff])) {
     case 0x1: cmd_code_ = CmdTCPConnect; break;
     case 0x2: cmd_code_ = CmdTCPBind; break;
     case 0x3: cmd_code_ = CmdUDP; break;
@@ -686,14 +687,14 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     // Must be zero (reserved).
     if (poff == ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
-    if (inBytes_[poff] != 0x0)
+    if ((*inBytes_)[poff] != 0x0)
         return RplFail;
     ++poff;
 
     // Address type.
     if (poff == ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    switch (static_cast<uint8_t>((*inBytes_)[poff])) {
     case 0x1: addr_type_ = AddrIPv4; break;
     case 0x3: addr_type_ = AddrDNS; break;
     case 0x4: addr_type_ = AddrIPv6; break;
@@ -710,7 +711,7 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
             if (ibSiz_ - poff != 6)
                 return RplFail;
             ba::ip::address_v4::bytes_type v4o;
-            memcpy(v4o.data(), inBytes_.data() + poff, 4);
+            memcpy(v4o.data(), inBytes_->data() + poff, 4);
             dst_address_ = ba::ip::address_v4(v4o);
             poff += 4;
             break;
@@ -719,7 +720,7 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
             if (ibSiz_ - poff != 18)
                 return RplFail;
             ba::ip::address_v6::bytes_type v6o;
-            memcpy(v6o.data(), inBytes_.data() + poff, 16);
+            memcpy(v6o.data(), inBytes_->data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff += 16;
             if (g_disable_ipv6)
@@ -727,11 +728,11 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
             break;
         }
         case AddrDNS: {
-            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff]);
+            size_t dnssiz = static_cast<uint8_t>((*inBytes_)[poff]);
             ++poff;
             if (ibSiz_ - poff != dnssiz + 2)
                 return RplFail;
-            dst_hostname_ = std::string(inBytes_.data() + poff, dnssiz);
+            dst_hostname_ = std::string(inBytes_->data() + poff, dnssiz);
             poff += dnssiz;
             break;
         }
@@ -747,7 +748,7 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     if (ibSiz_ - poff != 2)
         return RplFail;
     uint16_t tmp;
-    memcpy(&tmp, inBytes_.data() + poff, 2);
+    memcpy(&tmp, inBytes_->data() + poff, 2);
     dst_port_ = ntohs(tmp);
     ibSiz_ = 0;
     dispatch_connrq();
@@ -835,6 +836,7 @@ bool SocksClient::is_dst_denied(const ba::ip::address &addr) const
 
 void SocksClient::dispatch_tcp_connect()
 {
+    inBytes_.reset();
     if (is_dst_denied(dst_address_)) {
         send_reply(RplDeny);
         return;
@@ -1431,6 +1433,7 @@ bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
 
 void SocksClient::dispatch_tcp_bind()
 {
+    inBytes_.reset();
     if (g_disable_bind) {
         send_reply(RplDeny);
         return;
@@ -1557,7 +1560,7 @@ void SocksClient::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_.data(), inBytes_.size()), strand_C->wrap(
+        (ba::buffer(inBytes_->data(), inBytes_->size()), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
