@@ -98,14 +98,6 @@ private:
         return spliced;
     }
 
-    enum ParseState {
-        ParseInvalid,
-        ParseBadPort,
-        ParseServerPort,
-        ParseClientPort,
-        ParseDone
-    };
-
     enum CommandCode {
         CmdTCPConnect,
         CmdTCPBind,
@@ -374,10 +366,8 @@ private:
     boost::optional<ReplyCode> process_connrq();
     void dispatch_connrq();
 
-    void dispatch_tcp_connect();
-    void start_tcp_connect_accept();
-
     bool is_dst_denied(const boost::asio::ip::address &addr) const;
+    void dispatch_tcp_connect();
 
     void tcp_client_socket_read();
     void tcp_remote_socket_read();
@@ -407,8 +397,6 @@ private:
     void close_udp_sockets();
 
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
-
-    ParseState parse_request();
 };
 
 class ClientListener : boost::noncopyable
