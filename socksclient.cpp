@@ -45,7 +45,6 @@
 
 #include "socksclient.hpp"
 #include "asio_addrcmp.hpp"
-#include "make_unique.hpp"
 
 #define MAX_BIND_TRIES 10
 #define UDP_BUFSIZE 1536
@@ -348,7 +347,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
     ++socks_alive_count;
     client_socket_.non_blocking(true);
     client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
-    handshake_ = nk::make_unique<S5Handshake>(io_service);
+    handshake_ = nk::make_unique<S5Handshake>();
 }
 
 SocksClient::~SocksClient()
@@ -359,8 +358,8 @@ SocksClient::~SocksClient()
 
     if (g_verbose_logs) {
         std::cout << "Connection to "
-                  << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                            : dst_hostname_)
+                  << (dst_hostname_.size() ? dst_hostname_
+                                           : dst_address_.to_string())
                   << ":" << dst_port_ << " DESTRUCTED (total: ";
         if (conntracker_hs)
             std::cout << conntracker_hs->size() << ",";
@@ -497,11 +496,8 @@ void SocksClient::close_udp_sockets()
 void SocksClient::untrack()
 {
     switch (client_type_) {
-    case SCT_INIT:
-        conntracker_hs->remove(this);
-        if (cmd_code_ == CmdTCPBind)
-            conntracker_bindlisten->remove(this);
-        break;
+    case SCT_INIT: conntracker_hs->remove(this); break;
+    case SCT_INIT_BIND: conntracker_bindlisten->remove(this); break;
     case SCT_CONNECT: conntracker_connect.remove(this); break;
     case SCT_BIND: conntracker_bind.remove(this); break;
     case SCT_UDP: conntracker_udp.remove(this); break;
@@ -524,8 +520,8 @@ void SocksClient::terminate()
     cancel();
     untrack();
     // std::cout << "Connection to "
-    //           << (addr_type_ != AddrDNS ? dst_address_.to_string()
-    //                                     : dst_hostname_)
+    //           << (dst_hostname_.size() ? dst_hostname_
+    //                                    : dst_address_.to_string())
     //           << ":" << dst_port_ << " called terminate()." << std::endl;
 }
 
@@ -677,9 +673,9 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     if (poff == handshake_->ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
     switch (static_cast<uint8_t>(handshake_->inBytes_[poff])) {
-    case 0x1: cmd_code_ = CmdTCPConnect; break;
-    case 0x2: cmd_code_ = CmdTCPBind; break;
-    case 0x3: cmd_code_ = CmdUDP; break;
+    case 0x1: handshake_->cmd_code_ = CmdTCPConnect; break;
+    case 0x2: handshake_->cmd_code_ = CmdTCPBind; break;
+    case 0x3: handshake_->cmd_code_ = CmdUDP; break;
     default: return RplCmdNotSupp;
     }
     ++poff;
@@ -695,9 +691,9 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     if (poff == handshake_->ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
     switch (static_cast<uint8_t>(handshake_->inBytes_[poff])) {
-    case 0x1: addr_type_ = AddrIPv4; break;
-    case 0x3: addr_type_ = AddrDNS; break;
-    case 0x4: addr_type_ = AddrIPv6; break;
+    case 0x1: handshake_->addr_type_ = AddrIPv4; break;
+    case 0x3: handshake_->addr_type_ = AddrDNS; break;
+    case 0x4: handshake_->addr_type_ = AddrIPv6; break;
     default: return RplAddrNotSupp;
     }
     ++poff;
@@ -705,7 +701,7 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     // Destination address.
     if (poff == handshake_->ibSiz_)
         return boost::optional<SocksClient::ReplyCode>();
-    switch (addr_type_) {
+    switch (handshake_->addr_type_) {
         case AddrIPv4: {
             // handshake_->ibSiz_ = 10, poff = 4
             if (handshake_->ibSiz_ - poff != 6)
@@ -739,7 +735,7 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
         }
         default:
             std::cerr << "reply_greet(): unknown address type: "
-                      << addr_type_ << "\n";
+                      << handshake_->addr_type_ << "\n";
             return RplAddrNotSupp;
     }
 
@@ -763,8 +759,8 @@ void SocksClient::dispatch_connrq()
             (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
         auto sfd = shared_from_this();
         try {
-            // XXX: Could create on demand to speed average case.
-            handshake_->tcp_resolver_.async_resolve
+            handshake_->init_resolver(client_socket_.get_io_service());
+            handshake_->tcp_resolver_->async_resolve
                 (query, strand_C->wrap(
                  [this, sfd](const boost::system::error_code &ec,
                              ba::ip::tcp::resolver::iterator it)
@@ -809,7 +805,7 @@ void SocksClient::dispatch_connrq()
         return;
     }
     // The name has been resolved to an address or we have an address.
-    switch (cmd_code_) {
+    switch (handshake_->cmd_code_) {
     case CmdTCPConnect: dispatch_tcp_connect(); break;
     case CmdTCPBind: dispatch_tcp_bind(); break;
     case CmdUDP: dispatch_udp(); break;
@@ -860,8 +856,8 @@ void SocksClient::dispatch_tcp_connect()
                            << client_socket_.remote_endpoint().address()
                            << " " << remote_socket_.local_endpoint().address()
                            << " -> "
-                           << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                               : dst_hostname_)
+                           << (handshake_->addr_type_ != AddrDNS
+                               ? dst_address_.to_string() : dst_hostname_)
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
@@ -1467,6 +1463,7 @@ void SocksClient::dispatch_tcp_bind()
         return;
     conntracker_bindlisten->store(shared_from_this());
     conntracker_hs->remove(this);
+    client_type_ = SCT_INIT_BIND;
 
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
@@ -1884,7 +1881,7 @@ void SocksClient::send_reply(ReplyCode replycode)
     handshake_->outbuf_.append(1, replycode);
     handshake_->outbuf_.append(1, 0x00);
     if (replycode == RplSuccess) {
-        switch (cmd_code_) {
+        switch (handshake_->cmd_code_) {
         case CmdTCPConnect:
             send_reply_binds(remote_socket_.local_endpoint());
             break;
@@ -1900,7 +1897,7 @@ void SocksClient::send_reply(ReplyCode replycode)
             break;
         }
         default:
-            throw std::logic_error("Invalid cmd_code_ in send_reply().\n");
+            throw std::logic_error("Invalid handshake_->cmd_code_ in send_reply().\n");
         }
     }
     handshake_->sentReplyType_ = replycode;
@@ -1916,15 +1913,15 @@ void SocksClient::send_reply(ReplyCode replycode)
                  std::cout << "REJECT @"
                      << client_socket_.remote_endpoint().address()
                      << " (none) -> "
-                     << (addr_type_ != AddrDNS ? dst_address_.to_string()
-                                               : dst_hostname_)
+                     << (handshake_->addr_type_ != AddrDNS
+                         ? dst_address_.to_string() : dst_hostname_)
                      << ":" << dst_port_
                      << " [" << replyCodeString[handshake_->sentReplyType_]
                      << "]" << std::endl;
                  terminate();
                  return;
              }
-             if (cmd_code_ == CmdUDP)
+             if (handshake_->cmd_code_ == CmdUDP)
                  return;
              handshake_.reset();
              if (!bound_) {

@@ -38,10 +38,13 @@
 #include <boost/utility.hpp>
 #include <boost/optional.hpp>
 
+#include "make_unique.hpp"
+
 #define SPLICE_SIZE (1024 * 1024)
 
 enum SocksClientType {
     SCT_INIT = 0,
+    SCT_INIT_BIND,
     SCT_CONNECT,
     SCT_BIND,
     SCT_UDP,
@@ -210,13 +213,17 @@ private:
     };
 
     struct S5Handshake {
-        S5Handshake(boost::asio::io_service &io_service)
-                : tcp_resolver_(io_service), ibSiz_(0),
-                  auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
-            {}
-        boost::asio::ip::tcp::resolver tcp_resolver_;
+        S5Handshake() : ibSiz_(0), auth_none_(false), auth_gssapi_(false),
+                        auth_unpw_(false) {}
+        void init_resolver(boost::asio::io_service &io_service) {
+            tcp_resolver_ = nk::make_unique<boost::asio::ip::tcp::resolver>
+                (io_service);
+        }
+        std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
         std::string outbuf_;
         ReplyCode sentReplyType_;
+        CommandCode cmd_code_;
+        AddressType addr_type_;
         // Maximum packet size for handshakes is 262
         std::array<char, 272> inBytes_;
         uint16_t ibSiz_;
@@ -234,8 +241,6 @@ private:
     boost::asio::ip::tcp::socket remote_socket_;
     std::atomic<bool> terminated_;
     SocksClientType client_type_; // for now keep (untrack() demux)
-    CommandCode cmd_code_; // for now keep (untrack() demux)
-    AddressType addr_type_; // replace with dst_hostname.size() > 0
     uint16_t dst_port_;
 
 #ifdef USE_SPLICE
