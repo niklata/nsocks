@@ -1583,8 +1583,8 @@ void SocksClient::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(handshake_->inBytes_.data(),
-                    handshake_->inBytes_.size()), strand_C->wrap(
+        (ba::buffer(udp_->tcp_inbuf_.data(),
+                    udp_->tcp_inbuf_.size()), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1947,9 +1947,10 @@ void SocksClient::send_reply(ReplyCode replycode)
                  terminate();
                  return;
              }
-             if (handshake_->cmd_code_ == CmdUDP)
-                 return;
+             bool is_udp = handshake_->cmd_code_ == CmdUDP;
              handshake_.reset();
+             if (is_udp)
+                 return;
              if (!bound_) {
                  strand_C->post([this]() { tcp_client_socket_read(); });
                  strand_R->post([this]() { tcp_remote_socket_read(); });

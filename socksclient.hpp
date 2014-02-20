@@ -210,6 +210,7 @@ private:
         std::size_t psize_;
         uint16_t dport_;
         std::unique_ptr<UDPFrags> frags_;
+        std::array<char, 16> tcp_inbuf_;
     };
 
     struct S5Handshake {
