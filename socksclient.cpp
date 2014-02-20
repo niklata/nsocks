@@ -105,6 +105,18 @@ public:
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
     }
+    template <typename... Args>
+    void emplace(Args&&... args)
+    {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto x = std::make_shared<T>(std::forward<Args>(args)...);
+        auto elt = hash_[hidx_].emplace(x.get(), std::move(x));
+        if (swapTimer_.expires_from_now() <=
+            boost::posix_time::time_duration(0,0,0,0))
+            setTimer(false);
+        if (elt.second)
+            elt.first->second->start();
+    }
     bool remove(std::size_t hidx, T* sc)
     {
         std::lock_guard<std::mutex> wl(lock_);
@@ -198,6 +210,15 @@ public:
     {
         std::lock_guard<std::mutex> wl(lock_);
         hash_.emplace(ssc.get(), ssc);
+    }
+    template <typename... Args>
+    void emplace(Args&&... args)
+    {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto x = std::make_shared<T>(std::forward<Args>(args)...);
+        auto elt = hash_.emplace(x.get(), std::move(x));
+        if (elt.second)
+            elt.first->second->start();
     }
     bool remove(T* sc)
     {
@@ -922,12 +943,10 @@ void SocksInit::dispatch_tcp_connect()
              }
              set_remote_socket_options();
              conntracker_hs->remove(this);
-             auto lel = std::make_shared<SocksClient>(io_service,
+             conntracker_connect.emplace(io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false,
                    std::move(dst_hostname_));
-             conntracker_connect.store(lel);
-             lel->start();
          }));
 }
 
@@ -1545,13 +1564,11 @@ void SocksInit::dispatch_tcp_bind()
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
              conntracker_bindlisten->remove(this);
-             auto lel = std::make_shared<SocksClient>(io_service,
+             conntracker_bind.emplace(io_service,
                    std::move(client_socket_),
                    std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, true,
                    std::move(dst_hostname_));
-             conntracker_bind.store(lel);
-             lel->start();
          }));
     send_reply(RplSuccess);
 }
@@ -1604,11 +1621,9 @@ void SocksInit::dispatch_udp()
     }
 
     conntracker_hs->remove(this);
-    auto lel = std::make_shared<SocksUDP>
-         (io_service, std::move(client_socket_), udp_client_ep, udp_remote_ep,
-          ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
-    conntracker_udp.store(lel);
-    lel->start();
+    conntracker_udp.emplace(io_service,
+        std::move(client_socket_), udp_client_ep, udp_remote_ep,
+        ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
 }
 
 static inline void send_reply_code(std::string &outbuf,
@@ -2106,12 +2121,9 @@ void ClientListener::start_accept()
         (socket_, endpoint_,
          [this](const boost::system::error_code &ec)
          {
-             if (!ec) {
-                 auto conn = std::make_shared<SocksInit>
-                     (acceptor_.get_io_service(), std::move(socket_));
-                 conntracker_hs->store(conn);
-                 conn->start();
-             }
+             if (!ec)
+                 conntracker_hs->emplace(acceptor_.get_io_service(),
+                                         std::move(socket_));
              start_accept();
          });
 }
