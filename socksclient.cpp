@@ -306,6 +306,34 @@ private:
 static std::unique_ptr<BindPortAssigner> BPA;
 static std::unique_ptr<BindPortAssigner> UPA;
 
+SocksClient::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
+                                      boost::asio::ip::tcp::endpoint lep)
+        : acceptor_(io_service), local_endpoint_(lep)
+{
+    boost::system::error_code ec;
+    acceptor_.open(lep.protocol(), ec);
+    if (ec)
+        throw std::runtime_error("open failed");
+    acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+        throw std::runtime_error("set_option/reuse_address failed");
+    acceptor_.non_blocking(true, ec);
+    if (ec)
+        throw std::runtime_error("non_blocking failed");
+    acceptor_.bind(lep, ec);
+    if (ec)
+        throw std::domain_error("bind failed");
+    acceptor_.listen(1, ec);
+    if (ec)
+        throw std::runtime_error("listen failed");
+}
+
+SocksClient::BoundSocket::~BoundSocket()
+{
+    assert(BPA);
+    BPA->release_port(local_endpoint_.port());
+}
+
 void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
 {
     if (g_disable_bind)
@@ -480,12 +508,9 @@ bool SocksClient::close_remote_socket() { close_cr_socket(remote_socket_); retur
 
 void SocksClient::close_bind_listen_socket()
 {
-    if (!bound_)
+    if (!handshake_ || !handshake_->bound_)
         return;
-    assert(BPA);
-    auto bind_port = bound_->local_endpoint_.port();
-    bound_.reset();
-    BPA->release_port(bind_port);
+    handshake_->bound_.reset();
 }
 
 void SocksClient::close_udp_sockets()
@@ -873,6 +898,7 @@ void SocksClient::dispatch_tcp_connect()
              try {
                  conntracker_connect.store(conntracker_hs->fetch(this));
              } catch (const std::out_of_range &) {
+                 std::cerr << "conntracker /hs->connect/ failed\n";
                  send_reply(RplFail);
                  return;
              }
@@ -1417,7 +1443,7 @@ bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
             break;
         }
         try {
-            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
+            handshake_->bound_ = nk::make_unique<BoundSocket>(io_service, ep);
         } catch (const std::runtime_error &e) {
             std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
             break;
@@ -1476,19 +1502,19 @@ void SocksClient::dispatch_tcp_bind()
     try {
         conntracker_bindlisten->store(conntracker_hs->fetch(this));
     } catch (const std::out_of_range &) {
+        std::cerr << "conntracker /hs->bindlisten/ failed\n";
         send_reply(RplFail);
         return;
     }
     client_type_ = SCT_INIT_BIND;
 
     auto sfd = shared_from_this();
-    bound_->acceptor_.async_accept
+    handshake_->bound_->acceptor_.async_accept
         (remote_socket_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
                  send_reply(RplFail);
-                 bound_.reset();
                  return;
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
@@ -1496,10 +1522,10 @@ void SocksClient::dispatch_tcp_bind()
              try {
                  conntracker_bind.store(conntracker_bindlisten->fetch(this));
              } catch (const std::out_of_range &) {
+                 std::cerr << "conntracker /bindlisten->bind/ failed\n";
                  send_reply(RplFail);
                  return;
              }
-             close_bind_listen_socket();
              send_reply(RplSuccess);
          }));
     send_reply(RplSuccess);
@@ -1566,6 +1592,7 @@ void SocksClient::dispatch_udp()
     try {
         conntracker_udp.store(conntracker_hs->fetch(this));
     } catch (const std::out_of_range &) {
+        std::cerr << "conntracker /hs->udp/ failed\n";
         send_reply(RplFail);
         return;
     }
@@ -1907,17 +1934,17 @@ void SocksClient::send_reply(ReplyCode replycode)
     handshake_->outbuf_.append(1, replycode);
     handshake_->outbuf_.append(1, 0x00);
     if (replycode == RplSuccess) {
-        switch (handshake_->cmd_code_) {
-        case CmdTCPConnect:
+        switch (client_type_) {
+        case SCT_CONNECT:
             send_reply_binds(remote_socket_.local_endpoint());
             break;
-        case CmdTCPBind:
-            if (bound_)
-                send_reply_binds(bound_->local_endpoint_);
-            else
-                send_reply_binds(remote_socket_.remote_endpoint());
+        case SCT_INIT_BIND:
+            send_reply_binds(handshake_->bound_->local_endpoint_);
             break;
-        case CmdUDP: {
+        case SCT_BIND:
+            send_reply_binds(remote_socket_.remote_endpoint());
+            break;
+        case SCT_UDP: {
             auto ep = udp_->client_socket_.local_endpoint();
             send_reply_binds(ba::ip::tcp::endpoint(ep.address(), ep.port()));
             break;
@@ -1947,11 +1974,8 @@ void SocksClient::send_reply(ReplyCode replycode)
                  terminate();
                  return;
              }
-             bool is_udp = handshake_->cmd_code_ == CmdUDP;
              handshake_.reset();
-             if (is_udp)
-                 return;
-             if (!bound_) {
+             if (client_type_ == SCT_CONNECT || client_type_ == SCT_BIND) {
                  strand_C->post([this]() { tcp_client_socket_read(); });
                  strand_R->post([this]() { tcp_remote_socket_read(); });
              }

@@ -127,26 +127,8 @@ private:
 
     struct BoundSocket {
         BoundSocket(boost::asio::io_service &io_service,
-                    boost::asio::ip::tcp::endpoint lep)
-         : acceptor_(io_service), local_endpoint_(lep)
-        {
-            boost::system::error_code ec;
-            acceptor_.open(lep.protocol(), ec);
-            if (ec)
-                throw std::runtime_error("open failed");
-            acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-            if (ec)
-                throw std::runtime_error("set_option/reuse_address failed");
-            acceptor_.non_blocking(true, ec);
-            if (ec)
-                throw std::runtime_error("non_blocking failed");
-            acceptor_.bind(lep, ec);
-            if (ec)
-                throw std::domain_error("bind failed");
-            acceptor_.listen(1, ec);
-            if (ec)
-                throw std::runtime_error("listen failed");
-        }
+                    boost::asio::ip::tcp::endpoint lep);
+        ~BoundSocket();
         boost::asio::ip::tcp::acceptor acceptor_;
         boost::asio::ip::tcp::endpoint local_endpoint_;
     };
@@ -221,6 +203,7 @@ private:
                 (io_service);
         }
         std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
+        std::unique_ptr<BoundSocket> bound_;
         std::string outbuf_;
         ReplyCode sentReplyType_;
         CommandCode cmd_code_;
@@ -235,7 +218,6 @@ private:
 
     std::string dst_hostname_;
     std::unique_ptr<S5Handshake> handshake_;
-    std::unique_ptr<BoundSocket> bound_;
     std::unique_ptr<UDPAssoc> udp_;
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
