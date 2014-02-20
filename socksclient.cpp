@@ -1701,14 +1701,14 @@ void SocksTCP::start()
                      << client_socket_.remote_endpoint().address()
                      << " (tcp:none) -> "
                      << (!dst_hostname_.size() ? dst_address_.to_string()
-                                              : dst_hostname_)
+                                               : dst_hostname_)
                      << ":" << dst_port_
                      << " [sending success reply]" << std::endl;
                  terminate();
                  return;
              }
-             strand_C->post([this]() { tcp_client_socket_read(); });
-             strand_R->post([this]() { tcp_remote_socket_read(); });
+             tcp_client_socket_read();
+             tcp_remote_socket_read();
          }));
 }
 
