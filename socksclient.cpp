@@ -99,8 +99,10 @@ public:
     }
     void store(std::shared_ptr<T> ssc)
     {
-        std::lock_guard<std::mutex> wl(lock_);
-        hash_[hidx_].emplace(ssc.get(), ssc);
+        {
+            std::lock_guard<std::mutex> wl(lock_);
+            hash_[hidx_].emplace(ssc.get(), ssc);
+        }
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
@@ -108,14 +110,18 @@ public:
     template <typename... Args>
     void emplace(Args&&... args)
     {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto x = std::make_shared<T>(std::forward<Args>(args)...);
-        auto elt = hash_[hidx_].emplace(x.get(), std::move(x));
+        std::shared_ptr<T> y;
+        {
+            std::lock_guard<std::mutex> wl(lock_);
+            auto x = std::make_shared<T>(std::forward<Args>(args)...);
+            auto elt = hash_[hidx_].emplace(x.get(), std::move(x));
+            if (elt.second)
+                y = elt.first->second;
+        }
+        y->start();
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
-        if (elt.second)
-            elt.first->second->start();
     }
     bool remove(std::size_t hidx, T* sc)
     {
@@ -214,11 +220,15 @@ public:
     template <typename... Args>
     void emplace(Args&&... args)
     {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto x = std::make_shared<T>(std::forward<Args>(args)...);
-        auto elt = hash_.emplace(x.get(), std::move(x));
-        if (elt.second)
-            elt.first->second->start();
+        std::shared_ptr<T> y;
+        {
+            std::lock_guard<std::mutex> wl(lock_);
+            auto x = std::make_shared<T>(std::forward<Args>(args)...);
+            auto elt = hash_.emplace(x.get(), std::move(x));
+            if (elt.second)
+                y = elt.first->second;
+        }
+        y->start();
     }
     bool remove(T* sc)
     {
