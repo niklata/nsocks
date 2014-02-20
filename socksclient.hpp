@@ -136,6 +136,7 @@ private:
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     uint16_t ibSiz_;
+    bool bind_listen_;
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
@@ -145,7 +146,6 @@ private:
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
-    SocksClientType client_type_; // for now keep (untrack() demux)
     uint16_t dst_port_;
 };
 
@@ -156,17 +156,13 @@ public:
     SocksClient(boost::asio::io_service &io_service,
                 boost::asio::ip::tcp::socket client_socket,
                 boost::asio::ip::tcp::socket remote_socket,
-                boost::asio::ip::address dst_address_,
-                uint16_t dst_port_,
-                SocksClientType client_type_,
-                std::string dst_hostname_ = "");
+                boost::asio::ip::address dst_address,
+                uint16_t dst_port, bool is_bind,
+                std::string dst_hostname = "");
     ~SocksClient();
     void cancel();
     void terminate();
 
-    inline void setClientType(SocksClientType ct) {
-        client_type_ = ct;
-    }
     inline void set_terminated() { terminated_ = true; }
     bool matches_dst(const boost::asio::ip::address &addr,
                      uint16_t port) const;
@@ -211,8 +207,8 @@ private:
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
-    SocksClientType client_type_; // for now keep (untrack() demux)
     uint16_t dst_port_;
+    bool is_bind_;
 
 #ifdef USE_SPLICE
     // Used for splice().
@@ -360,7 +356,6 @@ public:
     void terminate();
     void cancel();
     inline void set_terminated() { terminated_ = true; }
-    inline void setClientType(SocksClientType ct) {}
     // XXX: These don't really do anything but are necessary to fulfill
     //      the concept for connTracker.
     bool matches_dst(const boost::asio::ip::address &addr,

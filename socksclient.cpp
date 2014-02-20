@@ -186,8 +186,7 @@ template <typename T>
 class connTracker : boost::noncopyable
 {
 public:
-    explicit connTracker(SocksClientType client_type)
-        : client_type_(client_type) {}
+    connTracker() {}
     ~connTracker()
     {
         for (auto &i: hash_) {
@@ -198,7 +197,6 @@ public:
     void store(std::shared_ptr<T> ssc)
     {
         std::lock_guard<std::mutex> wl(lock_);
-        ssc->setClientType(client_type_);
         hash_.emplace(ssc.get(), ssc);
     }
     bool remove(T* sc)
@@ -220,13 +218,11 @@ public:
 
     std::mutex lock_;
     std::unordered_map<T*, std::shared_ptr<T>> hash_;
-private:
-    SocksClientType client_type_;
 };
 
-static connTracker<SocksClient> conntracker_connect(SCT_CONNECT);
-static connTracker<SocksClient> conntracker_bind(SCT_BIND);
-static connTracker<SocksUDP> conntracker_udp(SCT_UDP);
+static connTracker<SocksClient> conntracker_connect;
+static connTracker<SocksClient> conntracker_bind;
+static connTracker<SocksUDP> conntracker_udp;
 
 #ifdef USE_SPLICE
 static std::unordered_set<SocksClient*> cpipe_hasdata;
@@ -394,10 +390,10 @@ static void print_destructor_logentry(const std::string &host, uint16_t port)
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : terminated_(false), ibSiz_(0),
+        : terminated_(false), ibSiz_(0), bind_listen_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_(std::move(client_socket)),
-          remote_socket_(io_service), client_type_(SCT_INIT)
+          remote_socket_(io_service)
 {
     ++socks_alive_count;
     client_socket_.non_blocking(true);
@@ -420,13 +416,13 @@ SocksClient::SocksClient(ba::io_service &io_service,
                          boost::asio::ip::tcp::socket remote_socket,
                          boost::asio::ip::address dst_address,
                          uint16_t dst_port,
-                         SocksClientType client_type,
+                         bool is_bind,
                          std::string dst_hostname)
         : terminated_(false),
           dst_hostname_(dst_hostname), dst_address_(dst_address),
           client_socket_(std::move(client_socket)),
           remote_socket_(std::move(remote_socket)),
-          client_type_(client_type), dst_port_(dst_port),
+          dst_port_(dst_port), is_bind_(is_bind),
 #ifdef USE_SPLICE
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
@@ -434,19 +430,8 @@ SocksClient::SocksClient(ba::io_service &io_service,
 #endif
 {
     ++socks_alive_count;
-    if (client_type_ == SCT_CONNECT || client_type_ == SCT_BIND) {
-        strand_C->post([this]() { tcp_client_socket_read(); });
-        strand_R->post([this]() { tcp_remote_socket_read(); });
-    } else {
-        std::string ct;
-        switch (client_type_) {
-            case SCT_UDP: ct = "UDP"; break;
-            case SCT_INIT: ct = "INIT"; break;
-            case SCT_INIT_BIND: ct = "INIT_BIND"; break;
-            default: ct = "unknown"; break;
-        }
-        std::cerr << "SocksClient: Bad client_type_ == " << ct << "!\n";
-    }
+    strand_C->post([this]() { tcp_client_socket_read(); });
+    strand_R->post([this]() { tcp_remote_socket_read(); });
 }
 
 SocksClient::~SocksClient()
@@ -558,11 +543,8 @@ bool SocksClient::close_remote_socket() { close_cr_socket(remote_socket_); retur
 
 void SocksClient::untrack()
 {
-    switch (client_type_) {
-    case SCT_CONNECT: conntracker_connect.remove(this); break;
-    case SCT_BIND: conntracker_bind.remove(this); break;
-    default: std::cerr << "SocksClient::untrack(): bad client_type_\n";
-    }
+    if (!is_bind_) conntracker_connect.remove(this);
+    else conntracker_bind.remove(this);
 }
 
 void SocksClient::cancel()
@@ -586,11 +568,8 @@ void SocksClient::terminate()
 
 void SocksInit::untrack()
 {
-    switch (client_type_) {
-    case SCT_INIT: conntracker_hs->remove(this); break;
-    case SCT_INIT_BIND: conntracker_bindlisten->remove(this); break;
-    default: std::cerr << "SocksInit::untrack(): bad client_type_\n";
-    }
+    if (!bind_listen_) conntracker_hs->remove(this);
+    else conntracker_bindlisten->remove(this);
 }
 
 void SocksInit::cancel()
@@ -1545,7 +1524,7 @@ void SocksInit::dispatch_tcp_bind()
         send_reply(RplFail);
         return;
     }
-    client_type_ = SCT_INIT_BIND;
+    bind_listen_ = true;
 
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
@@ -1669,12 +1648,9 @@ void SocksInit::send_reply(ReplyCode replycode)
             else
                 send_reply_binds(outbuf_, remote_socket_.remote_endpoint());
             break;
-        case CmdUDP:
-            throw std::logic_error
-                ("Invalid client_type_ == SCT_UDP in send_reply().\n");
         default:
             throw std::logic_error
-                ("Invalid client_type_ == unknown in send_reply().\n");
+                ("Invalid cmd_code_ == unknown in send_reply().\n");
         }
     }
     sentReplyType_ = replycode;
