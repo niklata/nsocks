@@ -363,11 +363,11 @@ static void process_options(int ac, char *av[])
         num_worker_threads = vm["threads"].as<std::size_t>();
     if (vm.count("send-chunksize")) {
         auto t = vm["send-chunksize"].as<std::size_t>();
-        SocksClient::set_send_buffer_chunk_size(t);
+        SocksTCP::set_send_buffer_chunk_size(t);
     }
     if (vm.count("receive-chunksize")) {
         auto t = vm["receive-chunksize"].as<std::size_t>();
-        SocksClient::set_receive_buffer_chunk_size(t);
+        SocksTCP::set_receive_buffer_chunk_size(t);
     }
     if (vm.count("max-buffer-ms")) {
         auto t = vm["max-buffer-ms"].as<unsigned int>();

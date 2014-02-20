@@ -140,17 +140,17 @@ private:
     uint16_t dst_port_;
 };
 
-class SocksClient
-    : public std::enable_shared_from_this<SocksClient>, boost::noncopyable
+class SocksTCP
+    : public std::enable_shared_from_this<SocksTCP>, boost::noncopyable
 {
 public:
-    SocksClient(boost::asio::io_service &io_service,
-                boost::asio::ip::tcp::socket client_socket,
-                boost::asio::ip::tcp::socket remote_socket,
-                boost::asio::ip::address dst_address,
-                uint16_t dst_port, bool is_bind,
-                std::string dst_hostname = "");
-    ~SocksClient();
+    SocksTCP(boost::asio::io_service &io_service,
+             boost::asio::ip::tcp::socket client_socket,
+             boost::asio::ip::tcp::socket remote_socket,
+             boost::asio::ip::address dst_address,
+             uint16_t dst_port, bool is_bind,
+             std::string dst_hostname = "");
+    ~SocksTCP();
     void start();
     void cancel();
     void terminate();
@@ -223,9 +223,9 @@ private:
 public:
     void terminate_client();
     void terminate_remote();
-    bool kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v,
+    bool kickClientPipe(std::vector<std::weak_ptr<SocksTCP>> &v,
                         const std::chrono::high_resolution_clock::time_point &now);
-    bool kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v,
+    bool kickRemotePipe(std::vector<std::weak_ptr<SocksTCP>> &v,
                         const std::chrono::high_resolution_clock::time_point &now);
 private:
     void kickClientPipeBG();

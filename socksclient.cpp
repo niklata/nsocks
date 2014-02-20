@@ -67,15 +67,15 @@ void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 static unsigned int max_buffer_ms = 250;
 void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
 
-std::size_t SocksClient::send_buffer_chunk_size = 1024;
-std::size_t SocksClient::receive_buffer_chunk_size = 2048;
-std::size_t SocksClient::send_minsplice_size = 768;
-std::size_t SocksClient::receive_minsplice_size = 1536;
-void SocksClient::set_send_buffer_chunk_size(std::size_t size) {
+std::size_t SocksTCP::send_buffer_chunk_size = 1024;
+std::size_t SocksTCP::receive_buffer_chunk_size = 2048;
+std::size_t SocksTCP::send_minsplice_size = 768;
+std::size_t SocksTCP::receive_minsplice_size = 1536;
+void SocksTCP::set_send_buffer_chunk_size(std::size_t size) {
     send_buffer_chunk_size = size;
     send_minsplice_size = size / 4 * 3;
 }
-void SocksClient::set_receive_buffer_chunk_size(std::size_t size) {
+void SocksTCP::set_receive_buffer_chunk_size(std::size_t size) {
     receive_buffer_chunk_size = size;
     receive_minsplice_size = size / 4 * 3;
 }
@@ -241,15 +241,15 @@ public:
     std::unordered_map<T*, std::shared_ptr<T>> hash_;
 };
 
-static connTracker<SocksClient> conntracker_connect;
-static connTracker<SocksClient> conntracker_bind;
+static connTracker<SocksTCP> conntracker_connect;
+static connTracker<SocksTCP> conntracker_bind;
 static connTracker<SocksUDP> conntracker_udp;
 
 #ifdef USE_SPLICE
-static std::unordered_set<SocksClient*> cpipe_hasdata;
+static std::unordered_set<SocksTCP*> cpipe_hasdata;
 static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
 static std::atomic<bool> cPipeTimerSet;
-static std::unordered_set<SocksClient*> rpipe_hasdata;
+static std::unordered_set<SocksTCP*> rpipe_hasdata;
 static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
 static std::atomic<bool> rPipeTimerSet;
 #endif
@@ -434,13 +434,11 @@ SocksInit::~SocksInit()
     }
 }
 
-SocksClient::SocksClient(ba::io_service &io_service,
-                         boost::asio::ip::tcp::socket client_socket,
-                         boost::asio::ip::tcp::socket remote_socket,
-                         boost::asio::ip::address dst_address,
-                         uint16_t dst_port,
-                         bool is_bind,
-                         std::string dst_hostname)
+SocksTCP::SocksTCP(ba::io_service &io_service,
+                   boost::asio::ip::tcp::socket client_socket,
+                   boost::asio::ip::tcp::socket remote_socket,
+                   boost::asio::ip::address dst_address,
+                   uint16_t dst_port, bool is_bind, std::string dst_hostname)
         : terminated_(false),
           dst_hostname_(dst_hostname), dst_address_(dst_address),
           client_socket_(std::move(client_socket)),
@@ -456,7 +454,7 @@ SocksClient::SocksClient(ba::io_service &io_service,
         ++socks_alive_count;
 }
 
-SocksClient::~SocksClient()
+SocksTCP::~SocksTCP()
 {
     if (!terminated_)
         untrack();
@@ -525,7 +523,7 @@ static inline bool pipe_close(ba::posix::stream_descriptor &sa,
     return ret;
 }
 
-void SocksClient::close_pipe_to_client()
+void SocksTCP::close_pipe_to_client()
 {
     boost::system::error_code ec;
     assert(pToClient_len_ == 0);
@@ -534,7 +532,7 @@ void SocksClient::close_pipe_to_client()
     pipe_close_raw(pToClient_, sdToClient_);
 }
 
-void SocksClient::close_pipe_to_remote()
+void SocksTCP::close_pipe_to_remote()
 {
     boost::system::error_code ec;
     assert(pToRemote_len_ == 0);
@@ -543,7 +541,7 @@ void SocksClient::close_pipe_to_remote()
     pipe_close_raw(pToRemote_, sdToRemote_);
 }
 
-bool SocksClient::close_client_socket()
+bool SocksTCP::close_client_socket()
 {
     boost::system::error_code ec;
     sdToClient_.cancel(ec);
@@ -551,7 +549,7 @@ bool SocksClient::close_client_socket()
                       client_socket_, remote_socket_);
 }
 
-bool SocksClient::close_remote_socket()
+bool SocksTCP::close_remote_socket()
 {
     boost::system::error_code ec;
     sdToRemote_.cancel(ec);
@@ -559,23 +557,23 @@ bool SocksClient::close_remote_socket()
                       remote_socket_, client_socket_);
 }
 #else
-bool SocksClient::close_client_socket() { close_cr_socket(client_socket_); return false; }
-bool SocksClient::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
+bool SocksTCP::close_client_socket() { close_cr_socket(client_socket_); return false; }
+bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
 #endif
 
-void SocksClient::untrack()
+void SocksTCP::untrack()
 {
     if (!is_bind_) conntracker_connect.remove(this);
     else conntracker_bind.remove(this);
 }
 
-void SocksClient::cancel()
+void SocksTCP::cancel()
 {
     close_remote_socket();
     close_client_socket();
 }
 
-void SocksClient::terminate()
+void SocksTCP::terminate()
 {
     if (terminated_)
         return;
@@ -972,7 +970,7 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 }
 
 #ifdef USE_SPLICE
-bool SocksClient::init_pipe_client()
+bool SocksTCP::init_pipe_client()
 {
     int pipes[2];
     if (pipe2(pipes, O_NONBLOCK))
@@ -982,7 +980,7 @@ bool SocksClient::init_pipe_client()
     return true;
 }
 
-bool SocksClient::init_pipe_remote()
+bool SocksTCP::init_pipe_remote()
 {
     int pipes[2];
     if (pipe2(pipes, O_NONBLOCK))
@@ -992,7 +990,7 @@ bool SocksClient::init_pipe_remote()
     return true;
 }
 
-void SocksClient::terminate_client()
+void SocksTCP::terminate_client()
 {
     bool remote_open = close_client_socket();
     if (terminated_)
@@ -1002,7 +1000,7 @@ void SocksClient::terminate_client()
     terminate();
 }
 
-void SocksClient::terminate_remote()
+void SocksTCP::terminate_remote()
 {
     bool client_open = close_remote_socket();
     if (terminated_)
@@ -1024,7 +1022,7 @@ static void kickClientPipeTimer()
                     cPipeTimerSet = false;
                     if (error)
                         return;
-                    std::vector<std::weak_ptr<SocksClient>> kv;
+                    std::vector<std::weak_ptr<SocksTCP>> kv;
                     bool remains(false);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
@@ -1069,7 +1067,7 @@ static void kickRemotePipeTimer()
                     rPipeTimerSet = false;
                     if (error)
                         return;
-                    std::vector<std::weak_ptr<SocksClient>> kv;
+                    std::vector<std::weak_ptr<SocksTCP>> kv;
                     bool remains(false);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
@@ -1102,8 +1100,8 @@ static void kickRemotePipeTimer()
     }
 }
 
-bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v,
-                                 const std::chrono::high_resolution_clock::time_point &now)
+bool SocksTCP::kickClientPipe(std::vector<std::weak_ptr<SocksTCP>> &v,
+                              const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToClient_len_;
     if (l == 0)
@@ -1124,7 +1122,7 @@ bool SocksClient::kickClientPipe(std::vector<std::weak_ptr<SocksClient>> &v,
     return false;
 }
 
-void SocksClient::kickClientPipeBG()
+void SocksTCP::kickClientPipeBG()
 {
     std::cerr << "kicked client pipe (more left)\n";
     auto sfd = shared_from_this();
@@ -1153,8 +1151,8 @@ void SocksClient::kickClientPipeBG()
          }));
 }
 
-bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v,
-                                 const std::chrono::high_resolution_clock::time_point &now)
+bool SocksTCP::kickRemotePipe(std::vector<std::weak_ptr<SocksTCP>> &v,
+                              const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToRemote_len_;
     if (l == 0)
@@ -1175,7 +1173,7 @@ bool SocksClient::kickRemotePipe(std::vector<std::weak_ptr<SocksClient>> &v,
     return false;
 }
 
-void SocksClient::kickRemotePipeBG()
+void SocksTCP::kickRemotePipeBG()
 {
     std::cerr << "kicked remote pipe (more left)\n";
     auto sfd = shared_from_this();
@@ -1205,7 +1203,7 @@ void SocksClient::kickRemotePipeBG()
 }
 
 // Write data read from the client socket to the connect socket.
-void SocksClient::tcp_client_socket_read_splice()
+void SocksTCP::tcp_client_socket_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
@@ -1259,7 +1257,7 @@ void SocksClient::tcp_client_socket_read_splice()
 }
 
 // Write data read from the connect socket to the client socket.
-void SocksClient::tcp_remote_socket_read_splice()
+void SocksTCP::tcp_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
@@ -1312,7 +1310,7 @@ void SocksClient::tcp_remote_socket_read_splice()
          }));
 }
 
-void SocksClient::doFlushPipeToRemote(bool closing)
+void SocksTCP::doFlushPipeToRemote(bool closing)
 {
     if (pToRemote_len_ == 0) {
         if (closing) terminate_remote();
@@ -1340,7 +1338,7 @@ void SocksClient::doFlushPipeToRemote(bool closing)
          }));
 }
 
-void SocksClient::doFlushPipeToClient(bool closing)
+void SocksTCP::doFlushPipeToClient(bool closing)
 {
     if (pToClient_len_ == 0) {
         if (closing) terminate_client();
@@ -1370,7 +1368,7 @@ void SocksClient::doFlushPipeToClient(bool closing)
 #endif
 
 // Write data read from the client socket to the connect socket.
-void SocksClient::tcp_client_socket_read()
+void SocksTCP::tcp_client_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = client_buf_.prepare(send_buffer_chunk_size);
@@ -1418,7 +1416,7 @@ void SocksClient::tcp_client_socket_read()
 }
 
 // Write data read from the connect socket to the client socket.
-void SocksClient::tcp_remote_socket_read()
+void SocksTCP::tcp_remote_socket_read()
 {
     ba::streambuf::mutable_buffers_type ibm
         = remote_buf_.prepare(receive_buffer_chunk_size);
@@ -1500,8 +1498,8 @@ bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
     return false;
 }
 
-bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
-                              uint16_t port) const
+bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
+                           uint16_t port) const
 {
     if (!nk::asio::compare_ip(addr, dst_address_, 128))
         return false;
@@ -1671,7 +1669,7 @@ static const char * const replyCodeString[] = {
     "RplAddrNotSupp",
 };
 
-void SocksClient::start()
+void SocksTCP::start()
 {
     std::string ob;
     send_reply_code(ob, SocksInit::ReplyCode::RplSuccess);
