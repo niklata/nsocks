@@ -86,6 +86,7 @@ static boost::random::mt19937 g_random_prng(g_random_secure());
 static std::unique_ptr <boost::asio::strand> strand_C;
 static std::unique_ptr <boost::asio::strand> strand_R;
 
+template <typename T>
 class ephConnTracker : boost::noncopyable
 {
 public:
@@ -96,7 +97,7 @@ public:
         for (std::size_t j = 0; j < 2; ++j)
             hash_cancel(j);
     }
-    void store(std::shared_ptr<SocksClient> ssc)
+    void store(std::shared_ptr<T> ssc)
     {
         std::lock_guard<std::mutex> wl(lock_);
         hash_[hidx_].emplace(ssc.get(), ssc);
@@ -104,21 +105,31 @@ public:
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
     }
-    bool remove(std::size_t hidx, SocksClient* sc)
+    bool remove(std::size_t hidx, T* sc)
     {
         std::lock_guard<std::mutex> wl(lock_);
         return remove_nolock(hidx, sc);
     }
-    bool remove(SocksClient* sc) {
+    bool remove(T* sc) {
         std::lock_guard<std::mutex> wl(lock_);
         std::size_t hi = hidx_;
         if (!remove_nolock(hi, sc))
             return remove_nolock(hi ^ 1, sc);
         return true;
     }
+    std::shared_ptr<T> fetch(T *sc) {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto elt = hash_[hidx_].find(sc);
+        if (elt == hash_[hidx_].end())
+            throw std::out_of_range("dne");
+        std::shared_ptr<T> r;
+        elt->second.swap(r);
+        hash_[hidx_].erase(elt);
+        return r;
+    }
     std::size_t size() { return hash_[0].size() + hash_[1].size(); }
 private:
-    inline bool remove_nolock(std::size_t hidx, SocksClient* sc) {
+    inline bool remove_nolock(std::size_t hidx, T* sc) {
         return !!hash_[hidx].erase(sc);
     }
     inline void hash_cancel(std::size_t x) {
@@ -160,18 +171,18 @@ private:
     const std::size_t cyclefreq_;
     std::atomic<std::size_t> hidx_;
     ba::deadline_timer swapTimer_;
-    std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_[2];
+    std::unordered_map<T*, std::shared_ptr<T>> hash_[2];
 };
 
-static std::unique_ptr<ephConnTracker> conntracker_hs;
-static std::unique_ptr<ephConnTracker> conntracker_bindlisten;
+static std::unique_ptr<ephConnTracker<SocksClient>> conntracker_hs;
+static std::unique_ptr<ephConnTracker<SocksClient>> conntracker_bindlisten;
 
+template <typename T>
 class connTracker : boost::noncopyable
 {
 public:
-    explicit connTracker(SocksClientType client_type,
-                         std::unique_ptr<ephConnTracker> &ct)
-        : client_type_(client_type), ct_(ct) {}
+    explicit connTracker(SocksClientType client_type)
+        : client_type_(client_type) {}
     ~connTracker()
     {
         for (auto &i: hash_) {
@@ -179,21 +190,18 @@ public:
             i.second->set_terminated();
         }
     }
-    void store(std::shared_ptr<SocksClient> ssc)
+    void store(std::shared_ptr<T> ssc)
     {
         std::lock_guard<std::mutex> wl(lock_);
         ssc->setClientType(client_type_);
         hash_.emplace(ssc.get(), ssc);
-        assert(ct_);
-        if (!ct_->remove(ssc.get()))
-            std::cerr << "Store to non-handshake tracker for connection that wasn't in the handshake tracker! SocksClient=" << ssc.get() << "\n";
     }
-    bool remove(SocksClient* sc)
+    bool remove(T* sc)
     {
         std::lock_guard<std::mutex> wl(lock_);
         return !!hash_.erase(sc);
     }
-    boost::optional<std::shared_ptr<SocksClient>>
+    boost::optional<std::shared_ptr<T>>
     find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
     {
         std::lock_guard<std::mutex> wl(lock_);
@@ -201,20 +209,19 @@ public:
             if (i.second->matches_dst(addr, port))
                 return i.second;
         }
-        return boost::optional<std::shared_ptr<SocksClient>>();
+        return boost::optional<std::shared_ptr<T>>();
     }
     std::size_t size() const { return hash_.size(); }
 
     std::mutex lock_;
-    std::unordered_map<SocksClient*, std::shared_ptr<SocksClient>> hash_;
+    std::unordered_map<T*, std::shared_ptr<T>> hash_;
 private:
     SocksClientType client_type_;
-    std::unique_ptr<ephConnTracker> &ct_;
 };
 
-static connTracker conntracker_connect(SCT_CONNECT, conntracker_hs);
-static connTracker conntracker_bind(SCT_BIND, conntracker_bindlisten);
-static connTracker conntracker_udp(SCT_UDP, conntracker_hs);
+static connTracker<SocksClient> conntracker_connect(SCT_CONNECT);
+static connTracker<SocksClient> conntracker_bind(SCT_BIND);
+static connTracker<SocksClient> conntracker_udp(SCT_UDP);
 
 #ifdef USE_SPLICE
 static std::unordered_set<SocksClient*> cpipe_hasdata;
@@ -233,9 +240,9 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
     cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
     rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
 #endif
-    conntracker_hs = nk::make_unique<ephConnTracker>
+    conntracker_hs = nk::make_unique<ephConnTracker<SocksClient>>
         (io_service, hs_secs);
-    conntracker_bindlisten = nk::make_unique<ephConnTracker>
+    conntracker_bindlisten = nk::make_unique<ephConnTracker<SocksClient>>
         (io_service, bindlisten_secs);
 }
 
@@ -863,7 +870,12 @@ void SocksClient::dispatch_tcp_connect()
              set_remote_socket_options();
              // Now we have a live socket, so we need to inform the client
              // and then begin proxying data.
-             conntracker_connect.store(shared_from_this());
+             try {
+                 conntracker_connect.store(conntracker_hs->fetch(this));
+             } catch (const std::out_of_range &) {
+                 send_reply(RplFail);
+                 return;
+             }
              send_reply(RplSuccess);
          }));
 }
@@ -1461,8 +1473,12 @@ void SocksClient::dispatch_tcp_bind()
 
     if (!create_bind_socket(bind_ep))
         return;
-    conntracker_bindlisten->store(shared_from_this());
-    conntracker_hs->remove(this);
+    try {
+        conntracker_bindlisten->store(conntracker_hs->fetch(this));
+    } catch (const std::out_of_range &) {
+        send_reply(RplFail);
+        return;
+    }
     client_type_ = SCT_INIT_BIND;
 
     auto sfd = shared_from_this();
@@ -1477,7 +1493,12 @@ void SocksClient::dispatch_tcp_bind()
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
-             conntracker_bind.store(shared_from_this());
+             try {
+                 conntracker_bind.store(conntracker_bindlisten->fetch(this));
+             } catch (const std::out_of_range &) {
+                 send_reply(RplFail);
+                 return;
+             }
              close_bind_listen_socket();
              send_reply(RplSuccess);
          }));
@@ -1542,7 +1563,12 @@ void SocksClient::dispatch_udp()
         return;
     }
 
-    conntracker_udp.store(shared_from_this());
+    try {
+        conntracker_udp.store(conntracker_hs->fetch(this));
+    } catch (const std::out_of_range &) {
+        send_reply(RplFail);
+        return;
+    }
 
     udp_tcp_socket_read();
     udp_client_socket_read();
