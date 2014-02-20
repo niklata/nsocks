@@ -434,7 +434,7 @@ SocksInit::SocksInit(ba::io_service &io_service,
 
 SocksInit::~SocksInit()
 {
-    if (terminated_)
+    if (!terminated_)
         untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
