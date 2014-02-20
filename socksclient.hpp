@@ -42,14 +42,6 @@
 
 #define SPLICE_SIZE (1024 * 1024)
 
-enum SocksClientType {
-    SCT_INIT = 0,
-    SCT_INIT_BIND,
-    SCT_CONNECT,
-    SCT_BIND,
-    SCT_UDP,
-};
-
 class SocksInit
     : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
 {
@@ -130,7 +122,6 @@ private:
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string outbuf_;
-    ReplyCode sentReplyType_;
     CommandCode cmd_code_;
     AddressType addr_type_;
     // Maximum packet size for handshakes is 262
@@ -160,6 +151,7 @@ public:
                 uint16_t dst_port, bool is_bind,
                 std::string dst_hostname = "");
     ~SocksClient();
+    void start();
     void cancel();
     void terminate();
 

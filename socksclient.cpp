@@ -395,7 +395,8 @@ SocksInit::SocksInit(ba::io_service &io_service,
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service)
 {
-    ++socks_alive_count;
+    if (g_verbose_logs)
+        ++socks_alive_count;
     client_socket_.non_blocking(true);
     client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
 }
@@ -404,11 +405,12 @@ SocksInit::~SocksInit()
 {
     if (terminated_)
         untrack();
-    --socks_alive_count;
-    if (g_verbose_logs)
+    if (g_verbose_logs) {
+        --socks_alive_count;
         print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
                                   : dst_address_.to_string(),
                                   dst_port_);
+    }
 }
 
 SocksClient::SocksClient(ba::io_service &io_service,
@@ -429,21 +431,20 @@ SocksClient::SocksClient(ba::io_service &io_service,
           pToRemote_(io_service), pToClient_(io_service)
 #endif
 {
-    ++socks_alive_count;
-    strand_C->post([this]() { tcp_client_socket_read(); });
-    strand_R->post([this]() { tcp_remote_socket_read(); });
+    if (g_verbose_logs)
+        ++socks_alive_count;
 }
 
 SocksClient::~SocksClient()
 {
     if (!terminated_)
         untrack();
-    --socks_alive_count;
-
-    if (g_verbose_logs)
+    if (g_verbose_logs) {
+        --socks_alive_count;
         print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
                                   : dst_address_.to_string(),
                                   dst_port_);
+    }
 }
 
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
@@ -920,7 +921,13 @@ void SocksInit::dispatch_tcp_connect()
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
-             send_reply(RplSuccess);
+             conntracker_hs->remove(this);
+             auto lel = std::make_shared<SocksClient>(io_service,
+                   std::move(client_socket_), std::move(remote_socket_),
+                   std::move(dst_address_), dst_port_, false,
+                   std::move(dst_hostname_));
+             conntracker_connect.store(lel);
+             lel->start();
          }));
 }
 
@@ -1537,8 +1544,14 @@ void SocksInit::dispatch_tcp_bind()
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
-             bound_.reset();
-             send_reply(RplSuccess);
+             conntracker_bindlisten->remove(this);
+             auto lel = std::make_shared<SocksClient>(io_service,
+                   std::move(client_socket_),
+                   std::move(remote_socket_),
+                   std::move(dst_address_), dst_port_, true,
+                   std::move(dst_hostname_));
+             conntracker_bind.store(lel);
+             lel->start();
          }));
     send_reply(RplSuccess);
 }
@@ -1591,12 +1604,24 @@ void SocksInit::dispatch_udp()
     }
 
     conntracker_hs->remove(this);
-    conntracker_udp.store(std::make_shared<SocksUDP>
+    auto lel = std::make_shared<SocksUDP>
          (io_service, std::move(client_socket_), udp_client_ep, udp_remote_ep,
-          ba::ip::udp::endpoint(client_ep.address(), client_ep.port())));
+          ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+    conntracker_udp.store(lel);
+    lel->start();
 }
 
-static void send_reply_binds(std::string &outbuf, ba::ip::tcp::endpoint ep)
+static inline void send_reply_code(std::string &outbuf,
+                                   SocksInit::ReplyCode replycode)
+{
+    outbuf.clear();
+    outbuf.append(1, 0x05);
+    outbuf.append(1, replycode);
+    outbuf.append(1, 0x00);
+}
+
+static inline void send_reply_binds(std::string &outbuf,
+                                    ba::ip::tcp::endpoint ep)
 {
     auto bnd_addr = ep.address();
     if (bnd_addr.is_v4()) {
@@ -1631,73 +1656,67 @@ static const char * const replyCodeString[] = {
     "RplAddrNotSupp",
 };
 
+void SocksClient::start()
+{
+    std::string ob;
+    send_reply_code(ob, SocksInit::ReplyCode::RplSuccess);
+    if (!is_bind_) send_reply_binds(ob, remote_socket_.local_endpoint());
+    else send_reply_binds(ob, remote_socket_.remote_endpoint());;
+    auto sfd = shared_from_this();
+    auto ibm = client_buf_.prepare(ob.size());
+    auto siz = std::min(ob.size(), boost::asio::buffer_size(ibm));
+    memcpy(boost::asio::buffer_cast<char *>(ibm), ob.data(), siz);
+    client_buf_.commit(siz);
+    ba::async_write
+        (client_socket_, client_buf_, strand_R->wrap(
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             client_buf_.consume(bytes_xferred);
+             if (ec) {
+                 std::cout << "ERROR @"
+                     << client_socket_.remote_endpoint().address()
+                     << " (tcp:none) -> "
+                     << (!dst_hostname_.size() ? dst_address_.to_string()
+                                              : dst_hostname_)
+                     << ":" << dst_port_
+                     << " [sending success reply]" << std::endl;
+                 terminate();
+                 return;
+             }
+             strand_C->post([this]() { tcp_client_socket_read(); });
+             strand_R->post([this]() { tcp_remote_socket_read(); });
+         }));
+}
+
 void SocksInit::send_reply(ReplyCode replycode)
 {
-    outbuf_.clear();
-    outbuf_.append(1, 0x05);
-    outbuf_.append(1, replycode);
-    outbuf_.append(1, 0x00);
+    send_reply_code(outbuf_, replycode);
     if (replycode == RplSuccess) {
-        switch (cmd_code_) {
-        case CmdTCPConnect:
-            send_reply_binds(outbuf_, remote_socket_.local_endpoint());
-            break;
-        case CmdTCPBind:
-            if (bound_)
-                send_reply_binds(outbuf_, bound_->local_endpoint_);
-            else
-                send_reply_binds(outbuf_, remote_socket_.remote_endpoint());
-            break;
-        default:
+        if (cmd_code_ != CmdTCPBind || !bound_) {
             throw std::logic_error
-                ("Invalid cmd_code_ == unknown in send_reply().\n");
-        }
+                ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
+        } else
+            send_reply_binds(outbuf_, bound_->local_endpoint_);
     }
-    sentReplyType_ = replycode;
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_,
          ba::buffer(outbuf_, outbuf_.size()),
          strand_C->wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd, replycode](const boost::system::error_code &ec,
+                                std::size_t bytes_xferred)
          {
-             if (ec || sentReplyType_ != RplSuccess) {
+             if (ec || replycode != RplSuccess) {
                  std::cout << "REJECT @"
                      << client_socket_.remote_endpoint().address()
                      << " (none) -> "
                      << (addr_type_ != AddrDNS
                          ? dst_address_.to_string() : dst_hostname_)
                      << ":" << dst_port_
-                     << " [" << replyCodeString[sentReplyType_]
+                     << " [" << replyCodeString[replycode]
                      << "]" << std::endl;
                  terminate();
-                 return;
-             }
-             // XXX: Would be ideal to do this before the response is sent.
-             switch (cmd_code_) {
-             case CmdTCPConnect:
-                 conntracker_hs->remove(this);
-                 conntracker_connect.store
-                     (std::make_shared<SocksClient>
-                      (io_service,
-                       std::move(client_socket_), std::move(remote_socket_),
-                       std::move(dst_address_), dst_port_, SCT_CONNECT,
-                       std::move(dst_hostname_)));
-                 break;
-             case CmdTCPBind:
-                 if (bound_)
-                     return;
-                 conntracker_bindlisten->remove(this);
-                 conntracker_bind.store
-                     (std::make_shared<SocksClient>
-                      (io_service,
-                       std::move(client_socket_),
-                       std::move(remote_socket_),
-                       std::move(dst_address_), dst_port_, SCT_BIND,
-                       std::move(dst_hostname_)));
-                 break;
-             default: std::cerr << "send_reply: unexpected client_type!\n";
              }
          }));
 }
@@ -1714,17 +1733,18 @@ SocksUDP::SocksUDP(ba::io_service &io_service,
           remote_socket_(io_service, remote_ep),
           resolver_(io_service)
 {
-    ++socks_alive_count;
-    start();
+    if (g_verbose_logs)
+        ++socks_alive_count;
 }
 
 SocksUDP::~SocksUDP()
 {
     if (!terminated_)
         untrack();
-    --socks_alive_count;
-    if (g_verbose_logs)
+    if (g_verbose_logs) {
+        --socks_alive_count;
         print_destructor_logentry("(n/a)", 0);
+    }
 }
 
 void SocksUDP::untrack()
@@ -1748,9 +1768,7 @@ void SocksUDP::terminate()
 
 void SocksUDP::start()
 {
-    out_header_.append(1, 0x05);
-    out_header_.append(1, SocksInit::ReplyCode::RplSuccess);
-    out_header_.append(1, 0x00);
+    send_reply_code(out_header_, SocksInit::ReplyCode::RplSuccess);
     auto ep = client_socket_.local_endpoint();
     send_reply_binds(out_header_,
                      ba::ip::tcp::endpoint(ep.address(), ep.port()));
@@ -1764,7 +1782,7 @@ void SocksUDP::start()
              if (ec) {
                  std::cout << "ERROR @"
                      << tcp_client_socket_.remote_endpoint().address()
-                     << " udp -> udp [when sending success reply]"
+                     << " (udp:none) -> (udp:none) [sending success reply]"
                      << std::endl;
                  terminate();
                  return;
