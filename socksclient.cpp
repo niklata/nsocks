@@ -119,12 +119,17 @@ public:
     }
     std::shared_ptr<T> fetch(T *sc) {
         std::lock_guard<std::mutex> wl(lock_);
-        auto elt = hash_[hidx_].find(sc);
-        if (elt == hash_[hidx_].end())
-            throw std::out_of_range("dne");
+        std::size_t hi = hidx_;
+        auto elt = hash_[hi].find(sc);
+        if (elt == hash_[hi].end()) {
+            hi ^= 1;
+            elt = hash_[hi].find(sc);
+            if (elt == hash_[hi].end())
+                throw std::out_of_range("dne");
+        }
         std::shared_ptr<T> r;
         elt->second.swap(r);
-        hash_[hidx_].erase(elt);
+        hash_[hi].erase(elt);
         return r;
     }
     std::size_t size() { return hash_[0].size() + hash_[1].size(); }
