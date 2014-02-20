@@ -50,19 +50,120 @@ enum SocksClientType {
     SCT_UDP,
 };
 
+class SocksInit
+    : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
+{
+public:
+    SocksInit(boost::asio::io_service &io_service,
+              boost::asio::ip::tcp::socket socket);
+    ~SocksInit();
+    void terminate();
+    void cancel();
+    inline void set_terminated() { terminated_ = true; }
+    inline void start() { read_greet(); }
+
+    enum ReplyCode {
+        RplSuccess = 0,
+        RplFail    = 1,
+        RplDeny    = 2,
+        RplNetUnreach = 3,
+        RplHostUnreach = 4,
+        RplConnRefused = 5,
+        RplTTLExpired = 6,
+        RplCmdNotSupp = 7,
+        RplAddrNotSupp = 8
+    };
+
+private:
+    enum CommandCode {
+        CmdTCPConnect,
+        CmdTCPBind,
+        CmdUDP
+    };
+
+    enum AddressType {
+        AddrIPv4,
+        AddrIPv6,
+        AddrDNS
+    };
+
+    struct BoundSocket {
+        BoundSocket(boost::asio::io_service &io_service,
+                    boost::asio::ip::tcp::endpoint lep);
+        ~BoundSocket();
+        boost::asio::ip::tcp::acceptor acceptor_;
+        boost::asio::ip::tcp::endpoint local_endpoint_;
+    };
+
+    inline void init_resolver(boost::asio::io_service &io_service) {
+        tcp_resolver_ = nk::make_unique<boost::asio::ip::tcp::resolver>
+            (io_service);
+    }
+
+    inline void set_remote_socket_options()
+    {
+        remote_socket_.non_blocking(true);
+        remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+    }
+
+    void untrack();
+    void read_greet();
+    void read_conn_request();
+    boost::optional<bool> process_greet();
+    boost::optional<ReplyCode> process_connrq();
+    void dispatch_connrq();
+
+    void dispatch_tcp_connect();
+
+    bool is_bind_client_allowed() const;
+    void dispatch_tcp_bind();
+    bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
+
+    bool is_udp_client_allowed(boost::asio::ip::address laddr) const;
+    void dispatch_udp();
+
+    void send_reply(ReplyCode replycode);
+    ReplyCode errorToReplyCode(const boost::system::error_code &ec);
+
+    std::atomic<bool> terminated_;
+
+    std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
+    std::unique_ptr<BoundSocket> bound_;
+    std::string outbuf_;
+    ReplyCode sentReplyType_;
+    CommandCode cmd_code_;
+    AddressType addr_type_;
+    // Maximum packet size for handshakes is 262
+    std::array<char, 272> inBytes_;
+    uint16_t ibSiz_;
+    bool auth_none_;
+    bool auth_gssapi_;
+    bool auth_unpw_;
+
+    // Shared items
+    std::string dst_hostname_;
+    boost::asio::ip::address dst_address_;
+    boost::asio::ip::tcp::socket client_socket_;
+    boost::asio::ip::tcp::socket remote_socket_;
+    SocksClientType client_type_; // for now keep (untrack() demux)
+    uint16_t dst_port_;
+};
+
 class SocksClient
     : public std::enable_shared_from_this<SocksClient>, boost::noncopyable
 {
 public:
     SocksClient(boost::asio::io_service &io_service,
-                boost::asio::ip::tcp::socket socket);
+                boost::asio::ip::tcp::socket client_socket,
+                boost::asio::ip::tcp::socket remote_socket,
+                boost::asio::ip::address dst_address_,
+                uint16_t dst_port_,
+                SocksClientType client_type_,
+                std::string dst_hostname_ = "");
     ~SocksClient();
     void cancel();
     void terminate();
 
-    inline void start() {
-        read_greet();
-    }
     inline void setClientType(SocksClientType ct) {
         client_type_ = ct;
     }
@@ -78,6 +179,8 @@ public:
     static void set_receive_buffer_chunk_size(std::size_t size);
 
 private:
+    void untrack();
+
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
     // Return of 0 implies EAGAIN
@@ -101,128 +204,13 @@ private:
         return spliced;
     }
 
-    enum CommandCode {
-        CmdTCPConnect,
-        CmdTCPBind,
-        CmdUDP
-    };
+    std::atomic<bool> terminated_;
 
-    enum AddressType {
-        AddrIPv4,
-        AddrIPv6,
-        AddrDNS
-    };
-
-    enum ReplyCode {
-        RplSuccess = 0,
-        RplFail    = 1,
-        RplDeny    = 2,
-        RplNetUnreach = 3,
-        RplHostUnreach = 4,
-        RplConnRefused = 5,
-        RplTTLExpired = 6,
-        RplCmdNotSupp = 7,
-        RplAddrNotSupp = 8
-    };
-
-    struct BoundSocket {
-        BoundSocket(boost::asio::io_service &io_service,
-                    boost::asio::ip::tcp::endpoint lep);
-        ~BoundSocket();
-        boost::asio::ip::tcp::acceptor acceptor_;
-        boost::asio::ip::tcp::endpoint local_endpoint_;
-    };
-
-    struct UDPFrags {
-        UDPFrags(boost::asio::io_service &io_service)
-                : timer_(io_service), lastn_(0) {}
-        boost::asio::deadline_timer timer_;
-        std::vector<uint8_t> buf_;
-        boost::asio::ip::address addr_;
-        std::string dns_;
-        uint16_t port_;
-        uint8_t lastn_;
-
-        void reset() {
-            boost::system::error_code ec;
-            timer_.cancel(ec);
-            buf_.clear();
-            dns_.clear();
-            addr_ = boost::asio::ip::address();
-            port_ = 0;
-            lastn_ = 0;
-        }
-        void reaper_start() {
-            timer_.expires_from_now(boost::posix_time::seconds(5));
-            timer_.async_wait(
-                [this](const boost::system::error_code& error)
-                {
-                    if (error)
-                        return;
-                    reset();
-                });
-        }
-    };
-
-    struct UDPAssoc {
-        UDPAssoc(boost::asio::io_service &io_service,
-                 boost::asio::ip::udp::endpoint client_ep,
-                 boost::asio::ip::udp::endpoint remote_ep,
-                 boost::asio::ip::udp::endpoint client_remote_ep)
-          : client_endpoint_(client_ep), remote_endpoint_(remote_ep),
-            client_remote_endpoint_(client_remote_ep),
-            client_socket_(io_service, client_ep),
-            remote_socket_(io_service, remote_ep),
-            resolver_(io_service)
-        {}
-        boost::asio::ip::udp::endpoint client_endpoint_;
-        boost::asio::ip::udp::endpoint remote_endpoint_;
-        boost::asio::ip::udp::endpoint client_remote_endpoint_;
-        boost::asio::ip::udp::endpoint csender_endpoint_;
-        boost::asio::ip::udp::endpoint rsender_endpoint_;
-        boost::asio::ip::udp::socket client_socket_;
-        boost::asio::ip::udp::socket remote_socket_;
-        boost::asio::ip::udp::resolver resolver_;
-        boost::asio::ip::address daddr_;
-        std::vector<uint8_t> inbuf_;
-        std::vector<uint8_t> outbuf_;
-        std::string out_header_;
-        std::vector<boost::asio::const_buffer> out_bufs_;
-        std::size_t poffset_;
-        std::size_t psize_;
-        uint16_t dport_;
-        std::unique_ptr<UDPFrags> frags_;
-        std::array<char, 16> tcp_inbuf_;
-    };
-
-    struct S5Handshake {
-        S5Handshake() : ibSiz_(0), auth_none_(false), auth_gssapi_(false),
-                        auth_unpw_(false) {}
-        void init_resolver(boost::asio::io_service &io_service) {
-            tcp_resolver_ = nk::make_unique<boost::asio::ip::tcp::resolver>
-                (io_service);
-        }
-        std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
-        std::unique_ptr<BoundSocket> bound_;
-        std::string outbuf_;
-        ReplyCode sentReplyType_;
-        CommandCode cmd_code_;
-        AddressType addr_type_;
-        // Maximum packet size for handshakes is 262
-        std::array<char, 272> inBytes_;
-        uint16_t ibSiz_;
-        bool auth_none_;
-        bool auth_gssapi_;
-        bool auth_unpw_;
-    };
-
+    // Shared with SocksInit
     std::string dst_hostname_;
-    std::unique_ptr<S5Handshake> handshake_;
-    std::unique_ptr<UDPAssoc> udp_;
     boost::asio::ip::address dst_address_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
-    std::atomic<bool> terminated_;
     SocksClientType client_type_; // for now keep (untrack() demux)
     uint16_t dst_port_;
 
@@ -350,29 +338,70 @@ private:
     static std::size_t send_minsplice_size;
     static std::size_t receive_minsplice_size;
 
-    inline void set_remote_socket_options()
-    {
-        remote_socket_.non_blocking(true);
-        remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
-    }
-    void read_greet();
-    void read_conn_request();
-    boost::optional<bool> process_greet();
-    boost::optional<ReplyCode> process_connrq();
-    void dispatch_connrq();
-
-    bool is_dst_denied(const boost::asio::ip::address &addr) const;
-    void dispatch_tcp_connect();
-
     void tcp_client_socket_read();
     void tcp_remote_socket_read();
 
-    bool is_bind_client_allowed() const;
-    void dispatch_tcp_bind();
-    bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
+    bool close_client_socket();
+    bool close_remote_socket();
+    void close_bind_listen_socket();
+};
 
-    bool is_udp_client_allowed(boost::asio::ip::address laddr) const;
-    void dispatch_udp();
+class SocksUDP
+    : public std::enable_shared_from_this<SocksUDP>, boost::noncopyable
+{
+public:
+    SocksUDP(boost::asio::io_service &io_service,
+             boost::asio::ip::tcp::socket tcp_client_socket,
+             boost::asio::ip::udp::endpoint client_ep,
+             boost::asio::ip::udp::endpoint remote_ep,
+             boost::asio::ip::udp::endpoint client_remote_ep);
+    ~SocksUDP();
+    void start();
+    void terminate();
+    void cancel();
+    inline void set_terminated() { terminated_ = true; }
+    inline void setClientType(SocksClientType ct) {}
+    // XXX: These don't really do anything but are necessary to fulfill
+    //      the concept for connTracker.
+    bool matches_dst(const boost::asio::ip::address &addr,
+                     uint16_t port) const { return false; }
+    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
+    {
+        return tcp_client_socket_.local_endpoint();
+    }
+private:
+    struct UDPFrags {
+        UDPFrags(boost::asio::io_service &io_service)
+                : timer_(io_service), lastn_(0) {}
+        boost::asio::deadline_timer timer_;
+        std::vector<uint8_t> buf_;
+        boost::asio::ip::address addr_;
+        std::string dns_;
+        uint16_t port_;
+        uint8_t lastn_;
+
+        void reset() {
+            boost::system::error_code ec;
+            timer_.cancel(ec);
+            buf_.clear();
+            dns_.clear();
+            addr_ = boost::asio::ip::address();
+            port_ = 0;
+            lastn_ = 0;
+        }
+        void reaper_start() {
+            timer_.expires_from_now(boost::posix_time::seconds(5));
+            timer_.async_wait(
+                [this](const boost::system::error_code& error)
+                {
+                    if (error)
+                        return;
+                    reset();
+                });
+        }
+    };
+
+    void untrack();
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
@@ -382,16 +411,31 @@ private:
                          const std::string &dnsname);
     void udp_proxy_packet();
     void udp_dns_lookup(const std::string &dnsname);
-
-    void send_reply(ReplyCode replycode);
-    void send_reply_binds(boost::asio::ip::tcp::endpoint ep);
-    void untrack();
-    bool close_client_socket();
-    bool close_remote_socket();
-    void close_bind_listen_socket();
     void close_udp_sockets();
 
-    ReplyCode errorToReplyCode(const boost::system::error_code &ec);
+    std::atomic<bool> terminated_;
+
+    // Shared with SocksInit
+    boost::asio::ip::tcp::socket tcp_client_socket_;
+
+    boost::asio::ip::udp::endpoint client_endpoint_;
+    boost::asio::ip::udp::endpoint remote_endpoint_;
+    boost::asio::ip::udp::endpoint client_remote_endpoint_;
+    boost::asio::ip::udp::endpoint csender_endpoint_;
+    boost::asio::ip::udp::endpoint rsender_endpoint_;
+    boost::asio::ip::udp::socket client_socket_;
+    boost::asio::ip::udp::socket remote_socket_;
+    boost::asio::ip::udp::resolver resolver_;
+    boost::asio::ip::address daddr_;
+    std::vector<uint8_t> inbuf_;
+    std::vector<uint8_t> outbuf_;
+    std::string out_header_;
+    std::vector<boost::asio::const_buffer> out_bufs_;
+    std::size_t poffset_;
+    std::size_t psize_;
+    uint16_t dport_;
+    std::unique_ptr<UDPFrags> frags_;
+    std::array<char, 16> tcp_inbuf_;
 };
 
 class ClientListener : boost::noncopyable

@@ -179,8 +179,8 @@ private:
     std::unordered_map<T*, std::shared_ptr<T>> hash_[2];
 };
 
-static std::unique_ptr<ephConnTracker<SocksClient>> conntracker_hs;
-static std::unique_ptr<ephConnTracker<SocksClient>> conntracker_bindlisten;
+static std::unique_ptr<ephConnTracker<SocksInit>> conntracker_hs;
+static std::unique_ptr<ephConnTracker<SocksInit>> conntracker_bindlisten;
 
 template <typename T>
 class connTracker : boost::noncopyable
@@ -226,7 +226,7 @@ private:
 
 static connTracker<SocksClient> conntracker_connect(SCT_CONNECT);
 static connTracker<SocksClient> conntracker_bind(SCT_BIND);
-static connTracker<SocksClient> conntracker_udp(SCT_UDP);
+static connTracker<SocksUDP> conntracker_udp(SCT_UDP);
 
 #ifdef USE_SPLICE
 static std::unordered_set<SocksClient*> cpipe_hasdata;
@@ -245,9 +245,9 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
     cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
     rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
 #endif
-    conntracker_hs = nk::make_unique<ephConnTracker<SocksClient>>
+    conntracker_hs = nk::make_unique<ephConnTracker<SocksInit>>
         (io_service, hs_secs);
-    conntracker_bindlisten = nk::make_unique<ephConnTracker<SocksClient>>
+    conntracker_bindlisten = nk::make_unique<ephConnTracker<SocksInit>>
         (io_service, bindlisten_secs);
 }
 
@@ -311,8 +311,8 @@ private:
 static std::unique_ptr<BindPortAssigner> BPA;
 static std::unique_ptr<BindPortAssigner> UPA;
 
-SocksClient::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
-                                      boost::asio::ip::tcp::endpoint lep)
+SocksInit::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
+                                    boost::asio::ip::tcp::endpoint lep)
         : acceptor_(io_service), local_endpoint_(lep)
 {
     boost::system::error_code ec;
@@ -333,7 +333,7 @@ SocksClient::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
         throw std::runtime_error("listen failed");
 }
 
-SocksClient::BoundSocket::~BoundSocket()
+SocksInit::BoundSocket::~BoundSocket()
 {
     assert(BPA);
     BPA->release_port(local_endpoint_.port());
@@ -374,10 +374,59 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
 
 static std::atomic<std::size_t> socks_alive_count;
 
+static void print_destructor_logentry(const std::string &host, uint16_t port)
+{
+    std::cout << "Connection to " << host << ":" << port
+              << " DESTRUCTED (total: ";
+    if (conntracker_hs)
+        std::cout << conntracker_hs->size() << ",";
+    else
+        std::cout << "X,";
+    if (conntracker_bindlisten)
+        std::cout << conntracker_bindlisten->size() << "|";
+    else
+        std::cout << "X|";
+    std::cout << conntracker_connect.size() << ","
+              << conntracker_bind.size() << ","
+              << conntracker_udp.size()
+              << " / " << socks_alive_count << ")" << std::endl;
+}
+
+SocksInit::SocksInit(ba::io_service &io_service,
+                     ba::ip::tcp::socket client_socket)
+        : terminated_(false), ibSiz_(0),
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
+          client_socket_(std::move(client_socket)),
+          remote_socket_(io_service), client_type_(SCT_INIT)
+{
+    ++socks_alive_count;
+    client_socket_.non_blocking(true);
+    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+}
+
+SocksInit::~SocksInit()
+{
+    if (terminated_)
+        untrack();
+    --socks_alive_count;
+    if (g_verbose_logs)
+        print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
+                                  : dst_address_.to_string(),
+                                  dst_port_);
+}
+
 SocksClient::SocksClient(ba::io_service &io_service,
-                         ba::ip::tcp::socket socket)
-        : client_socket_(std::move(socket)), remote_socket_(io_service),
-          terminated_(false), client_type_(SCT_INIT),
+                         boost::asio::ip::tcp::socket client_socket,
+                         boost::asio::ip::tcp::socket remote_socket,
+                         boost::asio::ip::address dst_address,
+                         uint16_t dst_port,
+                         SocksClientType client_type,
+                         std::string dst_hostname)
+        : terminated_(false),
+          dst_hostname_(dst_hostname), dst_address_(dst_address),
+          client_socket_(std::move(client_socket)),
+          remote_socket_(std::move(remote_socket)),
+          client_type_(client_type), dst_port_(dst_port),
 #ifdef USE_SPLICE
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
@@ -385,9 +434,19 @@ SocksClient::SocksClient(ba::io_service &io_service,
 #endif
 {
     ++socks_alive_count;
-    client_socket_.non_blocking(true);
-    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
-    handshake_ = nk::make_unique<S5Handshake>();
+    if (client_type_ == SCT_CONNECT || client_type_ == SCT_BIND) {
+        strand_C->post([this]() { tcp_client_socket_read(); });
+        strand_R->post([this]() { tcp_remote_socket_read(); });
+    } else {
+        std::string ct;
+        switch (client_type_) {
+            case SCT_UDP: ct = "UDP"; break;
+            case SCT_INIT: ct = "INIT"; break;
+            case SCT_INIT_BIND: ct = "INIT_BIND"; break;
+            default: ct = "unknown"; break;
+        }
+        std::cerr << "SocksClient: Bad client_type_ == " << ct << "!\n";
+    }
 }
 
 SocksClient::~SocksClient()
@@ -396,24 +455,10 @@ SocksClient::~SocksClient()
         untrack();
     --socks_alive_count;
 
-    if (g_verbose_logs) {
-        std::cout << "Connection to "
-                  << (dst_hostname_.size() ? dst_hostname_
-                                           : dst_address_.to_string())
-                  << ":" << dst_port_ << " DESTRUCTED (total: ";
-        if (conntracker_hs)
-            std::cout << conntracker_hs->size() << ",";
-        else
-            std::cout << "X,";
-        if (conntracker_bindlisten)
-            std::cout << conntracker_bindlisten->size() << "|";
-        else
-            std::cout << "X|";
-        std::cout << conntracker_connect.size() << ","
-                  << conntracker_bind.size() << ","
-                  << conntracker_udp.size()
-                  << " / " << socks_alive_count << ")" << std::endl;
-    }
+    if (g_verbose_logs)
+        print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
+                                  : dst_address_.to_string(),
+                                  dst_port_);
 }
 
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
@@ -421,6 +466,15 @@ static inline void tcp_socket_close(ba::ip::tcp::socket &s)
     boost::system::error_code ec;
     s.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
     s.close(ec);
+}
+
+static inline void close_cr_socket(ba::ip::tcp::socket &s)
+{
+    if (!s.is_open())
+        return;
+    boost::system::error_code ec;
+    s.cancel(ec);
+    tcp_socket_close(s);
 }
 
 #ifdef USE_SPLICE
@@ -498,46 +552,16 @@ bool SocksClient::close_remote_socket()
                       remote_socket_, client_socket_);
 }
 #else
-static inline void close_cr_socket(ba::ip::tcp::socket &s)
-{
-    if (!s.is_open())
-        return;
-    boost::system::error_code ec;
-    s.cancel(ec);
-    tcp_socket_close(s);
-}
-
 bool SocksClient::close_client_socket() { close_cr_socket(client_socket_); return false; }
 bool SocksClient::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
 #endif
 
-void SocksClient::close_bind_listen_socket()
-{
-    if (!handshake_ || !handshake_->bound_)
-        return;
-    handshake_->bound_.reset();
-}
-
-void SocksClient::close_udp_sockets()
-{
-    if (!udp_)
-        return;
-    assert(UPA);
-    auto udp_c_port = udp_->client_socket_.local_endpoint().port();
-    auto udp_r_port = udp_->remote_socket_.local_endpoint().port();
-    udp_.reset();
-    UPA->release_port(udp_c_port);
-    UPA->release_port(udp_r_port);
-}
-
 void SocksClient::untrack()
 {
     switch (client_type_) {
-    case SCT_INIT: conntracker_hs->remove(this); break;
-    case SCT_INIT_BIND: conntracker_bindlisten->remove(this); break;
     case SCT_CONNECT: conntracker_connect.remove(this); break;
     case SCT_BIND: conntracker_bind.remove(this); break;
-    case SCT_UDP: conntracker_udp.remove(this); break;
+    default: std::cerr << "SocksClient::untrack(): bad client_type_\n";
     }
 }
 
@@ -545,8 +569,6 @@ void SocksClient::cancel()
 {
     close_remote_socket();
     close_client_socket();
-    close_bind_listen_socket();
-    close_udp_sockets();
 }
 
 void SocksClient::terminate()
@@ -562,12 +584,35 @@ void SocksClient::terminate()
     //           << ":" << dst_port_ << " called terminate()." << std::endl;
 }
 
-void SocksClient::read_greet()
+void SocksInit::untrack()
+{
+    switch (client_type_) {
+    case SCT_INIT: conntracker_hs->remove(this); break;
+    case SCT_INIT_BIND: conntracker_bindlisten->remove(this); break;
+    default: std::cerr << "SocksInit::untrack(): bad client_type_\n";
+    }
+}
+
+void SocksInit::cancel()
+{
+    close_cr_socket(client_socket_);
+    close_cr_socket(remote_socket_);
+}
+
+void SocksInit::terminate()
+{
+    if (terminated_)
+        return;
+    terminated_ = true;
+    cancel();
+    untrack();
+}
+
+void SocksInit::read_greet()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(handshake_->inBytes_.data() + handshake_->ibSiz_,
-                    handshake_->inBytes_.size() - handshake_->ibSiz_),
+        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
          strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -583,7 +628,7 @@ void SocksClient::read_greet()
              }
              if (!bytes_xferred)
                  return;
-             handshake_->ibSiz_ += bytes_xferred;
+             ibSiz_ += bytes_xferred;
              auto x = process_greet();
              if (x) {
                  if (*x)
@@ -597,12 +642,11 @@ void SocksClient::read_greet()
          }));
 }
 
-void SocksClient::read_conn_request()
+void SocksInit::read_conn_request()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(handshake_->inBytes_.data() + handshake_->ibSiz_,
-                    handshake_->inBytes_.size() - handshake_->ibSiz_),
+        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
          strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -618,7 +662,7 @@ void SocksClient::read_conn_request()
              }
              if (!bytes_xferred)
                  return;
-             handshake_->ibSiz_ += bytes_xferred;
+             ibSiz_ += bytes_xferred;
              auto rc = process_connrq();
              if (rc) {
                  // On failure we will terminate via the send_reply() response.
@@ -633,7 +677,7 @@ void SocksClient::read_conn_request()
 static const char reply_greetz[2] = {'\x5','\x0'};
 
 // Returns false if the object needs to be destroyed by the caller.
-boost::optional<bool> SocksClient::process_greet()
+boost::optional<bool> SocksInit::process_greet()
 {
     if (terminated_)
         return false;
@@ -641,37 +685,37 @@ boost::optional<bool> SocksClient::process_greet()
     size_t poff = 0;
 
     // We only accept Socks5.
-    if (poff == handshake_->ibSiz_)
+    if (poff == ibSiz_)
         return boost::optional<bool>();
-    if (handshake_->inBytes_[poff] != 0x05)
+    if (inBytes_[poff] != 0x05)
         return false;
     ++poff;
 
     // Number of authentication methods supported.
-    if (poff == handshake_->ibSiz_)
+    if (poff == ibSiz_)
         return boost::optional<bool>();
-    size_t nauth = static_cast<uint8_t>(handshake_->inBytes_[poff]);
+    size_t nauth = static_cast<uint8_t>(inBytes_[poff]);
     ++poff;
 
     // Types of authentication methods supported.
     size_t aendsiz = nauth + 2;
     // If buffer is too long, kill the connection.  If it's not long enough,
     // wait for more data.  If it's just right, proceed.
-    if (handshake_->ibSiz_ > aendsiz)
+    if (ibSiz_ > aendsiz)
         return false;
-    if (handshake_->ibSiz_ < aendsiz)
+    if (ibSiz_ < aendsiz)
         return boost::optional<bool>();
     for (;poff < aendsiz; ++poff) {
-        uint8_t atype = static_cast<uint8_t>(handshake_->inBytes_[poff]);
+        uint8_t atype = static_cast<uint8_t>(inBytes_[poff]);
         if (atype == 0x0)
-            handshake_->auth_none_ = true;
+            auth_none_ = true;
         if (atype == 0x1)
-            handshake_->auth_gssapi_ = true;
+            auth_gssapi_ = true;
         if (atype == 0x2)
-            handshake_->auth_unpw_ = true;
+            auth_unpw_ = true;
     }
-    handshake_->ibSiz_ = 0;
-    if (!handshake_->auth_none_)
+    ibSiz_ = 0;
+    if (!auth_none_)
         return false;
 
     auto sfd = shared_from_this();
@@ -692,7 +736,7 @@ boost::optional<bool> SocksClient::process_greet()
 }
 
 // Returns false if the object needs to be destroyed by the caller.
-boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
+boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
 {
     if (terminated_)
         return RplFail;
@@ -700,60 +744,60 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
     size_t poff = 0;
 
     // We only accept Socks5.
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    if (handshake_->inBytes_[poff] != 0x05)
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    if (inBytes_[poff] != 0x05)
         return RplFail;
     ++poff;
 
     // Client command.
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    switch (static_cast<uint8_t>(handshake_->inBytes_[poff])) {
-    case 0x1: handshake_->cmd_code_ = CmdTCPConnect; break;
-    case 0x2: handshake_->cmd_code_ = CmdTCPBind; break;
-    case 0x3: handshake_->cmd_code_ = CmdUDP; break;
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    case 0x1: cmd_code_ = CmdTCPConnect; break;
+    case 0x2: cmd_code_ = CmdTCPBind; break;
+    case 0x3: cmd_code_ = CmdUDP; break;
     default: return RplCmdNotSupp;
     }
     ++poff;
 
     // Must be zero (reserved).
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    if (handshake_->inBytes_[poff] != 0x0)
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    if (inBytes_[poff] != 0x0)
         return RplFail;
     ++poff;
 
     // Address type.
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    switch (static_cast<uint8_t>(handshake_->inBytes_[poff])) {
-    case 0x1: handshake_->addr_type_ = AddrIPv4; break;
-    case 0x3: handshake_->addr_type_ = AddrDNS; break;
-    case 0x4: handshake_->addr_type_ = AddrIPv6; break;
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    case 0x1: addr_type_ = AddrIPv4; break;
+    case 0x3: addr_type_ = AddrDNS; break;
+    case 0x4: addr_type_ = AddrIPv6; break;
     default: return RplAddrNotSupp;
     }
     ++poff;
 
     // Destination address.
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    switch (handshake_->addr_type_) {
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    switch (addr_type_) {
         case AddrIPv4: {
-            // handshake_->ibSiz_ = 10, poff = 4
-            if (handshake_->ibSiz_ - poff != 6)
+            // ibSiz_ = 10, poff = 4
+            if (ibSiz_ - poff != 6)
                 return RplFail;
             ba::ip::address_v4::bytes_type v4o;
-            memcpy(v4o.data(), handshake_->inBytes_.data() + poff, 4);
+            memcpy(v4o.data(), inBytes_.data() + poff, 4);
             dst_address_ = ba::ip::address_v4(v4o);
             poff += 4;
             break;
         }
         case AddrIPv6: {
-            if (handshake_->ibSiz_ - poff != 18)
+            if (ibSiz_ - poff != 18)
                 return RplFail;
             ba::ip::address_v6::bytes_type v6o;
-            memcpy(v6o.data(), handshake_->inBytes_.data() + poff, 16);
+            memcpy(v6o.data(), inBytes_.data() + poff, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff += 16;
             if (g_disable_ipv6)
@@ -761,43 +805,42 @@ boost::optional<SocksClient::ReplyCode> SocksClient::process_connrq()
             break;
         }
         case AddrDNS: {
-            size_t dnssiz = static_cast<uint8_t>(handshake_->inBytes_[poff]);
+            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff]);
             ++poff;
-            if (handshake_->ibSiz_ - poff != dnssiz + 2)
+            if (ibSiz_ - poff != dnssiz + 2)
                 return RplFail;
-            dst_hostname_ = std::string(handshake_->inBytes_.data() + poff,
-                                        dnssiz);
+            dst_hostname_ = std::string(inBytes_.data() + poff, dnssiz);
             poff += dnssiz;
             break;
         }
         default:
             std::cerr << "reply_greet(): unknown address type: "
-                      << handshake_->addr_type_ << "\n";
+                      << addr_type_ << "\n";
             return RplAddrNotSupp;
     }
 
     // Destination port.
-    if (poff == handshake_->ibSiz_)
-        return boost::optional<SocksClient::ReplyCode>();
-    if (handshake_->ibSiz_ - poff != 2)
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    if (ibSiz_ - poff != 2)
         return RplFail;
     uint16_t tmp;
-    memcpy(&tmp, handshake_->inBytes_.data() + poff, 2);
+    memcpy(&tmp, inBytes_.data() + poff, 2);
     dst_port_ = ntohs(tmp);
-    handshake_->ibSiz_ = 0;
+    ibSiz_ = 0;
     dispatch_connrq();
     return RplSuccess;
 }
 
-void SocksClient::dispatch_connrq()
+void SocksInit::dispatch_connrq()
 {
     if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
         ba::ip::tcp::resolver::query query
             (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
         auto sfd = shared_from_this();
         try {
-            handshake_->init_resolver(client_socket_.get_io_service());
-            handshake_->tcp_resolver_->async_resolve
+            init_resolver(client_socket_.get_io_service());
+            tcp_resolver_->async_resolve
                 (query, strand_C->wrap(
                  [this, sfd](const boost::system::error_code &ec,
                              ba::ip::tcp::resolver::iterator it)
@@ -842,7 +885,7 @@ void SocksClient::dispatch_connrq()
         return;
     }
     // The name has been resolved to an address or we have an address.
-    switch (handshake_->cmd_code_) {
+    switch (cmd_code_) {
     case CmdTCPConnect: dispatch_tcp_connect(); break;
     case CmdTCPBind: dispatch_tcp_bind(); break;
     case CmdUDP: dispatch_udp(); break;
@@ -853,7 +896,7 @@ void SocksClient::dispatch_connrq()
 static const auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
 static const auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
 
-bool SocksClient::is_dst_denied(const ba::ip::address &addr) const
+static bool is_dst_denied(const ba::ip::address &addr)
 {
     // Deny proxy attempts to the local loopback addresses.
     if (addr == loopback_addr_v6 ||
@@ -869,7 +912,7 @@ bool SocksClient::is_dst_denied(const ba::ip::address &addr) const
     return false;
 }
 
-void SocksClient::dispatch_tcp_connect()
+void SocksInit::dispatch_tcp_connect()
 {
     if (is_dst_denied(dst_address_)) {
         send_reply(RplDeny);
@@ -893,26 +936,17 @@ void SocksClient::dispatch_tcp_connect()
                            << client_socket_.remote_endpoint().address()
                            << " " << remote_socket_.local_endpoint().address()
                            << " -> "
-                           << (handshake_->addr_type_ != AddrDNS
+                           << (addr_type_ != AddrDNS
                                ? dst_address_.to_string() : dst_hostname_)
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
-             // Now we have a live socket, so we need to inform the client
-             // and then begin proxying data.
-             try {
-                 conntracker_connect.store(conntracker_hs->fetch(this));
-             } catch (const std::out_of_range &) {
-                 std::cerr << "conntracker /hs->connect/ failed\n";
-                 send_reply(RplFail);
-                 return;
-             }
              send_reply(RplSuccess);
          }));
 }
 
-SocksClient::ReplyCode
-SocksClient::errorToReplyCode(const boost::system::error_code &ec)
+SocksInit::ReplyCode
+SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 {
     ReplyCode rc(RplConnRefused);
     if (ec == ba::error::access_denied ||
@@ -1426,7 +1460,7 @@ void SocksClient::tcp_remote_socket_read()
          }));
 }
 
-bool SocksClient::is_bind_client_allowed() const
+bool SocksInit::is_bind_client_allowed() const
 {
     auto laddr = client_socket_.remote_endpoint().address();
     for (const auto &i: g_client_bind_allow_masks) {
@@ -1438,7 +1472,7 @@ bool SocksClient::is_bind_client_allowed() const
     return false;
 }
 
-bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
+bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
 {
     int tries = 0;
     while (true) {
@@ -1448,7 +1482,7 @@ bool SocksClient::create_bind_socket(ba::ip::tcp::endpoint ep)
             break;
         }
         try {
-            handshake_->bound_ = nk::make_unique<BoundSocket>(io_service, ep);
+            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
         } catch (const std::runtime_error &e) {
             std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
             break;
@@ -1471,7 +1505,7 @@ bool SocksClient::matches_dst(const boost::asio::ip::address &addr,
     return true;
 }
 
-void SocksClient::dispatch_tcp_bind()
+void SocksInit::dispatch_tcp_bind()
 {
     if (g_disable_bind) {
         send_reply(RplDeny);
@@ -1514,7 +1548,7 @@ void SocksClient::dispatch_tcp_bind()
     client_type_ = SCT_INIT_BIND;
 
     auto sfd = shared_from_this();
-    handshake_->bound_->acceptor_.async_accept
+    bound_->acceptor_.async_accept
         (remote_socket_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
@@ -1524,19 +1558,13 @@ void SocksClient::dispatch_tcp_bind()
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
-             try {
-                 conntracker_bind.store(conntracker_bindlisten->fetch(this));
-             } catch (const std::out_of_range &) {
-                 std::cerr << "conntracker /bindlisten->bind/ failed\n";
-                 send_reply(RplFail);
-                 return;
-             }
+             bound_.reset();
              send_reply(RplSuccess);
          }));
     send_reply(RplSuccess);
 }
 
-bool SocksClient::is_udp_client_allowed(boost::asio::ip::address laddr) const
+bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
 {
     for (const auto &i: g_client_udp_allow_masks) {
         auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
@@ -1548,7 +1576,7 @@ bool SocksClient::is_udp_client_allowed(boost::asio::ip::address laddr) const
 }
 
 // DST.ADDR and DST.PORT are ignored.
-void SocksClient::dispatch_udp()
+void SocksInit::dispatch_udp()
 {
     if (g_disable_udp) {
         send_reply(RplDeny);
@@ -1583,40 +1611,210 @@ void SocksClient::dispatch_udp()
         return;
     }
 
-    try {
-        udp_ = nk::make_unique<UDPAssoc>
-            (io_service, udp_client_ep, udp_remote_ep,
-             ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
-    } catch (const boost::system::system_error &) {
-        UPA->release_port(udp_local_port);
-        UPA->release_port(udp_remote_port);
-        send_reply(RplFail);
-        return;
+    conntracker_hs->remove(this);
+    conntracker_udp.store(std::make_shared<SocksUDP>
+         (io_service, std::move(client_socket_), udp_client_ep, udp_remote_ep,
+          ba::ip::udp::endpoint(client_ep.address(), client_ep.port())));
+}
+
+static void send_reply_binds(std::string &outbuf, ba::ip::tcp::endpoint ep)
+{
+    auto bnd_addr = ep.address();
+    if (bnd_addr.is_v4()) {
+        auto v4b = bnd_addr.to_v4().to_bytes();
+        outbuf.append(1, 0x01);
+        for (auto &i: v4b)
+            outbuf.append(1, i);
+    } else {
+        auto v6b = bnd_addr.to_v6().to_bytes();
+        outbuf.append(1, 0x04);
+        for (auto &i: v6b)
+            outbuf.append(1, i);
     }
+    union {
+        uint16_t p;
+        char b[2];
+    } portu;
+    portu.p = htons(ep.port());
+    outbuf.append(1, portu.b[0]);
+    outbuf.append(1, portu.b[1]);
+}
 
-    try {
-        conntracker_udp.store(conntracker_hs->fetch(this));
-    } catch (const std::out_of_range &) {
-        std::cerr << "conntracker /hs->udp/ failed\n";
-        send_reply(RplFail);
-        return;
+static const char * const replyCodeString[] = {
+    "Success",
+    "Fail",
+    "Deny",
+    "NetUnreach",
+    "HostUnreach",
+    "ConnRefused",
+    "TTLExpired",
+    "RplCmdNotSupp",
+    "RplAddrNotSupp",
+};
+
+void SocksInit::send_reply(ReplyCode replycode)
+{
+    outbuf_.clear();
+    outbuf_.append(1, 0x05);
+    outbuf_.append(1, replycode);
+    outbuf_.append(1, 0x00);
+    if (replycode == RplSuccess) {
+        switch (cmd_code_) {
+        case CmdTCPConnect:
+            send_reply_binds(outbuf_, remote_socket_.local_endpoint());
+            break;
+        case CmdTCPBind:
+            if (bound_)
+                send_reply_binds(outbuf_, bound_->local_endpoint_);
+            else
+                send_reply_binds(outbuf_, remote_socket_.remote_endpoint());
+            break;
+        case CmdUDP:
+            throw std::logic_error
+                ("Invalid client_type_ == SCT_UDP in send_reply().\n");
+        default:
+            throw std::logic_error
+                ("Invalid client_type_ == unknown in send_reply().\n");
+        }
     }
+    sentReplyType_ = replycode;
+    auto sfd = shared_from_this();
+    ba::async_write
+        (client_socket_,
+         ba::buffer(outbuf_, outbuf_.size()),
+         strand_C->wrap(
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec || sentReplyType_ != RplSuccess) {
+                 std::cout << "REJECT @"
+                     << client_socket_.remote_endpoint().address()
+                     << " (none) -> "
+                     << (addr_type_ != AddrDNS
+                         ? dst_address_.to_string() : dst_hostname_)
+                     << ":" << dst_port_
+                     << " [" << replyCodeString[sentReplyType_]
+                     << "]" << std::endl;
+                 terminate();
+                 return;
+             }
+             // XXX: Would be ideal to do this before the response is sent.
+             switch (cmd_code_) {
+             case CmdTCPConnect:
+                 conntracker_hs->remove(this);
+                 conntracker_connect.store
+                     (std::make_shared<SocksClient>
+                      (io_service,
+                       std::move(client_socket_), std::move(remote_socket_),
+                       std::move(dst_address_), dst_port_, SCT_CONNECT,
+                       std::move(dst_hostname_)));
+                 break;
+             case CmdTCPBind:
+                 if (bound_)
+                     return;
+                 conntracker_bindlisten->remove(this);
+                 conntracker_bind.store
+                     (std::make_shared<SocksClient>
+                      (io_service,
+                       std::move(client_socket_),
+                       std::move(remote_socket_),
+                       std::move(dst_address_), dst_port_, SCT_BIND,
+                       std::move(dst_hostname_)));
+                 break;
+             default: std::cerr << "send_reply: unexpected client_type!\n";
+             }
+         }));
+}
 
-    udp_tcp_socket_read();
-    udp_client_socket_read();
-    udp_remote_socket_read();
+SocksUDP::SocksUDP(ba::io_service &io_service,
+                   ba::ip::tcp::socket tcp_client_socket,
+                   ba::ip::udp::endpoint client_ep,
+                   ba::ip::udp::endpoint remote_ep,
+                   ba::ip::udp::endpoint client_remote_ep)
+        : terminated_(false), tcp_client_socket_(std::move(tcp_client_socket)),
+          client_endpoint_(client_ep), remote_endpoint_(remote_ep),
+          client_remote_endpoint_(client_remote_ep),
+          client_socket_(io_service, client_ep),
+          remote_socket_(io_service, remote_ep),
+          resolver_(io_service)
+{
+    ++socks_alive_count;
+    start();
+}
 
-    send_reply(RplSuccess);
+SocksUDP::~SocksUDP()
+{
+    if (!terminated_)
+        untrack();
+    --socks_alive_count;
+    if (g_verbose_logs)
+        print_destructor_logentry("(n/a)", 0);
+}
+
+void SocksUDP::untrack()
+{
+    conntracker_udp.remove(this);
+}
+
+void SocksUDP::cancel()
+{
+    close_udp_sockets();
+}
+
+void SocksUDP::terminate()
+{
+    if (terminated_)
+        return;
+    terminated_ = true;
+    cancel();
+    untrack();
+}
+
+void SocksUDP::start()
+{
+    out_header_.append(1, 0x05);
+    out_header_.append(1, SocksInit::ReplyCode::RplSuccess);
+    out_header_.append(1, 0x00);
+    auto ep = client_socket_.local_endpoint();
+    send_reply_binds(out_header_,
+                     ba::ip::tcp::endpoint(ep.address(), ep.port()));
+    auto sfd = shared_from_this();
+    ba::async_write
+        (tcp_client_socket_, ba::buffer(out_header_, out_header_.size()),
+         strand_C->wrap(
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             if (ec) {
+                 std::cout << "ERROR @"
+                     << tcp_client_socket_.remote_endpoint().address()
+                     << " udp -> udp [when sending success reply]"
+                     << std::endl;
+                 terminate();
+                 return;
+             }
+             out_header_.clear();
+             udp_tcp_socket_read();
+             udp_client_socket_read();
+             udp_remote_socket_read();
+         }));
+}
+
+void SocksUDP::close_udp_sockets()
+{
+    assert(UPA);
+    UPA->release_port(client_socket_.local_endpoint().port());
+    UPA->release_port(remote_socket_.local_endpoint().port());
 }
 
 // Listen for data on client_socket_.  If we get EOF, then terminate the
-// entire SocksClient.
-void SocksClient::udp_tcp_socket_read()
+// entire SocksUDP.
+void SocksUDP::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
-    client_socket_.async_read_some
-        (ba::buffer(udp_->tcp_inbuf_.data(),
-                    udp_->tcp_inbuf_.size()), strand_C->wrap(
+    tcp_client_socket_.async_read_some
+        (ba::buffer(tcp_inbuf_.data(),
+                    tcp_inbuf_.size()), strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1633,14 +1831,14 @@ void SocksClient::udp_tcp_socket_read()
          }));
 }
 
-void SocksClient::udp_client_socket_read()
+void SocksUDP::udp_client_socket_read()
 {
-    udp_->inbuf_.clear();
-    udp_->inbuf_.resize(UDP_BUFSIZE);
+    inbuf_.clear();
+    inbuf_.resize(UDP_BUFSIZE);
     auto sfd = shared_from_this();
-    udp_->client_socket_.async_receive_from
-        (ba::buffer(udp_->inbuf_),
-         udp_->csender_endpoint_, strand_C->wrap(
+    client_socket_.async_receive_from
+        (ba::buffer(inbuf_),
+         csender_endpoint_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1653,22 +1851,22 @@ void SocksClient::udp_client_socket_read()
                  }
                  return;
              }
-             if (udp_->csender_endpoint_ == udp_->client_remote_endpoint_) {
+             if (csender_endpoint_ == client_remote_endpoint_) {
                  std::size_t headersiz = 4;
                  if (bytes_xferred < 4)
                      goto nosend;
-                 if (udp_->inbuf_[0] != '\0')
+                 if (inbuf_[0] != '\0')
                      goto nosend;
-                 if (udp_->inbuf_[1] != '\0')
+                 if (inbuf_[1] != '\0')
                      goto nosend;
-                 auto fragn = udp_->inbuf_[2];
+                 auto fragn = inbuf_[2];
                  if (fragn != '\0') {
-                     if (!udp_->frags_)
-                         udp_->frags_ = nk::make_unique<UDPFrags>(io_service);
-                     if (fragn > 127 && !udp_->frags_->buf_.size())
+                     if (!frags_)
+                         frags_ = nk::make_unique<UDPFrags>(io_service);
+                     if (fragn > 127 && !frags_->buf_.size())
                          fragn = '\0';
                  }
-                 auto atyp = udp_->inbuf_[3];
+                 auto atyp = inbuf_[3];
                  ba::ip::address daddr;
                  std::string dnsname;
                  switch (atyp) {
@@ -1676,20 +1874,20 @@ void SocksClient::udp_client_socket_read()
                          if (bytes_xferred < 10)
                              goto nosend;
                          ba::ip::address_v4::bytes_type v4o;
-                         memcpy(v4o.data(), udp_->inbuf_.data() + headersiz, 4);
-                         udp_->daddr_ = ba::ip::address_v4(v4o);
+                         memcpy(v4o.data(), inbuf_.data() + headersiz, 4);
+                         daddr_ = ba::ip::address_v4(v4o);
                          headersiz += 4;
                          break;
                      }
                      case 3: { // DNS
                          if (bytes_xferred < 8)
                              goto nosend;
-                         size_t dnssiz = udp_->inbuf_[headersiz++];
+                         size_t dnssiz = inbuf_[headersiz++];
                          if (bytes_xferred - headersiz < dnssiz + 2)
                              goto nosend;
                          dnsname = std::string
                              (reinterpret_cast<const  char *>
-                              (udp_->inbuf_.data() + headersiz), dnssiz);
+                              (inbuf_.data() + headersiz), dnssiz);
                          headersiz += dnssiz;
                          break;
                      }
@@ -1697,18 +1895,18 @@ void SocksClient::udp_client_socket_read()
                          if (bytes_xferred < 22)
                              goto nosend;
                          ba::ip::address_v6::bytes_type v6o;
-                         memcpy(v6o.data(), udp_->inbuf_.data() + headersiz, 16);
-                         udp_->daddr_ = ba::ip::address_v6(v6o);
+                         memcpy(v6o.data(), inbuf_.data() + headersiz, 16);
+                         daddr_ = ba::ip::address_v6(v6o);
                          headersiz += 16;
                          break;
                      }
                      default: goto nosend; break;
                  }
-                 memcpy(&udp_->dport_, udp_->inbuf_.data() + headersiz, 2);
-                 udp_->dport_ = ntohs(udp_->dport_);
+                 memcpy(&dport_, inbuf_.data() + headersiz, 2);
+                 dport_ = ntohs(dport_);
                  headersiz += 2;
-                 udp_->poffset_ = headersiz;
-                 udp_->psize_ = bytes_xferred - headersiz;
+                 poffset_ = headersiz;
+                 psize_ = bytes_xferred - headersiz;
 
                  if (fragn != '\0' && udp_frag_handle(fragn, atyp, dnsname))
                      return;
@@ -1724,49 +1922,49 @@ void SocksClient::udp_client_socket_read()
          }));
 }
 
-bool SocksClient::udp_frags_different(uint8_t fragn, uint8_t atyp,
+bool SocksUDP::udp_frags_different(uint8_t fragn, uint8_t atyp,
                                       const std::string &dnsname)
 {
-    if (fragn <= udp_->frags_->lastn_)
+    if (fragn <= frags_->lastn_)
         return true;
-    if (udp_->dport_ != udp_->frags_->port_)
+    if (dport_ != frags_->port_)
         return true;
     if (atyp != 3) {
-        if (udp_->daddr_ != udp_->frags_->addr_)
+        if (daddr_ != frags_->addr_)
             return true;
     } else { // DNS
-        if (dnsname != udp_->frags_->dns_)
+        if (dnsname != frags_->dns_)
             return true;
     }
     return false;
 }
 
 // If true then the caller doesn't need to proceed.
-bool SocksClient::udp_frag_handle(uint8_t fragn, uint8_t atyp,
+bool SocksUDP::udp_frag_handle(uint8_t fragn, uint8_t atyp,
                                   const std::string &dnsname)
 {
-    const bool new_frags(udp_->frags_->buf_.size() == 0);
+    const bool new_frags(frags_->buf_.size() == 0);
     const bool send_frags(fragn > 127);
     if (new_frags || udp_frags_different(fragn, atyp, dnsname)) {
-        udp_->frags_->reset();
-        udp_->frags_->lastn_ = fragn;
-        udp_->frags_->port_ = udp_->dport_;
+        frags_->reset();
+        frags_->lastn_ = fragn;
+        frags_->port_ = dport_;
         if (atyp != 3)
-            udp_->frags_->addr_ = udp_->daddr_;
+            frags_->addr_ = daddr_;
         else // DNS
-            udp_->frags_->dns_ = dnsname;
+            frags_->dns_ = dnsname;
     }
-    udp_->frags_->buf_.insert
-        (udp_->frags_->buf_.end(),
-         udp_->inbuf_.begin() + udp_->poffset_,
-         udp_->inbuf_.end());
+    frags_->buf_.insert
+        (frags_->buf_.end(),
+         inbuf_.begin() + poffset_,
+         inbuf_.end());
     if (send_frags) {
-        udp_->inbuf_ = std::move(udp_->frags_->buf_);
-        udp_->poffset_ = 0;
-        udp_->psize_ = udp_->inbuf_.size();
-        udp_->frags_->reset();
+        inbuf_ = std::move(frags_->buf_);
+        poffset_ = 0;
+        psize_ = inbuf_.size();
+        frags_->reset();
     } else {
-        udp_->frags_->reaper_start();
+        frags_->reaper_start();
         udp_client_socket_read();
         return true;
     }
@@ -1774,16 +1972,16 @@ bool SocksClient::udp_frag_handle(uint8_t fragn, uint8_t atyp,
 }
 
 // Forward it to the remote socket.
-void SocksClient::udp_proxy_packet()
+void SocksUDP::udp_proxy_packet()
 {
-    if (is_dst_denied(udp_->daddr_)) {
+    if (is_dst_denied(daddr_)) {
         udp_client_socket_read();
         return;
     }
     auto sfd = shared_from_this();
-    udp_->remote_socket_.async_send_to
-        (ba::buffer(udp_->inbuf_.data() + udp_->poffset_, udp_->psize_),
-         ba::ip::udp::endpoint(udp_->daddr_, udp_->dport_), 0, strand_C->wrap(
+    remote_socket_.async_send_to
+        (ba::buffer(inbuf_.data() + poffset_, psize_),
+         ba::ip::udp::endpoint(daddr_, dport_), 0, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1791,13 +1989,13 @@ void SocksClient::udp_proxy_packet()
          }));
 }
 
-void SocksClient::udp_dns_lookup(const std::string &dnsname)
+void SocksUDP::udp_dns_lookup(const std::string &dnsname)
 {
     ba::ip::udp::resolver::query query
-        (dnsname, boost::lexical_cast<std::string>(udp_->dport_));
+        (dnsname, boost::lexical_cast<std::string>(dport_));
     auto sfd = shared_from_this();
     try {
-        udp_->resolver_.async_resolve
+        resolver_.async_resolve
             (query, strand_C->wrap(
              [this, sfd](const boost::system::error_code &ec,
                          ba::ip::udp::resolver::iterator it)
@@ -1812,7 +2010,7 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
                      bool isv4 = it->endpoint().address().is_v4();
                      if (isv4) {
                          if (g_prefer_ipv4) {
-                             udp_->daddr_ = it->endpoint().address();
+                             daddr_ = it->endpoint().address();
                              udp_proxy_packet();
                              return;
                          }
@@ -1820,7 +2018,7 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
                              fv4 = it;
                      } else {
                          if (!g_prefer_ipv4) {
-                             udp_->daddr_ = it->endpoint().address();
+                             daddr_ = it->endpoint().address();
                              udp_proxy_packet();
                              return;
                          }
@@ -1828,9 +2026,9 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
                              fv6 = it;
                      }
                  }
-                 udp_->daddr_ = g_prefer_ipv4 ? fv4->endpoint().address()
+                 daddr_ = g_prefer_ipv4 ? fv4->endpoint().address()
                                               : fv6->endpoint().address();
-                 if (g_disable_ipv6 && !dst_address_.is_v4()) {
+                 if (g_disable_ipv6 && !daddr_.is_v4()) {
                      udp_client_socket_read();
                      return;
                  }
@@ -1841,16 +2039,16 @@ void SocksClient::udp_dns_lookup(const std::string &dnsname)
     }
 }
 
-void SocksClient::udp_remote_socket_read()
+void SocksUDP::udp_remote_socket_read()
 {
     auto sfd = shared_from_this();
-    udp_->outbuf_.clear();
-    udp_->out_header_.clear();
-    udp_->out_bufs_.clear();
-    udp_->outbuf_.reserve(UDP_BUFSIZE);
-    udp_->remote_socket_.async_receive_from
-        (ba::buffer(udp_->outbuf_),
-         udp_->rsender_endpoint_, strand_C->wrap(
+    outbuf_.clear();
+    out_header_.clear();
+    out_bufs_.clear();
+    outbuf_.reserve(UDP_BUFSIZE);
+    remote_socket_.async_receive_from
+        (ba::buffer(outbuf_),
+         rsender_endpoint_, strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1864,126 +2062,36 @@ void SocksClient::udp_remote_socket_read()
                  return;
              }
              // Attach the header.
-             auto saddr = udp_->rsender_endpoint_.address();
-             uint16_t sport = udp_->rsender_endpoint_.port();
+             auto saddr = rsender_endpoint_.address();
+             uint16_t sport = rsender_endpoint_.port();
              if (saddr.is_v4()) {
-                 udp_->out_header_.append("\0\0\0\x1");
+                 out_header_.append("\0\0\0\x1");
                  auto v4b = saddr.to_v4().to_bytes();
                  for (auto &i: v4b)
-                     udp_->out_header_.append(1, i);
+                     out_header_.append(1, i);
              } else {
-                 udp_->out_header_.append("\0\0\0\x4");
+                 out_header_.append("\0\0\0\x4");
                  auto v6b = saddr.to_v6().to_bytes();
                  for (auto &i: v6b)
-                     udp_->out_header_.append(1, i);
+                     out_header_.append(1, i);
              }
              union {
                  uint16_t p;
                  char b[2];
              } portu;
              portu.p = htons(sport);
-             udp_->out_header_.append(1, portu.b[0]);
-             udp_->out_header_.append(1, portu.b[1]);
+             out_header_.append(1, portu.b[0]);
+             out_header_.append(1, portu.b[1]);
              // Forward it to the client socket.
-             udp_->out_bufs_.push_back(boost::asio::buffer(udp_->out_header_));
-             udp_->out_bufs_.push_back(boost::asio::buffer(udp_->outbuf_));
-             udp_->client_socket_.async_send_to
-                 (udp_->out_bufs_, udp_->client_remote_endpoint_, strand_C->wrap(
+             out_bufs_.push_back(boost::asio::buffer(out_header_));
+             out_bufs_.push_back(boost::asio::buffer(outbuf_));
+             client_socket_.async_send_to
+                 (out_bufs_, client_remote_endpoint_, strand_C->wrap(
                   [this, sfd](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
                   {
                       udp_remote_socket_read();
                   }));
-         }));
-}
-
-void SocksClient::send_reply_binds(ba::ip::tcp::endpoint ep)
-{
-    auto bnd_addr = ep.address();
-    if (bnd_addr.is_v4()) {
-        auto v4b = bnd_addr.to_v4().to_bytes();
-        handshake_->outbuf_.append(1, 0x01);
-        for (auto &i: v4b)
-            handshake_->outbuf_.append(1, i);
-    } else {
-        auto v6b = bnd_addr.to_v6().to_bytes();
-        handshake_->outbuf_.append(1, 0x04);
-        for (auto &i: v6b)
-            handshake_->outbuf_.append(1, i);
-    }
-    union {
-        uint16_t p;
-        char b[2];
-    } portu;
-    portu.p = htons(ep.port());
-    handshake_->outbuf_.append(1, portu.b[0]);
-    handshake_->outbuf_.append(1, portu.b[1]);
-}
-
-static const char * const replyCodeString[] = {
-    "Success",
-    "Fail",
-    "Deny",
-    "NetUnreach",
-    "HostUnreach",
-    "ConnRefused",
-    "TTLExpired",
-    "RplCmdNotSupp",
-    "RplAddrNotSupp",
-};
-
-void SocksClient::send_reply(ReplyCode replycode)
-{
-    handshake_->outbuf_.clear();
-    handshake_->outbuf_.append(1, 0x05);
-    handshake_->outbuf_.append(1, replycode);
-    handshake_->outbuf_.append(1, 0x00);
-    if (replycode == RplSuccess) {
-        switch (client_type_) {
-        case SCT_CONNECT:
-            send_reply_binds(remote_socket_.local_endpoint());
-            break;
-        case SCT_INIT_BIND:
-            send_reply_binds(handshake_->bound_->local_endpoint_);
-            break;
-        case SCT_BIND:
-            send_reply_binds(remote_socket_.remote_endpoint());
-            break;
-        case SCT_UDP: {
-            auto ep = udp_->client_socket_.local_endpoint();
-            send_reply_binds(ba::ip::tcp::endpoint(ep.address(), ep.port()));
-            break;
-        }
-        default:
-            throw std::logic_error("Invalid handshake_->cmd_code_ in send_reply().\n");
-        }
-    }
-    handshake_->sentReplyType_ = replycode;
-    auto sfd = shared_from_this();
-    ba::async_write
-        (client_socket_,
-         ba::buffer(handshake_->outbuf_, handshake_->outbuf_.size()),
-         strand_C->wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
-         {
-             if (ec || handshake_->sentReplyType_ != RplSuccess) {
-                 std::cout << "REJECT @"
-                     << client_socket_.remote_endpoint().address()
-                     << " (none) -> "
-                     << (handshake_->addr_type_ != AddrDNS
-                         ? dst_address_.to_string() : dst_hostname_)
-                     << ":" << dst_port_
-                     << " [" << replyCodeString[handshake_->sentReplyType_]
-                     << "]" << std::endl;
-                 terminate();
-                 return;
-             }
-             handshake_.reset();
-             if (client_type_ == SCT_CONNECT || client_type_ == SCT_BIND) {
-                 strand_C->post([this]() { tcp_client_socket_read(); });
-                 strand_R->post([this]() { tcp_remote_socket_read(); });
-             }
          }));
 }
 
@@ -2005,7 +2113,7 @@ void ClientListener::start_accept()
          [this](const boost::system::error_code &ec)
          {
              if (!ec) {
-                 auto conn = std::make_shared<SocksClient>
+                 auto conn = std::make_shared<SocksInit>
                      (acceptor_.get_io_service(), std::move(socket_));
                  conntracker_hs->store(conn);
                  conn->start();
@@ -2013,4 +2121,3 @@ void ClientListener::start_accept()
              start_accept();
          });
 }
-
