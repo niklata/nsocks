@@ -28,7 +28,7 @@
 
 #include <iostream>
 #include <unordered_map>
-#include <unordered_set>
+#include <forward_list>
 #include <mutex>
 
 #include <unistd.h>
@@ -268,12 +268,13 @@ public:
 };
 
 static connTracker<SocksTCP> conntracker_tcp;
-static connTracker<SocksTCP> conntracker_tcp_splice;
 static connTracker<SocksUDP> conntracker_udp;
 
 #ifdef USE_SPLICE
 static std::atomic<bool> cPipeTimerSet;
 static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
+static std::forward_list<std::weak_ptr<SocksTCP>> cSpliceList;
+static std::forward_list<std::weak_ptr<SocksTCP>> rSpliceList;
 static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
 static std::atomic<bool> rPipeTimerSet;
 #endif
@@ -427,8 +428,7 @@ static void print_destructor_logentry(const std::string &host, uint16_t port)
         std::cout << conntracker_bindlisten->size() << "|";
     else
         std::cout << "X|";
-    std::cout << (conntracker_tcp.size()
-                  + conntracker_tcp_splice.size()) << ","
+    std::cout << conntracker_tcp.size() << ","
               << conntracker_udp.size()
               << " / " << socks_alive_count << ")" << std::endl;
 }
@@ -587,8 +587,7 @@ bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return f
 
 void SocksTCP::untrack()
 {
-    if (!conntracker_tcp.remove(this))
-        conntracker_tcp_splice.remove(this);
+    conntracker_tcp.remove(this);
 }
 
 void SocksTCP::cancel()
@@ -1046,31 +1045,17 @@ static void kickClientPipeTimer()
                     cPipeTimerSet = false;
                     if (error)
                         return;
-                    std::vector<std::weak_ptr<SocksTCP>> kv;
-                    std::size_t ni(0);
                     auto now = std::chrono::high_resolution_clock::now();
+                    for (auto i = cSpliceList.begin(),
+                             ip = cSpliceList.before_begin();
+                         i != cSpliceList.end(); ip = i++)
                     {
-                        std::lock_guard<std::mutex> wl
-                            (conntracker_tcp_splice.lock_);
-                        ni = conntracker_tcp_splice.size();
-                        for (auto &i: conntracker_tcp_splice.hash_)
-                            i.second->kickClientPipeAcc(kv, now);
+                        auto k = i->lock();
+                        if (!k || !k->is_client_splicing() ||
+                            !k->kickClientPipe(now))
+                            cSpliceList.erase_after(ip);
                     }
-                    now = std::chrono::high_resolution_clock::now();
-                    std::vector<std::weak_ptr<SocksTCP>> tv;
-                    for (auto &i: kv) {
-                        auto k = i.lock();
-                        if (k)
-                            k->kickClientPipe(tv, now);
-                    }
-                    for (auto &i: tv) {
-                        auto k = i.lock();
-                        if (k) {
-                            --ni;
-                            k->terminate_client();
-                        }
-                    }
-                    if (ni)
+                    if (!cSpliceList.empty())
                         kickClientPipeTimer();
                 }));
     }
@@ -1088,76 +1073,40 @@ static void kickRemotePipeTimer()
                     rPipeTimerSet = false;
                     if (error)
                         return;
-                    std::vector<std::weak_ptr<SocksTCP>> kv;
-                    std::size_t ni(0);
                     auto now = std::chrono::high_resolution_clock::now();
+                    for (auto i = rSpliceList.begin(),
+                             ip = rSpliceList.before_begin();
+                         i != rSpliceList.end(); ip = i++)
                     {
-                        std::lock_guard<std::mutex> wl
-                            (conntracker_tcp_splice.lock_);
-                        ni = conntracker_tcp_splice.size();
-                        for (auto &i: conntracker_tcp_splice.hash_)
-                            i.second->kickRemotePipeAcc(kv, now);
+                        auto k = i->lock();
+                        if (!k || !k->is_client_splicing() ||
+                            !k->kickRemotePipe(now))
+                            rSpliceList.erase_after(ip);
                     }
-                    now = std::chrono::high_resolution_clock::now();
-                    std::vector<std::weak_ptr<SocksTCP>> tv;
-                    for (auto &i: kv) {
-                        auto k = i.lock();
-                        if (k)
-                            k->kickRemotePipe(tv, now);
-                    }
-                    for (auto &i: tv) {
-                        auto k = i.lock();
-                        if (k) {
-                            k->terminate_remote();
-                            --ni;
-                        }
-                    }
-                    if (ni)
+                    if (!rSpliceList.empty())
                         kickRemotePipeTimer();
                 }));
     }
 }
 
-void SocksTCP::kickClientPipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
-                                 const std::chrono::high_resolution_clock::time_point &now)
-{
-    if (pToClient_len_ > 0
-        && std::chrono::duration_cast<std::chrono::milliseconds>
-        (remote_read_ts_ - now).count() >= max_buffer_ms / 2U) {
-        v.emplace_back(shared_from_this());
-    }
-}
-
-void SocksTCP::kickRemotePipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
-                                 const std::chrono::high_resolution_clock::time_point &now)
-{
-    if (pToRemote_len_ > 0
-        && std::chrono::duration_cast<std::chrono::milliseconds>
-        (client_read_ts_ - now).count() >= max_buffer_ms / 2U) {
-        v.emplace_back(shared_from_this());
-    }
-}
-
-bool SocksTCP::kickClientPipe(std::vector<std::weak_ptr<SocksTCP>> &v,
-                              const std::chrono::high_resolution_clock::time_point &now)
+// Ret: Is the connection still alive?
+bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToClient_len_;
     if (l == 0)
-        return false;
+        return true;
     if (std::chrono::duration_cast<std::chrono::milliseconds>
         (remote_read_ts_ - now).count() < max_buffer_ms / 2U)
         return true;
     auto n = splicePipeToClient(true);
-    if (!n) {
-        v.emplace_back(shared_from_this());
+    if (!n)
         return false;
-    }
     if (l - *n > 0) {
         strand_R->post([this]() { kickClientPipeBG(); });
-        return false;
+        return true;
     }
     std::cerr << "kicked client pipe\n";
-    return false;
+    return true;
 }
 
 void SocksTCP::kickClientPipeBG()
@@ -1189,26 +1138,24 @@ void SocksTCP::kickClientPipeBG()
          }));
 }
 
-bool SocksTCP::kickRemotePipe(std::vector<std::weak_ptr<SocksTCP>> &v,
-                              const std::chrono::high_resolution_clock::time_point &now)
+// Ret: Is the connection still alive?
+bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now)
 {
     size_t l = pToRemote_len_;
     if (l == 0)
-        return false;
+        return true;
     if (std::chrono::duration_cast<std::chrono::milliseconds>
         (client_read_ts_ - now).count() < max_buffer_ms / 2U)
         return true;
     auto n = splicePipeToRemote(true);
-    if (!n) {
-        v.emplace_back(shared_from_this());
+    if (!n)
         return false;
-    }
     if (l - *n > 0) {
         strand_C->post([this]() { kickRemotePipeBG(); });
-        return false;
+        return true;
     }
     std::cerr << "kicked remote pipe\n";
-    return false;
+    return true;
 }
 
 void SocksTCP::kickRemotePipeBG()
@@ -1240,18 +1187,16 @@ void SocksTCP::kickRemotePipeBG()
             }));
 }
 
-void SocksTCP::moveToSpliceTracker()
+void SocksTCP::addToSpliceClientList()
 {
-    conntracker_tcp_splice.move_if_dne(this, conntracker_tcp);
+    cSpliceList.emplace_front(shared_from_this());
     kickClientPipeTimer();
-    kickRemotePipeTimer();
 }
 
-void SocksTCP::moveToNormalTracker()
+void SocksTCP::addToSpliceRemoteList()
 {
-    if (pToRemote_.is_open() || pToClient_.is_open())
-        return;
-    conntracker_tcp_splice.move_if_dne(this, conntracker_tcp);
+    rSpliceList.emplace_front(shared_from_this());
+    kickRemotePipeTimer();
 }
 
 // Write data read from the client socket to the connect socket.
@@ -1286,7 +1231,6 @@ void SocksTCP::tcp_client_socket_read_splice()
                          flushPipeToRemote(false);
                      else {
                          close_pipe_to_remote();
-                         moveToNormalTracker();
                          tcp_client_socket_read();
                      }
                      return;
@@ -1338,7 +1282,6 @@ void SocksTCP::tcp_remote_socket_read_splice()
                          flushPipeToClient(false);
                      else {
                          close_pipe_to_client();
-                         moveToNormalTracker();
                          tcp_remote_socket_read();
                      }
                      return;
@@ -1568,9 +1511,6 @@ void SocksInit::dispatch_tcp_bind()
     ba::ip::tcp::endpoint bind_ep;
     auto rcnct = conntracker_tcp.find_by_addr_port
         (dst_address_, dst_port_);
-    if (!rcnct)
-        rcnct = conntracker_tcp_splice.find_by_addr_port
-            (dst_address_, dst_port_);
     try {
         if (rcnct) {
             // Bind to the local IP that is associated with the
