@@ -223,11 +223,17 @@ private:
 public:
     void terminate_client();
     void terminate_remote();
+    void kickClientPipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
+                           const std::chrono::high_resolution_clock::time_point &now);
+    void kickRemotePipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
+                           const std::chrono::high_resolution_clock::time_point &now);
     bool kickClientPipe(std::vector<std::weak_ptr<SocksTCP>> &v,
                         const std::chrono::high_resolution_clock::time_point &now);
     bool kickRemotePipe(std::vector<std::weak_ptr<SocksTCP>> &v,
                         const std::chrono::high_resolution_clock::time_point &now);
 private:
+    void moveToSpliceTracker();
+    void moveToNormalTracker();
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
@@ -288,6 +294,7 @@ private:
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
             if (init_pipe_client()) {
                 // std::cerr << "client->remote switched to splice\n";
+                moveToSpliceTracker();
                 tcp_client_socket_read_splice();
                 return;
             } else
@@ -303,6 +310,7 @@ private:
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
             if (init_pipe_remote()) {
                 // std::cerr << "remote->client switched to splice\n";
+                moveToSpliceTracker();
                 tcp_remote_socket_read_splice();
                 return;
             } else

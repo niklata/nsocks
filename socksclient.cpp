@@ -235,6 +235,22 @@ public:
         std::lock_guard<std::mutex> wl(lock_);
         return !!hash_.erase(sc);
     }
+    std::shared_ptr<T> fetch(T *sc) {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto elt = hash_.find(sc);
+        if (elt == hash_.end())
+            throw std::out_of_range("dne");
+        std::shared_ptr<T> r;
+        elt->second.swap(r);
+        hash_.erase(elt);
+        return r;
+    }
+    bool move_if_dne(T* sc, connTracker<T> &o) {
+        std::lock_guard<std::mutex> wl(lock_);
+        if (hash_.find(sc) != hash_.end())
+            return false;
+        return hash_.emplace(sc, o.fetch(sc)).second;
+    }
     boost::optional<std::shared_ptr<T>>
     find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
     {
@@ -251,15 +267,13 @@ public:
     std::unordered_map<T*, std::shared_ptr<T>> hash_;
 };
 
-static connTracker<SocksTCP> conntracker_connect;
-static connTracker<SocksTCP> conntracker_bind;
+static connTracker<SocksTCP> conntracker_tcp;
+static connTracker<SocksTCP> conntracker_tcp_splice;
 static connTracker<SocksUDP> conntracker_udp;
 
 #ifdef USE_SPLICE
-static std::unordered_set<SocksTCP*> cpipe_hasdata;
-static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
 static std::atomic<bool> cPipeTimerSet;
-static std::unordered_set<SocksTCP*> rpipe_hasdata;
+static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
 static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
 static std::atomic<bool> rPipeTimerSet;
 #endif
@@ -413,8 +427,8 @@ static void print_destructor_logentry(const std::string &host, uint16_t port)
         std::cout << conntracker_bindlisten->size() << "|";
     else
         std::cout << "X|";
-    std::cout << conntracker_connect.size() << ","
-              << conntracker_bind.size() << ","
+    std::cout << (conntracker_tcp.size()
+                  + conntracker_tcp_splice.size()) << ","
               << conntracker_udp.size()
               << " / " << socks_alive_count << ")" << std::endl;
 }
@@ -573,8 +587,8 @@ bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return f
 
 void SocksTCP::untrack()
 {
-    if (!is_bind_) conntracker_connect.remove(this);
-    else conntracker_bind.remove(this);
+    if (!conntracker_tcp.remove(this))
+        conntracker_tcp_splice.remove(this);
 }
 
 void SocksTCP::cancel()
@@ -951,7 +965,7 @@ void SocksInit::dispatch_tcp_connect()
              }
              set_remote_socket_options();
              conntracker_hs->remove(this);
-             conntracker_connect.emplace(io_service,
+             conntracker_tcp.emplace(io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false,
                    std::move(dst_hostname_));
@@ -1036,25 +1050,20 @@ static void kickClientPipeTimer()
                     bool remains(false);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
-                        for (auto &i: cpipe_hasdata) {
-                            std::lock_guard<std::mutex> wl
-                                (conntracker_connect.lock_);
-                            auto x = conntracker_connect.hash_.find(i);
-                            if (x != conntracker_connect.hash_.end())
-                                remains |= x->second->kickClientPipe(kv, now);
-                        }
+                        std::lock_guard<std::mutex> wl
+                            (conntracker_tcp_splice.lock_);
+                        for (auto &i: conntracker_tcp_splice.hash_)
+                            i.second->kickClientPipeAcc(kv, now);
                     }
-                    {
-                        for (auto &i: cpipe_hasdata) {
-                            std::lock_guard<std::mutex> wl
-                                (conntracker_bind.lock_);
-                            auto x = conntracker_bind.hash_.find(i);
-                            if (x != conntracker_bind.hash_.end())
-                                remains |= x->second->kickClientPipe(kv, now);
-                        }
-                    }
-                    cpipe_hasdata.clear();
+                    now = std::chrono::high_resolution_clock::now();
+                    std::vector<std::weak_ptr<SocksTCP>> tv;
                     for (auto &i: kv) {
+                        auto k = i.lock();
+                        if (k) {
+                            remains |= k->kickClientPipe(tv, now);
+                        }
+                    }
+                    for (auto &i: tv) {
                         auto k = i.lock();
                         if (k)
                             k->terminate_client();
@@ -1081,25 +1090,20 @@ static void kickRemotePipeTimer()
                     bool remains(false);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
-                        for (auto &i: rpipe_hasdata) {
-                            std::lock_guard<std::mutex> wl
-                                (conntracker_connect.lock_);
-                            auto x = conntracker_connect.hash_.find(i);
-                            if (x != conntracker_connect.hash_.end())
-                                remains |= x->second->kickRemotePipe(kv, now);
-                        }
+                        std::lock_guard<std::mutex> wl
+                            (conntracker_tcp_splice.lock_);
+                        for (auto &i: conntracker_tcp_splice.hash_)
+                            i.second->kickRemotePipeAcc(kv, now);
                     }
-                    {
-                        for (auto &i: rpipe_hasdata) {
-                            std::lock_guard<std::mutex> wl
-                                (conntracker_bind.lock_);
-                            auto x = conntracker_bind.hash_.find(i);
-                            if (x != conntracker_bind.hash_.end())
-                                remains |= x->second->kickRemotePipe(kv, now);
-                        }
-                    }
-                    rpipe_hasdata.clear();
+                    now = std::chrono::high_resolution_clock::now();
+                    std::vector<std::weak_ptr<SocksTCP>> tv;
                     for (auto &i: kv) {
+                        auto k = i.lock();
+                        if (k) {
+                            remains |= k->kickRemotePipe(tv, now);
+                        }
+                    }
+                    for (auto &i: tv) {
                         auto k = i.lock();
                         if (k)
                             k->terminate_remote();
@@ -1107,6 +1111,26 @@ static void kickRemotePipeTimer()
                     if (remains)
                         kickRemotePipeTimer();
                 }));
+    }
+}
+
+void SocksTCP::kickClientPipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
+                                 const std::chrono::high_resolution_clock::time_point &now)
+{
+    if (pToClient_len_ > 0
+        && std::chrono::duration_cast<std::chrono::milliseconds>
+        (remote_read_ts_ - now).count() >= max_buffer_ms / 2U) {
+        v.emplace_back(shared_from_this());
+    }
+}
+
+void SocksTCP::kickRemotePipeAcc(std::vector<std::weak_ptr<SocksTCP>> &v,
+                                 const std::chrono::high_resolution_clock::time_point &now)
+{
+    if (pToRemote_len_ > 0
+        && std::chrono::duration_cast<std::chrono::milliseconds>
+        (client_read_ts_ - now).count() >= max_buffer_ms / 2U) {
+        v.emplace_back(shared_from_this());
     }
 }
 
@@ -1212,6 +1236,20 @@ void SocksTCP::kickRemotePipeBG()
             }));
 }
 
+void SocksTCP::moveToSpliceTracker()
+{
+    conntracker_tcp_splice.move_if_dne(this, conntracker_tcp);
+    kickClientPipeTimer();
+    kickRemotePipeTimer();
+}
+
+void SocksTCP::moveToNormalTracker()
+{
+    if (pToRemote_.is_open() || pToClient_.is_open())
+        return;
+    conntracker_tcp_splice.move_if_dne(this, conntracker_tcp);
+}
+
 // Write data read from the client socket to the connect socket.
 void SocksTCP::tcp_client_socket_read_splice()
 {
@@ -1244,6 +1282,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                          flushPipeToRemote(false);
                      else {
                          close_pipe_to_remote();
+                         moveToNormalTracker();
                          tcp_client_socket_read();
                      }
                      return;
@@ -1257,11 +1296,8 @@ void SocksTCP::tcp_client_socket_read_splice()
              }
              if (!splicePipeToRemote())
                  return;
-             if (pToRemote_len_ > 0 && !rpipe_hasdata.count(this)) {
+             if (pToRemote_len_ > 0)
                  client_read_ts_ = std::chrono::high_resolution_clock::now();
-                 rpipe_hasdata.insert(this);
-                 kickRemotePipeTimer();
-             }
              tcp_client_socket_read_splice();
          }));
 }
@@ -1298,6 +1334,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
                          flushPipeToClient(false);
                      else {
                          close_pipe_to_client();
+                         moveToNormalTracker();
                          tcp_remote_socket_read();
                      }
                      return;
@@ -1311,11 +1348,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
              }
              if (!splicePipeToClient())
                  return;
-             if (pToClient_len_ > 0 && !cpipe_hasdata.count(this)) {
+             if (pToClient_len_ > 0)
                  remote_read_ts_ = std::chrono::high_resolution_clock::now();
-                 cpipe_hasdata.insert(this);
-                 kickClientPipeTimer();
-             }
              tcp_remote_socket_read_splice();
          }));
 }
@@ -1515,6 +1549,8 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
         return false;
     if (dst_port_ != port)
         return false;
+    if (is_bind_)
+        return false;
     return true;
 }
 
@@ -1526,8 +1562,11 @@ void SocksInit::dispatch_tcp_bind()
     }
     assert(BPA);
     ba::ip::tcp::endpoint bind_ep;
-    auto rcnct = conntracker_connect.find_by_addr_port
+    auto rcnct = conntracker_tcp.find_by_addr_port
         (dst_address_, dst_port_);
+    if (!rcnct)
+        rcnct = conntracker_tcp_splice.find_by_addr_port
+            (dst_address_, dst_port_);
     try {
         if (rcnct) {
             // Bind to the local IP that is associated with the
@@ -1572,7 +1611,7 @@ void SocksInit::dispatch_tcp_bind()
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
              conntracker_bindlisten->remove(this);
-             conntracker_bind.emplace(io_service,
+             conntracker_tcp.emplace(io_service,
                    std::move(client_socket_),
                    std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, true,
