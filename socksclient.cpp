@@ -1045,16 +1045,24 @@ static void kickClientPipeTimer()
                     cPipeTimerSet = false;
                     if (error)
                         return;
+                    bool erase_ipp(false);
                     auto now = std::chrono::high_resolution_clock::now();
-                    for (auto i = cSpliceList.begin(),
-                             ip = cSpliceList.before_begin();
-                         i != cSpliceList.end(); ip = i++)
+                    std::forward_list<std::weak_ptr<SocksTCP>>::iterator i, ip, ipp;
+                    for (i = cSpliceList.begin(),
+                         ip = cSpliceList.before_begin(),
+                         ipp = cSpliceList.before_begin();
+                         i != cSpliceList.end(); ipp = ip, ip = i++)
                     {
+                        if (erase_ipp) {
+                            cSpliceList.erase_after(ipp);
+                            ip = ipp;
+                        }
                         auto k = i->lock();
-                        if (!k || !k->is_client_splicing() ||
-                            !k->kickClientPipe(now))
-                            cSpliceList.erase_after(ip);
+                        erase_ipp = (!k || !k->is_remote_splicing() ||
+                                     !k->kickClientPipe(now));
                     }
+                    if (erase_ipp)
+                        cSpliceList.erase_after(ipp);
                     if (!cSpliceList.empty())
                         kickClientPipeTimer();
                 }));
@@ -1073,16 +1081,24 @@ static void kickRemotePipeTimer()
                     rPipeTimerSet = false;
                     if (error)
                         return;
+                    bool erase_ipp(false);
                     auto now = std::chrono::high_resolution_clock::now();
-                    for (auto i = rSpliceList.begin(),
-                             ip = rSpliceList.before_begin();
-                         i != rSpliceList.end(); ip = i++)
+                    std::forward_list<std::weak_ptr<SocksTCP>>::iterator i, ip, ipp;
+                    for (i = rSpliceList.begin(),
+                         ip = rSpliceList.before_begin(),
+                         ipp = rSpliceList.before_begin();
+                         i != rSpliceList.end(); ipp = ip, ip = i++)
                     {
+                        if (erase_ipp) {
+                            rSpliceList.erase_after(ipp);
+                            ip = ipp;
+                        }
                         auto k = i->lock();
-                        if (!k || !k->is_client_splicing() ||
-                            !k->kickRemotePipe(now))
-                            rSpliceList.erase_after(ip);
+                        erase_ipp = (!k || !k->is_client_splicing() ||
+                                     !k->kickRemotePipe(now));
                     }
+                    if (erase_ipp)
+                        rSpliceList.erase_after(ipp);
                     if (!rSpliceList.empty())
                         kickRemotePipeTimer();
                 }));

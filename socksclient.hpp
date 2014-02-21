@@ -223,8 +223,8 @@ private:
 public:
     void terminate_client();
     void terminate_remote();
-    inline bool is_client_splicing() { return pToClient_.is_open(); }
-    inline bool is_remote_splicing() { return pToRemote_.is_open(); }
+    inline bool is_remote_splicing() { return pToClient_.is_open(); }
+    inline bool is_client_splicing() { return pToRemote_.is_open(); }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
     bool kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now);
 private:
