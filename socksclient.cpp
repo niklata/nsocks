@@ -617,6 +617,9 @@ void SocksInit::untrack()
 
 void SocksInit::cancel()
 {
+    boost::system::error_code ec;
+    if (bound_)
+        bound_->acceptor_.cancel(ec);
     close_cr_socket(client_socket_);
     close_cr_socket(remote_socket_);
 }
