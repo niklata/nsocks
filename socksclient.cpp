@@ -1047,11 +1047,12 @@ static void kickClientPipeTimer()
                     if (error)
                         return;
                     std::vector<std::weak_ptr<SocksTCP>> kv;
-                    bool remains(false);
+                    std::size_t ni(0);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
                         std::lock_guard<std::mutex> wl
                             (conntracker_tcp_splice.lock_);
+                        ni = conntracker_tcp_splice.size();
                         for (auto &i: conntracker_tcp_splice.hash_)
                             i.second->kickClientPipeAcc(kv, now);
                     }
@@ -1059,16 +1060,17 @@ static void kickClientPipeTimer()
                     std::vector<std::weak_ptr<SocksTCP>> tv;
                     for (auto &i: kv) {
                         auto k = i.lock();
-                        if (k) {
-                            remains |= k->kickClientPipe(tv, now);
-                        }
+                        if (k)
+                            k->kickClientPipe(tv, now);
                     }
                     for (auto &i: tv) {
                         auto k = i.lock();
-                        if (k)
+                        if (k) {
+                            --ni;
                             k->terminate_client();
+                        }
                     }
-                    if (remains)
+                    if (ni)
                         kickClientPipeTimer();
                 }));
     }
@@ -1087,11 +1089,12 @@ static void kickRemotePipeTimer()
                     if (error)
                         return;
                     std::vector<std::weak_ptr<SocksTCP>> kv;
-                    bool remains(false);
+                    std::size_t ni(0);
                     auto now = std::chrono::high_resolution_clock::now();
                     {
                         std::lock_guard<std::mutex> wl
                             (conntracker_tcp_splice.lock_);
+                        ni = conntracker_tcp_splice.size();
                         for (auto &i: conntracker_tcp_splice.hash_)
                             i.second->kickRemotePipeAcc(kv, now);
                     }
@@ -1099,16 +1102,17 @@ static void kickRemotePipeTimer()
                     std::vector<std::weak_ptr<SocksTCP>> tv;
                     for (auto &i: kv) {
                         auto k = i.lock();
-                        if (k) {
-                            remains |= k->kickRemotePipe(tv, now);
-                        }
+                        if (k)
+                            k->kickRemotePipe(tv, now);
                     }
                     for (auto &i: tv) {
                         auto k = i.lock();
-                        if (k)
+                        if (k) {
                             k->terminate_remote();
+                            --ni;
+                        }
                     }
-                    if (remains)
+                    if (ni)
                         kickRemotePipeTimer();
                 }));
     }
