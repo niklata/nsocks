@@ -538,12 +538,32 @@ static inline void close_cr_socket(ba::ip::tcp::socket &s)
 }
 
 #ifdef USE_SPLICE
-static inline void pipe_close_raw(ba::posix::stream_descriptor &sa,
+// XXX: Allow runtime customization.
+static std::mutex free_pipe_lock;
+static std::size_t max_free_pipes = 20;
+static std::vector<std::pair<int, int>> free_pipes;
+
+static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
+                                  ba::posix::stream_descriptor &sa,
                                   ba::posix::stream_descriptor &sb)
 {
     boost::system::error_code ec;
     auto sao = sa.is_open();
     auto sbo = sb.is_open();
+    if (p_len == 0 && sao && sbo) {
+        std::pair<int, int> fp;
+        fp.first = sa.release();
+        fp.second = sb.release();
+        std::lock_guard<std::mutex> wl(free_pipe_lock);
+        if (free_pipes.size() < max_free_pipes) {
+            free_pipes.push_back(std::move(fp));
+            std::cerr << "cached a pipe (total: " << free_pipes.size() << ")\n";
+        } else {
+            close(fp.first);
+            close(fp.second);
+        }
+        return;
+    }
     if (sao)
         sa.cancel(ec);
     if (sbo)
@@ -552,6 +572,7 @@ static inline void pipe_close_raw(ba::posix::stream_descriptor &sa,
         sa.close(ec);
     if (sbo)
         sb.close(ec);
+    p_len = 0;
 }
 
 static inline bool pipe_close(ba::posix::stream_descriptor &sa,
@@ -569,8 +590,7 @@ static inline bool pipe_close(ba::posix::stream_descriptor &sa,
         ret = true;
         s_writer.cancel(ec);
     }
-    p_len = 0;
-    pipe_close_raw(sa, sb);
+    pipe_close_raw(p_len, sa, sb);
     if (sro)
         tcp_socket_close(s_reader);
     if (ret)
@@ -582,33 +602,27 @@ void SocksTCP::close_pipe_to_client()
 {
     boost::system::error_code ec;
     assert(pToClient_len_ == 0);
-    sdToClient_.cancel(ec);
-    pToClient_len_ = 0;
-    pipe_close_raw(pToClient_, sdToClient_);
+    pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
 }
 
 void SocksTCP::close_pipe_to_remote()
 {
     boost::system::error_code ec;
     assert(pToRemote_len_ == 0);
-    sdToRemote_.cancel(ec);
-    pToRemote_len_ = 0;
-    pipe_close_raw(pToRemote_, sdToRemote_);
+    pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
 }
 
 bool SocksTCP::close_client_socket()
 {
     boost::system::error_code ec;
-    sdToClient_.cancel(ec);
-    return pipe_close(pToClient_, sdToClient_, pToClient_len_,
+    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
                       client_socket_, remote_socket_);
 }
 
 bool SocksTCP::close_remote_socket()
 {
     boost::system::error_code ec;
-    sdToRemote_.cancel(ec);
-    return pipe_close(pToRemote_, sdToRemote_, pToRemote_len_,
+    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
                       remote_socket_, client_socket_);
 }
 #else
@@ -1020,10 +1034,23 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 }
 
 #ifdef USE_SPLICE
+
 bool SocksTCP::init_pipe_client()
 {
     int pipes[2];
-    if (pipe2(pipes, O_NONBLOCK))
+    bool need_free_pipe(true);
+    {
+        std::lock_guard<std::mutex> wl(free_pipe_lock);
+        if (free_pipes.size()) {
+            need_free_pipe = false;
+            auto fp = free_pipes.back();
+            pipes[0] = fp.first;
+            pipes[1] = fp.second;
+            free_pipes.pop_back();
+            std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        }
+    }
+    if (need_free_pipe && pipe2(pipes, O_NONBLOCK))
         return false;
     sdToRemote_.assign(pipes[0]);
     pToRemote_.assign(pipes[1]);
@@ -1033,7 +1060,19 @@ bool SocksTCP::init_pipe_client()
 bool SocksTCP::init_pipe_remote()
 {
     int pipes[2];
-    if (pipe2(pipes, O_NONBLOCK))
+    bool need_free_pipe(true);
+    {
+        std::lock_guard<std::mutex> wl(free_pipe_lock);
+        if (free_pipes.size()) {
+            need_free_pipe = false;
+            auto fp = free_pipes.back();
+            pipes[0] = fp.first;
+            pipes[1] = fp.second;
+            free_pipes.pop_back();
+            std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        }
+    }
+    if (need_free_pipe && pipe2(pipes, O_NONBLOCK))
         return false;
     sdToClient_.assign(pipes[0]);
     pToClient_.assign(pipes[1]);
