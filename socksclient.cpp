@@ -95,78 +95,53 @@ public:
     ~ephConnTracker()
     {
         for (std::size_t j = 0; j < 2; ++j)
-            hash_cancel(j);
+            list_cancel(j);
     }
     void store(std::shared_ptr<T> ssc)
     {
         {
             std::lock_guard<std::mutex> wl(lock_);
-            hash_[hidx_].emplace(ssc.get(), ssc);
+            list_[hidx_].emplace_front(ssc);
+            ssc->set_tracker_iterator(list_[hidx_].begin(), hidx_);
         }
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
+    }
+    void erase(typename std::list<std::weak_ptr<T>>::iterator it, std::size_t lidx) {
+        std::lock_guard<std::mutex> wl(lock_);
+        list_[lidx].erase(it);
     }
     template <typename... Args>
     void emplace(Args&&... args)
     {
-        std::shared_ptr<T> y;
+        auto x = std::make_shared<T>(std::forward<Args>(args)...);
         {
             std::lock_guard<std::mutex> wl(lock_);
-            auto x = std::make_shared<T>(std::forward<Args>(args)...);
-            auto elt = hash_[hidx_].emplace(x.get(), std::move(x));
-            if (elt.second)
-                y = elt.first->second;
+            list_[hidx_].emplace_front(x);
+            x->set_tracker_iterator(list_[hidx_].begin(), hidx_);
         }
-        y->start();
+        x->start();
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
             setTimer(false);
     }
-    bool remove(std::size_t hidx, T* sc)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        return remove_nolock(hidx, sc);
-    }
-    bool remove(T* sc) {
-        std::lock_guard<std::mutex> wl(lock_);
-        std::size_t hi = hidx_;
-        if (!remove_nolock(hi, sc))
-            return remove_nolock(hi ^ 1, sc);
-        return true;
-    }
-    std::shared_ptr<T> fetch(T *sc) {
-        std::lock_guard<std::mutex> wl(lock_);
-        std::size_t hi = hidx_;
-        auto elt = hash_[hi].find(sc);
-        if (elt == hash_[hi].end()) {
-            hi ^= 1;
-            elt = hash_[hi].find(sc);
-            if (elt == hash_[hi].end())
-                throw std::out_of_range("dne");
-        }
-        std::shared_ptr<T> r;
-        elt->second.swap(r);
-        hash_[hi].erase(elt);
-        return r;
-    }
-    std::size_t size() { return hash_[0].size() + hash_[1].size(); }
+    std::size_t size() { return list_[0].size() + list_[1].size(); }
 private:
-    inline bool remove_nolock(std::size_t hidx, T* sc) {
-        return !!hash_[hidx].erase(sc);
-    }
-    inline void hash_cancel(std::size_t x) {
-        for (auto &i: hash_[x]) {
-            i.second->cancel();
-            i.second->set_terminated();
+    // XXX: We should just erase the elements as we go here when necessary.
+    inline void list_cancel(std::size_t x) {
+        for (auto &i: list_[x]) {
+            auto j = i.lock();
+            if (j) {
+                j->set_untracked();
+                j->cancel();
+            }
         }
     }
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
-        // std::cerr << "doSwap wiped " << hash_[hnext].size()
-        //           << " items from hash " << hnext << "\n";
-        hash_cancel(hnext);
-        hash_[hnext].clear();
+        list_cancel(hnext);
+        list_[hnext].clear();
         hidx_ = hnext;
     }
     void setTimer(bool expidite) {
@@ -194,7 +169,7 @@ private:
     const std::size_t cyclefreq_;
     std::atomic<std::size_t> hidx_;
     ba::deadline_timer swapTimer_;
-    std::unordered_map<T*, std::shared_ptr<T>> hash_[2];
+    std::list<std::weak_ptr<T>> list_[2];
 };
 
 static std::unique_ptr<ephConnTracker<SocksInit>> conntracker_hs;
@@ -435,7 +410,7 @@ static void print_destructor_logentry(const std::string &host, uint16_t port)
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : terminated_(false), ibSiz_(0), bind_listen_(false),
+        : untracked_(false), ibSiz_(0), bind_listen_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service)
@@ -448,7 +423,7 @@ SocksInit::SocksInit(ba::io_service &io_service,
 
 SocksInit::~SocksInit()
 {
-    if (!terminated_)
+    if (!untracked_)
         untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
@@ -611,8 +586,10 @@ void SocksTCP::terminate()
 
 void SocksInit::untrack()
 {
-    if (!bind_listen_) conntracker_hs->remove(this);
-    else conntracker_bindlisten->remove(this);
+    if (!bind_listen_) conntracker_hs->erase(get_tracker_iterator(),
+                                             get_tracker_idx());
+    else conntracker_bindlisten->erase(get_tracker_iterator(),
+                                       get_tracker_idx());
 }
 
 void SocksInit::cancel()
@@ -626,11 +603,10 @@ void SocksInit::cancel()
 
 void SocksInit::terminate()
 {
-    if (terminated_)
-        return;
-    terminated_ = true;
     cancel();
-    untrack();
+    if (!untracked_)
+        untrack();
+    untracked_ = true;
 }
 
 void SocksInit::read_greet()
@@ -704,9 +680,6 @@ static const char reply_greetz[2] = {'\x5','\x0'};
 // Returns false if the object needs to be destroyed by the caller.
 boost::optional<bool> SocksInit::process_greet()
 {
-    if (terminated_)
-        return false;
-
     size_t poff = 0;
 
     // We only accept Socks5.
@@ -763,9 +736,6 @@ boost::optional<bool> SocksInit::process_greet()
 // Returns false if the object needs to be destroyed by the caller.
 boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
 {
-    if (terminated_)
-        return RplFail;
-
     size_t poff = 0;
 
     // We only accept Socks5.
@@ -966,7 +936,6 @@ void SocksInit::dispatch_tcp_connect()
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
-             conntracker_hs->remove(this);
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false,
@@ -1553,14 +1522,9 @@ void SocksInit::dispatch_tcp_bind()
 
     if (!create_bind_socket(bind_ep))
         return;
-    try {
-        conntracker_bindlisten->store(conntracker_hs->fetch(this));
-    } catch (const std::out_of_range &) {
-        std::cerr << "conntracker /hs->bindlisten/ failed\n";
-        send_reply(RplFail);
-        return;
-    }
+    conntracker_hs->erase(get_tracker_iterator(), get_tracker_idx());
     bind_listen_ = true;
+    conntracker_bindlisten->store(shared_from_this());
 
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
@@ -1573,7 +1537,6 @@ void SocksInit::dispatch_tcp_bind()
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
-             conntracker_bindlisten->remove(this);
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_),
                    std::move(remote_socket_),
@@ -1630,7 +1593,6 @@ void SocksInit::dispatch_udp()
         return;
     }
 
-    conntracker_hs->remove(this);
     conntracker_udp.emplace(io_service,
         std::move(client_socket_), udp_client_ep, udp_remote_ep,
         ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));

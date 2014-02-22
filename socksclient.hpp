@@ -32,6 +32,7 @@
 #include <string>
 #include <memory>
 #include <atomic>
+#include <list>
 #include <netdb.h>
 
 #include <boost/asio.hpp>
@@ -51,8 +52,20 @@ public:
     ~SocksInit();
     void terminate();
     void cancel();
-    inline void set_terminated() { terminated_ = true; }
+    inline void set_untracked() { untracked_ = true; }
     inline void start() { read_greet(); }
+    void set_tracker_iterator(std::list<std::weak_ptr<SocksInit>>::iterator it,
+                              unsigned char lidx) {
+        tracker_iterator_ = it;
+        tracker_idx_ = lidx;
+    }
+    inline std::list<std::weak_ptr<SocksInit>>::iterator
+    get_tracker_iterator() const {
+        return tracker_iterator_;
+    }
+    inline unsigned char get_tracker_idx() const {
+        return tracker_idx_;
+    }
 
     enum ReplyCode {
         RplSuccess = 0,
@@ -117,8 +130,8 @@ private:
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
-    std::atomic<bool> terminated_;
-
+    std::atomic<bool> untracked_;
+    std::list<std::weak_ptr<SocksInit>>::iterator tracker_iterator_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string outbuf_;
@@ -127,6 +140,7 @@ private:
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     uint16_t ibSiz_;
+    unsigned char tracker_idx_;
     bool bind_listen_;
     bool auth_none_;
     bool auth_gssapi_;
