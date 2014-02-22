@@ -96,8 +96,7 @@ public:
         for (std::size_t j = 0; j < 2; ++j)
             list_cancel(j);
     }
-    // XXX: This can be replaced with a swap.
-    void store(std::shared_ptr<T> ssc)
+    void store(std::shared_ptr<T> &&ssc)
     {
         {
             std::lock_guard<std::mutex> wl(lock_);
