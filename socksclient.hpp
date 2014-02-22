@@ -170,6 +170,13 @@ public:
     void terminate();
 
     inline void set_terminated() { terminated_ = true; }
+    void set_tracker_iterator(std::list<std::weak_ptr<SocksTCP>>::iterator it) {
+        tracker_iterator_ = it;
+    }
+    inline std::list<std::weak_ptr<SocksTCP>>::iterator
+    get_tracker_iterator() const {
+        return tracker_iterator_;
+    }
     bool matches_dst(const boost::asio::ip::address &addr,
                      uint16_t port) const;
     inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
@@ -207,6 +214,7 @@ private:
     }
 
     std::atomic<bool> terminated_;
+    std::list<std::weak_ptr<SocksTCP>>::iterator tracker_iterator_;
 
     // Shared with SocksInit
     std::string dst_hostname_;
@@ -365,15 +373,6 @@ public:
     void start();
     void terminate();
     void cancel();
-    inline void set_terminated() { terminated_ = true; }
-    // XXX: These don't really do anything but are necessary to fulfill
-    //      the concept for connTracker.
-    bool matches_dst(const boost::asio::ip::address &addr,
-                     uint16_t port) const { return false; }
-    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
-    {
-        return tcp_client_socket_.local_endpoint();
-    }
 private:
     struct UDPFrags {
         UDPFrags(boost::asio::io_service &io_service)
@@ -406,7 +405,6 @@ private:
         }
     };
 
-    void untrack();
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
@@ -417,8 +415,6 @@ private:
     void udp_proxy_packet();
     void udp_dns_lookup(const std::string &dnsname);
     void close_udp_sockets();
-
-    std::atomic<bool> terminated_;
 
     // Shared with SocksInit
     boost::asio::ip::tcp::socket tcp_client_socket_;

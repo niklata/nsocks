@@ -27,7 +27,6 @@
  */
 
 #include <iostream>
-#include <unordered_map>
 #include <forward_list>
 #include <mutex>
 
@@ -185,47 +184,50 @@ public:
     connTracker() {}
     ~connTracker()
     {
-        for (auto &i: hash_) {
-            i.second->cancel();
-            i.second->set_terminated();
+        for (auto &i: list_) {
+            auto j = i.lock();
+            if (!j)
+                continue;
+            j->cancel();
+            j->set_terminated();
         }
+    }
+    void erase(typename std::list<std::weak_ptr<T>>::iterator it) {
+        std::lock_guard<std::mutex> wl(lock_);
+        list_.erase(it);
     }
     template <typename... Args>
     void emplace(Args&&... args)
     {
-        std::shared_ptr<T> y;
+        auto x = std::make_shared<T>(std::forward<Args>(args)...);
         {
             std::lock_guard<std::mutex> wl(lock_);
-            auto x = std::make_shared<T>(std::forward<Args>(args)...);
-            auto elt = hash_.emplace(x.get(), std::move(x));
-            if (elt.second)
-                y = elt.first->second;
+            list_.emplace_front(x);
+            x->set_tracker_iterator(list_.begin());
         }
-        y->start();
-    }
-    bool remove(T* sc)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        return !!hash_.erase(sc);
+        x->start();
     }
     boost::optional<std::shared_ptr<T>>
     find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
     {
         std::lock_guard<std::mutex> wl(lock_);
-        for (auto &i: hash_) {
-            if (i.second->matches_dst(addr, port))
-                return i.second;
+        for (auto &i: list_) {
+            auto j = i.lock();
+            if (!j)
+                continue;
+            if (j->matches_dst(addr, port))
+                return j;
         }
         return boost::optional<std::shared_ptr<T>>();
     }
-    std::size_t size() const { return hash_.size(); }
+    std::size_t size() const { return list_.size(); }
 
     std::mutex lock_;
-    std::unordered_map<T*, std::shared_ptr<T>> hash_;
+    std::list<std::weak_ptr<T>> list_;
 };
 
+// The only purpose of this tracker is for find_by_addr_port for BIND.
 static connTracker<SocksTCP> conntracker_tcp;
-static connTracker<SocksUDP> conntracker_udp;
 
 #ifdef USE_SPLICE
 static std::atomic<bool> cPipeTimerSet;
@@ -372,6 +374,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
 }
 
 static std::atomic<std::size_t> socks_alive_count;
+static std::atomic<std::size_t> udp_alive_count;
 
 static void print_destructor_logentry(const std::string &host, uint16_t port)
 {
@@ -386,7 +389,7 @@ static void print_destructor_logentry(const std::string &host, uint16_t port)
     else
         std::cout << "X|";
     std::cout << conntracker_tcp.size() << ","
-              << conntracker_udp.size()
+              << udp_alive_count
               << " / " << socks_alive_count << ")" << std::endl;
 }
 
@@ -544,7 +547,7 @@ bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return f
 
 void SocksTCP::untrack()
 {
-    conntracker_tcp.remove(this);
+    conntracker_tcp.erase(get_tracker_iterator());
 }
 
 void SocksTCP::cancel()
@@ -1575,9 +1578,11 @@ void SocksInit::dispatch_udp()
         return;
     }
 
-    conntracker_udp.emplace(io_service,
-        std::move(client_socket_), udp_client_ep, udp_remote_ep,
-        ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+    auto ct = std::make_shared<SocksUDP>
+        (io_service, std::move(client_socket_),
+         udp_client_ep, udp_remote_ep,
+         ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+    ct->start();
 }
 
 static inline void send_reply_code(std::string &outbuf,
@@ -1695,30 +1700,26 @@ SocksUDP::SocksUDP(ba::io_service &io_service,
                    ba::ip::udp::endpoint client_ep,
                    ba::ip::udp::endpoint remote_ep,
                    ba::ip::udp::endpoint client_remote_ep)
-        : terminated_(false), tcp_client_socket_(std::move(tcp_client_socket)),
+        : tcp_client_socket_(std::move(tcp_client_socket)),
           client_endpoint_(client_ep), remote_endpoint_(remote_ep),
           client_remote_endpoint_(client_remote_ep),
           client_socket_(io_service, client_ep),
           remote_socket_(io_service, remote_ep),
           resolver_(io_service)
 {
-    if (g_verbose_logs)
+    if (g_verbose_logs) {
         ++socks_alive_count;
+        ++udp_alive_count;
+    }
 }
 
 SocksUDP::~SocksUDP()
 {
-    if (!terminated_)
-        untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
+        --udp_alive_count;
         print_destructor_logentry("(n/a)", 0);
     }
-}
-
-void SocksUDP::untrack()
-{
-    conntracker_udp.remove(this);
 }
 
 void SocksUDP::cancel()
@@ -1728,11 +1729,7 @@ void SocksUDP::cancel()
 
 void SocksUDP::terminate()
 {
-    if (terminated_)
-        return;
-    terminated_ = true;
     cancel();
-    untrack();
 }
 
 void SocksUDP::start()
