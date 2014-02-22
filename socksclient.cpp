@@ -97,6 +97,7 @@ public:
         for (std::size_t j = 0; j < 2; ++j)
             list_cancel(j);
     }
+    // XXX: This can be replaced with a swap.
     void store(std::shared_ptr<T> ssc)
     {
         {
@@ -187,11 +188,6 @@ public:
             i.second->set_terminated();
         }
     }
-    void store(std::shared_ptr<T> ssc)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        hash_.emplace(ssc.get(), ssc);
-    }
     template <typename... Args>
     void emplace(Args&&... args)
     {
@@ -209,22 +205,6 @@ public:
     {
         std::lock_guard<std::mutex> wl(lock_);
         return !!hash_.erase(sc);
-    }
-    std::shared_ptr<T> fetch(T *sc) {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto elt = hash_.find(sc);
-        if (elt == hash_.end())
-            throw std::out_of_range("dne");
-        std::shared_ptr<T> r;
-        elt->second.swap(r);
-        hash_.erase(elt);
-        return r;
-    }
-    bool move_if_dne(T* sc, connTracker<T> &o) {
-        std::lock_guard<std::mutex> wl(lock_);
-        if (hash_.find(sc) != hash_.end())
-            return false;
-        return hash_.emplace(sc, o.fetch(sc)).second;
     }
     boost::optional<std::shared_ptr<T>>
     find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
