@@ -86,6 +86,8 @@ static boost::random::mt19937 g_random_prng(g_random_secure());
 static std::unique_ptr <boost::asio::strand> strand_C;
 static std::unique_ptr <boost::asio::strand> strand_R;
 
+static void print_trackers_logentry(const std::string &host, uint16_t port);
+
 template <typename T>
 class ephTrackerList : boost::noncopyable
 {
@@ -224,10 +226,12 @@ private:
                               {
                                   if (error)
                                       return;
+                                  //print_trackers_logentry("[DOSWAP-]", hidx_);
                                   if (lock_.try_lock()) {
                                       doSwap();
                                       auto sz = size();
                                       lock_.unlock();
+                                      //print_trackers_logentry("[DOSWAP+]", hidx_);
                                       if (sz)
                                           setTimer(false);
                                   } else
@@ -325,6 +329,26 @@ std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_udp_allow_masks;
+
+static std::atomic<std::size_t> socks_alive_count;
+static std::atomic<std::size_t> udp_alive_count;
+
+static void print_trackers_logentry(const std::string &host, uint16_t port)
+{
+    std::cout << "Connection to " << host << ":" << port
+              << " DESTRUCTED (total: HS";
+    if (conntracker_hs)
+        std::cout << conntracker_hs->size() << ", BL";
+    else
+        std::cout << "X, BL";
+    if (conntracker_bindlisten)
+        std::cout << conntracker_bindlisten->size() << " || T";
+    else
+        std::cout << "X || T";
+    std::cout << conntracker_tcp.size() << ", U"
+              << udp_alive_count
+              << " / " << socks_alive_count << ")" << std::endl;
+}
 
 class BindPortAssigner : boost::noncopyable
 {
@@ -440,26 +464,6 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static std::atomic<std::size_t> socks_alive_count;
-static std::atomic<std::size_t> udp_alive_count;
-
-static void print_destructor_logentry(const std::string &host, uint16_t port)
-{
-    std::cout << "Connection to " << host << ":" << port
-              << " DESTRUCTED (total: ";
-    if (conntracker_hs)
-        std::cout << conntracker_hs->size() << ",";
-    else
-        std::cout << "X,";
-    if (conntracker_bindlisten)
-        std::cout << conntracker_bindlisten->size() << "|";
-    else
-        std::cout << "X|";
-    std::cout << conntracker_tcp.size() << ","
-              << udp_alive_count
-              << " / " << socks_alive_count << ")" << std::endl;
-}
-
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
         : untracked_(false), ibSiz_(0), bind_listen_(false),
@@ -479,7 +483,7 @@ SocksInit::~SocksInit()
         untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
-        print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
+        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
                                   : dst_address_.to_string(),
                                   dst_port_);
     }
@@ -511,7 +515,7 @@ SocksTCP::~SocksTCP()
         untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
-        print_destructor_logentry(dst_hostname_.size() ? dst_hostname_
+        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
                                   : dst_address_.to_string(),
                                   dst_port_);
     }
@@ -1783,7 +1787,7 @@ SocksUDP::~SocksUDP()
     if (g_verbose_logs) {
         --socks_alive_count;
         --udp_alive_count;
-        print_destructor_logentry("(n/a)", 0);
+        print_trackers_logentry("(n/a)", 0);
     }
 }
 
