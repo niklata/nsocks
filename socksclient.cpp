@@ -129,20 +129,22 @@ public:
     }
     std::size_t size() { return list_[0].size() + list_[1].size(); }
 private:
-    // XXX: We should just erase the elements as we go here when necessary.
     inline void list_cancel(std::size_t x) {
-        for (auto &i: list_[x]) {
-            auto j = i.lock();
+        auto end = list_[x].end();
+        typename std::list<std::weak_ptr<T>>::iterator ip;
+        for (auto i = list_[x].begin(); i != end;) {
+            auto j = i->lock();
             if (j) {
                 j->set_untracked();
                 j->cancel();
             }
+            ip = i++;
+            list_[x].erase(ip);
         }
     }
     void doSwap() {
         std::size_t hnext = hidx_ ^ 1;
         list_cancel(hnext);
-        list_[hnext].clear();
         hidx_ = hnext;
     }
     void setTimer(bool expidite) {
