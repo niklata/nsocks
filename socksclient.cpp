@@ -28,6 +28,7 @@
 
 #include <iostream>
 #include <forward_list>
+#include <vector>
 #include <mutex>
 
 #include <unistd.h>
@@ -86,12 +87,12 @@ static std::unique_ptr <boost::asio::strand> strand_C;
 static std::unique_ptr <boost::asio::strand> strand_R;
 
 template <typename T>
-class ephConnTracker : boost::noncopyable
+class ephTrackerList : boost::noncopyable
 {
 public:
-    ephConnTracker(ba::io_service &iosrv, std::size_t cyclefreq)
+    ephTrackerList(ba::io_service &iosrv, std::size_t cyclefreq)
         : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
-    ~ephConnTracker()
+    ~ephTrackerList()
     {
         for (std::size_t j = 0; j < 2; ++j)
             list_cancel(j);
@@ -173,8 +174,75 @@ private:
     std::list<std::weak_ptr<T>> list_[2];
 };
 
-static std::unique_ptr<ephConnTracker<SocksInit>> conntracker_hs;
-static std::unique_ptr<ephConnTracker<SocksInit>> conntracker_bindlisten;
+template <typename T>
+class ephTrackerVec : boost::noncopyable
+{
+public:
+    ephTrackerVec(ba::io_service &iosrv, std::size_t cyclefreq)
+        : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
+    ~ephTrackerVec()
+    {
+        for (std::size_t j = 0; j < 2; ++j)
+            vec_cancel(j);
+    }
+    template <typename... Args>
+    void emplace(Args&&... args)
+    {
+        auto x = std::make_shared<T>(std::forward<Args>(args)...);
+        {
+            std::lock_guard<std::mutex> wl(lock_);
+            vec_[hidx_].emplace_back(x);
+        }
+        x->start();
+        if (swapTimer_.expires_from_now() <=
+            boost::posix_time::time_duration(0,0,0,0))
+            setTimer(false);
+    }
+    std::size_t size() { return vec_[0].size() + vec_[1].size(); }
+private:
+    inline void vec_cancel(std::size_t x) {
+        for (auto &i: vec_[x]) {
+            auto j = i.lock();
+            if (j && !j->is_bind_listen())
+                j->cancel();
+        }
+    }
+    void doSwap() {
+        std::size_t hnext = hidx_ ^ 1;
+        vec_cancel(hnext);
+        vec_[hnext].clear();
+        hidx_ = hnext;
+    }
+    void setTimer(bool expidite) {
+        if (expidite)
+            swapTimer_.expires_from_now
+                (boost::posix_time::seconds(cyclefreq_));
+        else
+            swapTimer_.expires_from_now
+                (boost::posix_time::milliseconds(cyclefreq_ * 100));
+        swapTimer_.async_wait([this](const boost::system::error_code& error)
+                              {
+                                  if (error)
+                                      return;
+                                  if (lock_.try_lock()) {
+                                      doSwap();
+                                      auto sz = size();
+                                      lock_.unlock();
+                                      if (sz)
+                                          setTimer(false);
+                                  } else
+                                      setTimer(true);
+                              });
+    }
+    std::mutex lock_;
+    const std::size_t cyclefreq_;
+    std::atomic<std::size_t> hidx_;
+    ba::deadline_timer swapTimer_;
+    std::vector<std::weak_ptr<T>> vec_[2];
+};
+
+static std::unique_ptr<ephTrackerVec<SocksInit>> conntracker_hs;
+static std::unique_ptr<ephTrackerList<SocksInit>> conntracker_bindlisten;
 
 template <typename T>
 class connTracker : boost::noncopyable
@@ -245,9 +313,9 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
     cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
     rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
 #endif
-    conntracker_hs = nk::make_unique<ephConnTracker<SocksInit>>
+    conntracker_hs = nk::make_unique<ephTrackerVec<SocksInit>>
         (io_service, hs_secs);
-    conntracker_bindlisten = nk::make_unique<ephConnTracker<SocksInit>>
+    conntracker_bindlisten = nk::make_unique<ephTrackerList<SocksInit>>
         (io_service, bindlisten_secs);
 }
 
@@ -570,10 +638,9 @@ void SocksTCP::terminate()
 
 void SocksInit::untrack()
 {
-    if (!bind_listen_) conntracker_hs->erase(get_tracker_iterator(),
-                                             get_tracker_idx());
-    else conntracker_bindlisten->erase(get_tracker_iterator(),
-                                       get_tracker_idx());
+    if (!bind_listen_)
+        return;
+    conntracker_bindlisten->erase(get_tracker_iterator(), get_tracker_idx());
 }
 
 void SocksInit::cancel()
@@ -1506,7 +1573,6 @@ void SocksInit::dispatch_tcp_bind()
 
     if (!create_bind_socket(bind_ep))
         return;
-    conntracker_hs->erase(get_tracker_iterator(), get_tracker_idx());
     bind_listen_ = true;
     conntracker_bindlisten->store(shared_from_this());
 

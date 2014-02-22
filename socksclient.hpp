@@ -54,17 +54,19 @@ public:
     void cancel();
     inline void set_untracked() { untracked_ = true; }
     inline void start() { read_greet(); }
+    inline bool is_bind_listen() const { return bind_listen_; }
     void set_tracker_iterator(std::list<std::weak_ptr<SocksInit>>::iterator it,
                               unsigned char lidx) {
-        tracker_iterator_ = it;
-        tracker_idx_ = lidx;
+        assert(bound_);
+        bound_->tracker_iterator_ = it;
+        bound_->tracker_idx_ = lidx;
     }
     inline std::list<std::weak_ptr<SocksInit>>::iterator
     get_tracker_iterator() const {
-        return tracker_iterator_;
+        return bound_->tracker_iterator_;
     }
     inline unsigned char get_tracker_idx() const {
-        return tracker_idx_;
+        return bound_->tracker_idx_;
     }
 
     enum ReplyCode {
@@ -98,6 +100,8 @@ private:
         ~BoundSocket();
         boost::asio::ip::tcp::acceptor acceptor_;
         boost::asio::ip::tcp::endpoint local_endpoint_;
+        std::list<std::weak_ptr<SocksInit>>::iterator tracker_iterator_;
+        unsigned char tracker_idx_;
     };
 
     inline void init_resolver(boost::asio::io_service &io_service) {
@@ -131,7 +135,6 @@ private:
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
     std::atomic<bool> untracked_;
-    std::list<std::weak_ptr<SocksInit>>::iterator tracker_iterator_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string outbuf_;
@@ -140,7 +143,6 @@ private:
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     uint16_t ibSiz_;
-    unsigned char tracker_idx_;
     bool bind_listen_;
     bool auth_none_;
     bool auth_gssapi_;
