@@ -26,6 +26,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define HAS_64BIT
+#define SPLICE_CACHE_SIZE 20
+
 #include <iostream>
 #include <forward_list>
 #include <vector>
@@ -42,6 +45,10 @@
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_int.hpp>
 #include <boost/random/variate_generator.hpp>
+
+#ifdef HAS_64BIT
+#include <boost/lockfree/stack.hpp>
+#endif
 
 #include "socksclient.hpp"
 #include "asio_addrcmp.hpp"
@@ -301,6 +308,17 @@ public:
 static connTracker<SocksTCP> conntracker_tcp;
 
 #ifdef USE_SPLICE
+#ifdef HAS_64BIT
+static std::atomic<std::size_t> num_free_pipes;
+static boost::lockfree::stack
+<uint64_t, boost::lockfree::capacity<SPLICE_CACHE_SIZE>> free_pipes;
+#else
+static std::mutex free_pipe_lock;
+// XXX: Allow runtime customization.
+static std::size_t max_free_pipes = SPLICE_CACHE_SIZE;
+static std::vector<std::pair<int, int>> free_pipes;
+#endif
+
 static std::atomic<bool> cPipeTimerSet;
 static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
 static std::forward_list<std::weak_ptr<SocksTCP>> cSpliceList;
@@ -538,11 +556,6 @@ static inline void close_cr_socket(ba::ip::tcp::socket &s)
 }
 
 #ifdef USE_SPLICE
-// XXX: Allow runtime customization.
-static std::mutex free_pipe_lock;
-static std::size_t max_free_pipes = 20;
-static std::vector<std::pair<int, int>> free_pipes;
-
 static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
                                   ba::posix::stream_descriptor &sa,
                                   ba::posix::stream_descriptor &sb)
@@ -551,6 +564,19 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
     auto sao = sa.is_open();
     auto sbo = sb.is_open();
     if (p_len == 0 && sao && sbo) {
+#ifdef HAS_64BIT
+        auto s0 = sa.release();
+        auto s1 = sb.release();
+        uint64_t sp = static_cast<uint64_t>(s0);
+        sp |= static_cast<uint64_t>(s1) << 32U;
+        if (free_pipes.bounded_push(sp)) {
+            ++num_free_pipes;
+            std::cerr << "cached a pipe (total: " << num_free_pipes << ")\n";
+        } else {
+            close(s0);
+            close(s1);
+        }
+#else
         std::pair<int, int> fp;
         fp.first = sa.release();
         fp.second = sb.release();
@@ -562,6 +588,7 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
             close(fp.first);
             close(fp.second);
         }
+#endif
         return;
     }
     if (sao)
@@ -1038,11 +1065,21 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 bool SocksTCP::init_pipe_client()
 {
     int pipes[2];
-    bool need_free_pipe(true);
+#ifdef HAS_64BIT
+    uint64_t sp;
+    bool got_free_pipe = free_pipes.pop(sp);
+    if (got_free_pipe) {
+        --num_free_pipes;
+        pipes[0] = static_cast<uint32_t>(sp & 0xffffffffUL);
+        pipes[1] = static_cast<uint32_t>(sp >> 32U);
+        std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+    }
+#else
+    bool got_free_pipe(false);
     {
         std::lock_guard<std::mutex> wl(free_pipe_lock);
         if (free_pipes.size()) {
-            need_free_pipe = false;
+            got_free_pipe = true;
             auto fp = free_pipes.back();
             pipes[0] = fp.first;
             pipes[1] = fp.second;
@@ -1050,7 +1087,8 @@ bool SocksTCP::init_pipe_client()
             std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
-    if (need_free_pipe && pipe2(pipes, O_NONBLOCK))
+#endif
+    if (!got_free_pipe && pipe2(pipes, O_NONBLOCK))
         return false;
     sdToRemote_.assign(pipes[0]);
     pToRemote_.assign(pipes[1]);
@@ -1060,11 +1098,21 @@ bool SocksTCP::init_pipe_client()
 bool SocksTCP::init_pipe_remote()
 {
     int pipes[2];
-    bool need_free_pipe(true);
+#ifdef HAS_64BIT
+    uint64_t sp;
+    bool got_free_pipe = free_pipes.pop(sp);
+    if (got_free_pipe) {
+        --num_free_pipes;
+        pipes[0] = static_cast<uint32_t>(sp & 0xffffffffUL);
+        pipes[1] = static_cast<uint32_t>(sp >> 32U);
+        std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+    }
+#else
+    bool got_free_pipe(false);
     {
         std::lock_guard<std::mutex> wl(free_pipe_lock);
         if (free_pipes.size()) {
-            need_free_pipe = false;
+            got_free_pipe = true;
             auto fp = free_pipes.back();
             pipes[0] = fp.first;
             pipes[1] = fp.second;
@@ -1072,7 +1120,8 @@ bool SocksTCP::init_pipe_remote()
             std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
-    if (need_free_pipe && pipe2(pipes, O_NONBLOCK))
+#endif
+    if (!got_free_pipe && pipe2(pipes, O_NONBLOCK))
         return false;
     sdToClient_.assign(pipes[0]);
     pToClient_.assign(pipes[1]);
