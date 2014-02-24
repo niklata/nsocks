@@ -570,8 +570,10 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
         uint64_t sp = static_cast<uint64_t>(s0);
         sp |= static_cast<uint64_t>(s1) << 32U;
         if (free_pipes.bounded_push(sp)) {
-            ++num_free_pipes;
-            std::cerr << "cached a pipe (total: " << num_free_pipes << ")\n";
+            if (g_verbose_logs) {
+                ++num_free_pipes;
+                std::cerr << "cached a pipe (total: " << num_free_pipes << ")\n";
+            }
         } else {
             close(s0);
             close(s1);
@@ -583,7 +585,8 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
         std::lock_guard<std::mutex> wl(free_pipe_lock);
         if (free_pipes.size() < max_free_pipes) {
             free_pipes.push_back(std::move(fp));
-            std::cerr << "cached a pipe (total: " << free_pipes.size() << ")\n";
+            if (g_verbose_logs)
+                std::cerr << "cached a pipe (total: " << free_pipes.size() << ")\n";
         } else {
             close(fp.first);
             close(fp.second);
@@ -1069,10 +1072,12 @@ bool SocksTCP::init_pipe_client()
     uint64_t sp;
     bool got_free_pipe = free_pipes.pop(sp);
     if (got_free_pipe) {
-        --num_free_pipes;
         pipes[0] = static_cast<uint32_t>(sp & 0xffffffffUL);
         pipes[1] = static_cast<uint32_t>(sp >> 32U);
-        std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        if (g_verbose_logs) {
+            --num_free_pipes;
+            std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        }
     }
 #else
     bool got_free_pipe(false);
@@ -1084,7 +1089,8 @@ bool SocksTCP::init_pipe_client()
             pipes[0] = fp.first;
             pipes[1] = fp.second;
             free_pipes.pop_back();
-            std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+            if (g_verbose_logs)
+                std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
 #endif
@@ -1102,10 +1108,12 @@ bool SocksTCP::init_pipe_remote()
     uint64_t sp;
     bool got_free_pipe = free_pipes.pop(sp);
     if (got_free_pipe) {
-        --num_free_pipes;
         pipes[0] = static_cast<uint32_t>(sp & 0xffffffffUL);
         pipes[1] = static_cast<uint32_t>(sp >> 32U);
-        std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        if (g_verbose_logs) {
+            --num_free_pipes;
+            std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+        }
     }
 #else
     bool got_free_pipe(false);
@@ -1117,7 +1125,8 @@ bool SocksTCP::init_pipe_remote()
             pipes[0] = fp.first;
             pipes[1] = fp.second;
             free_pipes.pop_back();
-            std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+            if (g_verbose_logs)
+                std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
 #endif
