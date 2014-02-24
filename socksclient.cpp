@@ -342,204 +342,6 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
         (io_service, bindlisten_secs);
 }
 
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_dst_deny_masks;
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_bind_allow_masks;
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_udp_allow_masks;
-
-static std::atomic<std::size_t> socks_alive_count;
-static std::atomic<std::size_t> udp_alive_count;
-
-static void print_trackers_logentry(const std::string &host, uint16_t port)
-{
-    std::cout << "Connection to " << host << ":" << port
-              << " DESTRUCTED (total: HS";
-    if (conntracker_hs)
-        std::cout << conntracker_hs->size() << ", BL";
-    else
-        std::cout << "X, BL";
-    if (conntracker_bindlisten)
-        std::cout << conntracker_bindlisten->size() << " || T";
-    else
-        std::cout << "X || T";
-    std::cout << conntracker_tcp.size() << ", U"
-              << udp_alive_count
-              << " / " << socks_alive_count << ")" << std::endl;
-}
-
-class BindPortAssigner : boost::noncopyable
-{
-public:
-    BindPortAssigner(uint16_t start, uint16_t end)
-            : ports_used_(end - start + 1), random_portrange_(start, end),
-              random_port_(g_random_prng, random_portrange_),
-              start_port_(start), end_port_(end)
-    {
-        assert(start <= end);
-    }
-    uint16_t get_port()
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto rp = random_port_();
-        for (int i = rp; i <= end_port_; ++i) {
-            auto p = i - start_port_;
-            if (ports_used_[p])
-                continue;
-            ports_used_[p] = 1;
-            return p;
-        }
-        for (int i = start_port_; i < rp; ++i) {
-            auto p = i - start_port_;
-            if (ports_used_[p])
-                continue;
-            ports_used_[p] = 1;
-            return p;
-        }
-        throw std::out_of_range("no free ports");
-    }
-    void release_port(uint16_t port)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        if (port < start_port_ || port > end_port_) {
-            std::cerr << "BindPortAssigner::release_port: port="
-                      << port << " out of range\n";
-            return;
-        }
-        ports_used_[port - start_port_] = 0;
-    }
-private:
-    std::mutex lock_;
-    boost::dynamic_bitset<> ports_used_;
-    boost::uniform_int<uint16_t> random_portrange_;
-    boost::variate_generator<boost::mt19937&, boost::uniform_int<uint16_t>>
-        random_port_;
-    uint16_t start_port_;
-    uint16_t end_port_;
-};
-
-static std::unique_ptr<BindPortAssigner> BPA;
-static std::unique_ptr<BindPortAssigner> UPA;
-
-SocksInit::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
-                                    boost::asio::ip::tcp::endpoint lep)
-        : acceptor_(io_service), local_endpoint_(lep)
-{
-    boost::system::error_code ec;
-    acceptor_.open(lep.protocol(), ec);
-    if (ec)
-        throw std::runtime_error("open failed");
-    acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
-    if (ec)
-        throw std::runtime_error("set_option/reuse_address failed");
-    acceptor_.non_blocking(true, ec);
-    if (ec)
-        throw std::runtime_error("non_blocking failed");
-    acceptor_.bind(lep, ec);
-    if (ec)
-        throw std::domain_error("bind failed");
-    acceptor_.listen(1, ec);
-    if (ec)
-        throw std::runtime_error("listen failed");
-}
-
-SocksInit::BoundSocket::~BoundSocket()
-{
-    assert(BPA);
-    BPA->release_port(local_endpoint_.port());
-}
-
-void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
-{
-    if (g_disable_bind)
-        return;
-    if (lowport < 1024 || highport < 1024) {
-        std::cout << "For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
-                  << "must both be set to non-equal values >= 1024.  BIND requests will be\n"
-                  << "disabled until this configuration problem is corrected." << std::endl;
-        g_disable_bind = true;
-        return;
-    }
-    if (lowport > highport)
-        std::swap(lowport, highport);
-    BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
-}
-
-void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
-{
-    if (g_disable_udp)
-        return;
-    if (lowport < 1024 || highport < 1024) {
-        std::cout << "For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
-                  << "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
-                  << "ASSOCIATE requests will be disabled until this configuration problem\n"
-                  << "is corrected." << std::endl;
-        g_disable_udp = true;
-        return;
-    }
-    if (lowport > highport)
-        std::swap(lowport, highport);
-    UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
-}
-
-SocksInit::SocksInit(ba::io_service &io_service,
-                     ba::ip::tcp::socket client_socket)
-        : untracked_(false), ibSiz_(0), bind_listen_(false),
-          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
-          client_socket_(std::move(client_socket)),
-          remote_socket_(io_service)
-{
-    if (g_verbose_logs)
-        ++socks_alive_count;
-    client_socket_.non_blocking(true);
-    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
-}
-
-SocksInit::~SocksInit()
-{
-    if (!untracked_)
-        untrack();
-    if (g_verbose_logs) {
-        --socks_alive_count;
-        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
-                                  : dst_address_.to_string(),
-                                  dst_port_);
-    }
-}
-
-SocksTCP::SocksTCP(ba::io_service &io_service,
-                   boost::asio::ip::tcp::socket client_socket,
-                   boost::asio::ip::tcp::socket remote_socket,
-                   boost::asio::ip::address dst_address,
-                   uint16_t dst_port, bool is_bind, std::string dst_hostname)
-        : terminated_(false),
-          dst_hostname_(dst_hostname), dst_address_(dst_address),
-          client_socket_(std::move(client_socket)),
-          remote_socket_(std::move(remote_socket)),
-          dst_port_(dst_port), is_bind_(is_bind),
-#ifdef USE_SPLICE
-          pToRemote_len_(0), pToClient_len_(0),
-          sdToRemote_(io_service), sdToClient_(io_service),
-          pToRemote_(io_service), pToClient_(io_service)
-#endif
-{
-    if (g_verbose_logs)
-        ++socks_alive_count;
-}
-
-SocksTCP::~SocksTCP()
-{
-    if (!terminated_)
-        untrack();
-    if (g_verbose_logs) {
-        --socks_alive_count;
-        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
-                                  : dst_address_.to_string(),
-                                  dst_port_);
-    }
-}
-
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
 {
     boost::system::error_code ec;
@@ -628,61 +430,217 @@ static inline bool pipe_close(ba::posix::stream_descriptor &sa,
         s_writer.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
     return ret;
 }
-
-void SocksTCP::close_pipe_to_client()
-{
-    boost::system::error_code ec;
-    assert(pToClient_len_ == 0);
-    pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
-}
-
-void SocksTCP::close_pipe_to_remote()
-{
-    boost::system::error_code ec;
-    assert(pToRemote_len_ == 0);
-    pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
-}
-
-bool SocksTCP::close_client_socket()
-{
-    boost::system::error_code ec;
-    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
-                      client_socket_, remote_socket_);
-}
-
-bool SocksTCP::close_remote_socket()
-{
-    boost::system::error_code ec;
-    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
-                      remote_socket_, client_socket_);
-}
-#else
-bool SocksTCP::close_client_socket() { close_cr_socket(client_socket_); return false; }
-bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
 #endif
 
-void SocksTCP::untrack()
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_dst_deny_masks;
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_bind_allow_masks;
+std::vector<std::pair<boost::asio::ip::address, unsigned int>>
+g_client_udp_allow_masks;
+
+static std::atomic<std::size_t> socks_alive_count;
+static std::atomic<std::size_t> udp_alive_count;
+
+static void print_trackers_logentry(const std::string &host, uint16_t port)
 {
-    conntracker_tcp.erase(get_tracker_iterator());
+    std::cout << "Connection to " << host << ":" << port
+              << " DESTRUCTED (total: HS";
+    if (conntracker_hs)
+        std::cout << conntracker_hs->size() << ", BL";
+    else
+        std::cout << "X, BL";
+    if (conntracker_bindlisten)
+        std::cout << conntracker_bindlisten->size() << " || T";
+    else
+        std::cout << "X || T";
+    std::cout << conntracker_tcp.size() << ", U"
+              << udp_alive_count
+              << " / " << socks_alive_count << ")" << std::endl;
 }
 
-void SocksTCP::cancel()
+class BindPortAssigner : boost::noncopyable
 {
-    close_remote_socket();
-    close_client_socket();
-}
+public:
+    BindPortAssigner(uint16_t start, uint16_t end)
+            : ports_used_(end - start + 1), random_portrange_(start, end),
+              random_port_(g_random_prng, random_portrange_),
+              start_port_(start), end_port_(end)
+    {
+        assert(start <= end);
+    }
+    uint16_t get_port()
+    {
+        std::lock_guard<std::mutex> wl(lock_);
+        auto rp = random_port_();
+        for (int i = rp; i <= end_port_; ++i) {
+            auto p = i - start_port_;
+            if (ports_used_[p])
+                continue;
+            ports_used_[p] = 1;
+            return p;
+        }
+        for (int i = start_port_; i < rp; ++i) {
+            auto p = i - start_port_;
+            if (ports_used_[p])
+                continue;
+            ports_used_[p] = 1;
+            return p;
+        }
+        throw std::out_of_range("no free ports");
+    }
+    void release_port(uint16_t port)
+    {
+        std::lock_guard<std::mutex> wl(lock_);
+        if (port < start_port_ || port > end_port_) {
+            std::cerr << "BindPortAssigner::release_port: port="
+                      << port << " out of range\n";
+            return;
+        }
+        ports_used_[port - start_port_] = 0;
+    }
+private:
+    std::mutex lock_;
+    boost::dynamic_bitset<> ports_used_;
+    boost::uniform_int<uint16_t> random_portrange_;
+    boost::variate_generator<boost::mt19937&, boost::uniform_int<uint16_t>>
+        random_port_;
+    uint16_t start_port_;
+    uint16_t end_port_;
+};
 
-void SocksTCP::terminate()
+static std::unique_ptr<BindPortAssigner> BPA;
+static std::unique_ptr<BindPortAssigner> UPA;
+
+void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
 {
-    if (terminated_)
+    if (g_disable_bind)
         return;
-    terminated_ = true;
-    cancel();
-    untrack();
-    // std::cout << "Connection to "
-    //           << (dst_hostname_.size() ? dst_hostname_
-    //                                    : dst_address_.to_string())
-    //           << ":" << dst_port_ << " called terminate()." << std::endl;
+    if (lowport < 1024 || highport < 1024) {
+        std::cout << "For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
+                  << "must both be set to non-equal values >= 1024.  BIND requests will be\n"
+                  << "disabled until this configuration problem is corrected." << std::endl;
+        g_disable_bind = true;
+        return;
+    }
+    if (lowport > highport)
+        std::swap(lowport, highport);
+    BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+}
+
+void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
+{
+    if (g_disable_udp)
+        return;
+    if (lowport < 1024 || highport < 1024) {
+        std::cout << "For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
+                  << "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
+                  << "ASSOCIATE requests will be disabled until this configuration problem\n"
+                  << "is corrected." << std::endl;
+        g_disable_udp = true;
+        return;
+    }
+    if (lowport > highport)
+        std::swap(lowport, highport);
+    UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+}
+
+static inline void send_reply_code(std::string &outbuf,
+                                   SocksInit::ReplyCode replycode)
+{
+    outbuf.clear();
+    outbuf.append(1, 0x05);
+    outbuf.append(1, replycode);
+    outbuf.append(1, 0x00);
+}
+
+static inline void send_reply_binds(std::string &outbuf,
+                                    ba::ip::tcp::endpoint ep)
+{
+    auto bnd_addr = ep.address();
+    if (bnd_addr.is_v4()) {
+        auto v4b = bnd_addr.to_v4().to_bytes();
+        outbuf.append(1, 0x01);
+        for (auto &i: v4b)
+            outbuf.append(1, i);
+    } else {
+        auto v6b = bnd_addr.to_v6().to_bytes();
+        outbuf.append(1, 0x04);
+        for (auto &i: v6b)
+            outbuf.append(1, i);
+    }
+    union {
+        uint16_t p;
+        char b[2];
+    } portu;
+    portu.p = htons(ep.port());
+    outbuf.append(1, portu.b[0]);
+    outbuf.append(1, portu.b[1]);
+}
+
+static const char * const replyCodeString[] = {
+    "Success",
+    "Fail",
+    "Deny",
+    "NetUnreach",
+    "HostUnreach",
+    "ConnRefused",
+    "TTLExpired",
+    "RplCmdNotSupp",
+    "RplAddrNotSupp",
+};
+
+SocksInit::SocksInit(ba::io_service &io_service,
+                     ba::ip::tcp::socket client_socket)
+        : untracked_(false), ibSiz_(0), bind_listen_(false),
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
+          client_socket_(std::move(client_socket)),
+          remote_socket_(io_service)
+{
+    if (g_verbose_logs)
+        ++socks_alive_count;
+    client_socket_.non_blocking(true);
+    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+}
+
+SocksInit::~SocksInit()
+{
+    if (!untracked_)
+        untrack();
+    if (g_verbose_logs) {
+        --socks_alive_count;
+        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
+                                  : dst_address_.to_string(),
+                                  dst_port_);
+    }
+}
+
+SocksInit::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
+                                    boost::asio::ip::tcp::endpoint lep)
+        : acceptor_(io_service), local_endpoint_(lep)
+{
+    boost::system::error_code ec;
+    acceptor_.open(lep.protocol(), ec);
+    if (ec)
+        throw std::runtime_error("open failed");
+    acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    if (ec)
+        throw std::runtime_error("set_option/reuse_address failed");
+    acceptor_.non_blocking(true, ec);
+    if (ec)
+        throw std::runtime_error("non_blocking failed");
+    acceptor_.bind(lep, ec);
+    if (ec)
+        throw std::domain_error("bind failed");
+    acceptor_.listen(1, ec);
+    if (ec)
+        throw std::runtime_error("listen failed");
+}
+
+SocksInit::BoundSocket::~BoundSocket()
+{
+    assert(BPA);
+    BPA->release_port(local_endpoint_.port());
 }
 
 void SocksInit::untrack()
@@ -1063,6 +1021,273 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
     }
     return rc;
 }
+
+bool SocksInit::is_bind_client_allowed() const
+{
+    auto laddr = client_socket_.remote_endpoint().address();
+    for (const auto &i: g_client_bind_allow_masks) {
+        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        if (r)
+            return true;
+    }
+    std::cerr << "DENIED bind request from " << laddr.to_string() << "\n";
+    return false;
+}
+
+bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
+{
+    int tries = 0;
+    while (true) {
+        ++tries;
+        if (tries > MAX_BIND_TRIES) {
+            std::cerr << "fatal error creating BIND socket: can't find unused port\n";
+            break;
+        }
+        try {
+            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
+        } catch (const std::runtime_error &e) {
+            std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
+            break;
+        } catch (const std::domain_error &e) {
+            continue;
+        }
+        return true;
+    }
+    send_reply(RplFail);
+    return false;
+}
+
+void SocksInit::dispatch_tcp_bind()
+{
+    if (g_disable_bind) {
+        send_reply(RplDeny);
+        return;
+    }
+    assert(BPA);
+    ba::ip::tcp::endpoint bind_ep;
+    auto rcnct = conntracker_tcp.find_by_addr_port
+        (dst_address_, dst_port_);
+    try {
+        if (rcnct) {
+            // Bind to the local IP that is associated with the
+            // client-specified dst_address_ and dst_port_.
+            auto laddr((*rcnct)->remote_socket_local_endpoint().address());
+            bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
+        } else {
+            if (!is_bind_client_allowed()) {
+                send_reply(RplDeny);
+                return;
+            }
+            bind_ep = ba::ip::tcp::endpoint
+                (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
+                 BPA->get_port());
+        }
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a local endpoint.
+        send_reply(RplFail);
+        return;
+    }
+
+    if (!create_bind_socket(bind_ep))
+        return;
+    bind_listen_ = true;
+    conntracker_bindlisten->store(shared_from_this());
+
+    auto sfd = shared_from_this();
+    bound_->acceptor_.async_accept
+        (remote_socket_, strand_C->wrap(
+         [this, sfd](const boost::system::error_code &ec)
+         {
+             if (ec) {
+                 send_reply(RplFail);
+                 return;
+             }
+             std::cout << "Accepted a connection to a BIND socket." << std::endl;
+             set_remote_socket_options();
+             conntracker_tcp.emplace(io_service,
+                   std::move(client_socket_),
+                   std::move(remote_socket_),
+                   std::move(dst_address_), dst_port_, true,
+                   std::move(dst_hostname_));
+         }));
+    send_reply(RplSuccess);
+}
+
+bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
+{
+    for (const auto &i: g_client_udp_allow_masks) {
+        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        if (r)
+            return true;
+    }
+    std::cerr << "DENIED udp associate request from " << laddr.to_string() << "\n";
+    return false;
+}
+
+// DST.ADDR and DST.PORT are ignored.
+void SocksInit::dispatch_udp()
+{
+    if (g_disable_udp) {
+        send_reply(RplDeny);
+        return;
+    }
+    assert(UPA);
+    auto client_ep = client_socket_.remote_endpoint();
+    if (!is_udp_client_allowed(client_ep.address())) {
+        send_reply(RplDeny);
+        return;
+    }
+    ba::ip::udp::endpoint udp_client_ep, udp_remote_ep;
+    uint16_t udp_local_port, udp_remote_port;
+    auto laddr(client_socket_.local_endpoint().address());
+    try {
+        udp_local_port = UPA->get_port();
+        udp_client_ep = ba::ip::udp::endpoint(laddr, udp_local_port);
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a local endpoint.
+        send_reply(RplFail);
+        return;
+    }
+    try {
+        udp_remote_port = UPA->get_port();
+        udp_remote_ep = ba::ip::udp::endpoint
+            (!g_disable_ipv6 ? ba::ip::udp::v6() : ba::ip::udp::v4(),
+             udp_remote_port);
+    } catch (const std::out_of_range &) {
+        // No ports are free for use as a remote endpoint.
+        UPA->release_port(udp_local_port);
+        send_reply(RplFail);
+        return;
+    }
+
+    auto ct = std::make_shared<SocksUDP>
+        (io_service, std::move(client_socket_),
+         udp_client_ep, udp_remote_ep,
+         ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+    ct->start();
+}
+
+void SocksInit::send_reply(ReplyCode replycode)
+{
+    send_reply_code(outbuf_, replycode);
+    if (replycode == RplSuccess) {
+        if (cmd_code_ != CmdTCPBind || !bound_) {
+            throw std::logic_error
+                ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
+        } else
+            send_reply_binds(outbuf_, bound_->local_endpoint_);
+    }
+    auto sfd = shared_from_this();
+    ba::async_write
+        (client_socket_,
+         ba::buffer(outbuf_, outbuf_.size()),
+         strand_C->wrap(
+         [this, sfd, replycode](const boost::system::error_code &ec,
+                                std::size_t bytes_xferred)
+         {
+             if (ec || replycode != RplSuccess) {
+                 std::cout << "REJECT @"
+                     << client_socket_.remote_endpoint().address()
+                     << " (none) -> "
+                     << (addr_type_ != AddrDNS
+                         ? dst_address_.to_string() : dst_hostname_)
+                     << ":" << dst_port_
+                     << " [" << replyCodeString[replycode]
+                     << "]" << std::endl;
+                 terminate();
+             }
+         }));
+}
+
+SocksTCP::SocksTCP(ba::io_service &io_service,
+                   boost::asio::ip::tcp::socket client_socket,
+                   boost::asio::ip::tcp::socket remote_socket,
+                   boost::asio::ip::address dst_address,
+                   uint16_t dst_port, bool is_bind, std::string dst_hostname)
+        : terminated_(false),
+          dst_hostname_(dst_hostname), dst_address_(dst_address),
+          client_socket_(std::move(client_socket)),
+          remote_socket_(std::move(remote_socket)),
+          dst_port_(dst_port), is_bind_(is_bind),
+#ifdef USE_SPLICE
+          pToRemote_len_(0), pToClient_len_(0),
+          sdToRemote_(io_service), sdToClient_(io_service),
+          pToRemote_(io_service), pToClient_(io_service)
+#endif
+{
+    if (g_verbose_logs)
+        ++socks_alive_count;
+}
+
+SocksTCP::~SocksTCP()
+{
+    if (!terminated_)
+        untrack();
+    if (g_verbose_logs) {
+        --socks_alive_count;
+        print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
+                                  : dst_address_.to_string(),
+                                  dst_port_);
+    }
+}
+
+#ifdef USE_SPLICE
+void SocksTCP::close_pipe_to_client()
+{
+    boost::system::error_code ec;
+    assert(pToClient_len_ == 0);
+    pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
+}
+
+void SocksTCP::close_pipe_to_remote()
+{
+    boost::system::error_code ec;
+    assert(pToRemote_len_ == 0);
+    pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
+}
+
+bool SocksTCP::close_client_socket()
+{
+    boost::system::error_code ec;
+    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
+                      client_socket_, remote_socket_);
+}
+
+bool SocksTCP::close_remote_socket()
+{
+    boost::system::error_code ec;
+    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
+                      remote_socket_, client_socket_);
+}
+#else
+bool SocksTCP::close_client_socket() { close_cr_socket(client_socket_); return false; }
+bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
+#endif
+
+void SocksTCP::untrack()
+{
+    conntracker_tcp.erase(get_tracker_iterator());
+}
+
+void SocksTCP::cancel()
+{
+    close_remote_socket();
+    close_client_socket();
+}
+
+void SocksTCP::terminate()
+{
+    if (terminated_)
+        return;
+    terminated_ = true;
+    cancel();
+    untrack();
+    // std::cout << "Connection to "
+    //           << (dst_hostname_.size() ? dst_hostname_
+    //                                    : dst_address_.to_string())
+    //           << ":" << dst_port_ << " called terminate()." << std::endl;
+}
+
 
 #ifdef USE_SPLICE
 
@@ -1631,41 +1856,6 @@ void SocksTCP::tcp_remote_socket_read()
          }));
 }
 
-bool SocksInit::is_bind_client_allowed() const
-{
-    auto laddr = client_socket_.remote_endpoint().address();
-    for (const auto &i: g_client_bind_allow_masks) {
-        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
-        if (r)
-            return true;
-    }
-    std::cerr << "DENIED bind request from " << laddr.to_string() << "\n";
-    return false;
-}
-
-bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
-{
-    int tries = 0;
-    while (true) {
-        ++tries;
-        if (tries > MAX_BIND_TRIES) {
-            std::cerr << "fatal error creating BIND socket: can't find unused port\n";
-            break;
-        }
-        try {
-            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
-        } catch (const std::runtime_error &e) {
-            std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
-            break;
-        } catch (const std::domain_error &e) {
-            continue;
-        }
-        return true;
-    }
-    send_reply(RplFail);
-    return false;
-}
-
 bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
                            uint16_t port) const
 {
@@ -1677,161 +1867,6 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
         return false;
     return true;
 }
-
-void SocksInit::dispatch_tcp_bind()
-{
-    if (g_disable_bind) {
-        send_reply(RplDeny);
-        return;
-    }
-    assert(BPA);
-    ba::ip::tcp::endpoint bind_ep;
-    auto rcnct = conntracker_tcp.find_by_addr_port
-        (dst_address_, dst_port_);
-    try {
-        if (rcnct) {
-            // Bind to the local IP that is associated with the
-            // client-specified dst_address_ and dst_port_.
-            auto laddr((*rcnct)->remote_socket_local_endpoint().address());
-            bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
-        } else {
-            if (!is_bind_client_allowed()) {
-                send_reply(RplDeny);
-                return;
-            }
-            bind_ep = ba::ip::tcp::endpoint
-                (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
-                 BPA->get_port());
-        }
-    } catch (const std::out_of_range &) {
-        // No ports are free for use as a local endpoint.
-        send_reply(RplFail);
-        return;
-    }
-
-    if (!create_bind_socket(bind_ep))
-        return;
-    bind_listen_ = true;
-    conntracker_bindlisten->store(shared_from_this());
-
-    auto sfd = shared_from_this();
-    bound_->acceptor_.async_accept
-        (remote_socket_, strand_C->wrap(
-         [this, sfd](const boost::system::error_code &ec)
-         {
-             if (ec) {
-                 send_reply(RplFail);
-                 return;
-             }
-             std::cout << "Accepted a connection to a BIND socket." << std::endl;
-             set_remote_socket_options();
-             conntracker_tcp.emplace(io_service,
-                   std::move(client_socket_),
-                   std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, true,
-                   std::move(dst_hostname_));
-         }));
-    send_reply(RplSuccess);
-}
-
-bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
-{
-    for (const auto &i: g_client_udp_allow_masks) {
-        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
-        if (r)
-            return true;
-    }
-    std::cerr << "DENIED udp associate request from " << laddr.to_string() << "\n";
-    return false;
-}
-
-// DST.ADDR and DST.PORT are ignored.
-void SocksInit::dispatch_udp()
-{
-    if (g_disable_udp) {
-        send_reply(RplDeny);
-        return;
-    }
-    assert(UPA);
-    auto client_ep = client_socket_.remote_endpoint();
-    if (!is_udp_client_allowed(client_ep.address())) {
-        send_reply(RplDeny);
-        return;
-    }
-    ba::ip::udp::endpoint udp_client_ep, udp_remote_ep;
-    uint16_t udp_local_port, udp_remote_port;
-    auto laddr(client_socket_.local_endpoint().address());
-    try {
-        udp_local_port = UPA->get_port();
-        udp_client_ep = ba::ip::udp::endpoint(laddr, udp_local_port);
-    } catch (const std::out_of_range &) {
-        // No ports are free for use as a local endpoint.
-        send_reply(RplFail);
-        return;
-    }
-    try {
-        udp_remote_port = UPA->get_port();
-        udp_remote_ep = ba::ip::udp::endpoint
-            (!g_disable_ipv6 ? ba::ip::udp::v6() : ba::ip::udp::v4(),
-             udp_remote_port);
-    } catch (const std::out_of_range &) {
-        // No ports are free for use as a remote endpoint.
-        UPA->release_port(udp_local_port);
-        send_reply(RplFail);
-        return;
-    }
-
-    auto ct = std::make_shared<SocksUDP>
-        (io_service, std::move(client_socket_),
-         udp_client_ep, udp_remote_ep,
-         ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
-    ct->start();
-}
-
-static inline void send_reply_code(std::string &outbuf,
-                                   SocksInit::ReplyCode replycode)
-{
-    outbuf.clear();
-    outbuf.append(1, 0x05);
-    outbuf.append(1, replycode);
-    outbuf.append(1, 0x00);
-}
-
-static inline void send_reply_binds(std::string &outbuf,
-                                    ba::ip::tcp::endpoint ep)
-{
-    auto bnd_addr = ep.address();
-    if (bnd_addr.is_v4()) {
-        auto v4b = bnd_addr.to_v4().to_bytes();
-        outbuf.append(1, 0x01);
-        for (auto &i: v4b)
-            outbuf.append(1, i);
-    } else {
-        auto v6b = bnd_addr.to_v6().to_bytes();
-        outbuf.append(1, 0x04);
-        for (auto &i: v6b)
-            outbuf.append(1, i);
-    }
-    union {
-        uint16_t p;
-        char b[2];
-    } portu;
-    portu.p = htons(ep.port());
-    outbuf.append(1, portu.b[0]);
-    outbuf.append(1, portu.b[1]);
-}
-
-static const char * const replyCodeString[] = {
-    "Success",
-    "Fail",
-    "Deny",
-    "NetUnreach",
-    "HostUnreach",
-    "ConnRefused",
-    "TTLExpired",
-    "RplCmdNotSupp",
-    "RplAddrNotSupp",
-};
 
 void SocksTCP::start()
 {
@@ -1863,38 +1898,6 @@ void SocksTCP::start()
              }
              tcp_client_socket_read();
              tcp_remote_socket_read();
-         }));
-}
-
-void SocksInit::send_reply(ReplyCode replycode)
-{
-    send_reply_code(outbuf_, replycode);
-    if (replycode == RplSuccess) {
-        if (cmd_code_ != CmdTCPBind || !bound_) {
-            throw std::logic_error
-                ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
-        } else
-            send_reply_binds(outbuf_, bound_->local_endpoint_);
-    }
-    auto sfd = shared_from_this();
-    ba::async_write
-        (client_socket_,
-         ba::buffer(outbuf_, outbuf_.size()),
-         strand_C->wrap(
-         [this, sfd, replycode](const boost::system::error_code &ec,
-                                std::size_t bytes_xferred)
-         {
-             if (ec || replycode != RplSuccess) {
-                 std::cout << "REJECT @"
-                     << client_socket_.remote_endpoint().address()
-                     << " (none) -> "
-                     << (addr_type_ != AddrDNS
-                         ? dst_address_.to_string() : dst_hostname_)
-                     << ":" << dst_port_
-                     << " [" << replyCodeString[replycode]
-                     << "]" << std::endl;
-                 terminate();
-             }
          }));
 }
 
