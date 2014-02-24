@@ -28,6 +28,7 @@
 
 #define HAS_64BIT
 #define SPLICE_CACHE_SIZE 20
+#define SPLICE_PIPE_SIZE (1024 * 256)
 
 #include <iostream>
 #include <forward_list>
@@ -1094,8 +1095,19 @@ bool SocksTCP::init_pipe_client()
         }
     }
 #endif
-    if (!got_free_pipe && pipe2(pipes, O_NONBLOCK))
-        return false;
+    if (!got_free_pipe) {
+        if (pipe2(pipes, O_NONBLOCK))
+            return false;
+        auto r = fcntl(pipes[0], F_SETPIPE_SZ, SPLICE_PIPE_SIZE);
+        if (r < SPLICE_PIPE_SIZE)
+            std::cerr << "toRemote: Pipe size could only be set to " << r << ".\n";
+        else if (r == -1) {
+            switch (errno) {
+                case EPERM: std::cerr << "toRemote: EPERM when trying to set splice pipe size to " << SPLICE_PIPE_SIZE << ".\n";
+                default: std::cerr << "toRemote: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
+            }
+        }
+    }
     sdToRemote_.assign(pipes[0]);
     pToRemote_.assign(pipes[1]);
     return true;
@@ -1130,8 +1142,19 @@ bool SocksTCP::init_pipe_remote()
         }
     }
 #endif
-    if (!got_free_pipe && pipe2(pipes, O_NONBLOCK))
-        return false;
+    if (!got_free_pipe) {
+        if (pipe2(pipes, O_NONBLOCK))
+            return false;
+        auto r = fcntl(pipes[0], F_SETPIPE_SZ, SPLICE_PIPE_SIZE);
+        if (r < SPLICE_PIPE_SIZE)
+            std::cerr << "toClient: Pipe size could only be set to " << r << ".\n";
+        else if (r == -1) {
+            switch (errno) {
+                case EPERM: std::cerr << "toClient: EPERM when trying to set splice pipe size to " << SPLICE_PIPE_SIZE << ".\n";
+                default: std::cerr << "toClient: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
+            }
+        }
+    }
     sdToClient_.assign(pipes[0]);
     pToClient_.assign(pipes[1]);
     return true;
@@ -1366,7 +1389,8 @@ void SocksTCP::tcp_client_socket_read_splice()
                      terminate_client();
                      return;
                  }
-                 if (*n == 0) {
+                 pToRemote_len_ += *n;
+                 if (*n < send_minsplice_size) {
                      if (pToRemote_len_ > 0)
                          flushPipeToRemote(false);
                      else {
@@ -1375,7 +1399,6 @@ void SocksTCP::tcp_client_socket_read_splice()
                      }
                      return;
                  }
-                 pToRemote_len_ += *n;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
@@ -1417,7 +1440,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      terminate_remote();
                      return;
                  }
-                 if (*n == 0) {
+                 pToClient_len_ += *n;
+                 if (*n < receive_minsplice_size) {
                      if (pToClient_len_ > 0)
                          flushPipeToClient(false);
                      else {
@@ -1426,7 +1450,6 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      }
                      return;
                  }
-                 pToClient_len_ += *n;
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";

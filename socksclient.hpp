@@ -41,7 +41,7 @@
 
 #include "make_unique.hpp"
 
-#define SPLICE_SIZE (1024 * 1024)
+#define SPLICE_SIZE (1024 * 256)
 
 class SocksInit
     : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
