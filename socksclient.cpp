@@ -1252,24 +1252,31 @@ static void kickRemotePipeTimer()
     }
 }
 
-// Ret: Is the connection still alive?
+// Ret: Is the connection still alive and splicing?
 bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_point &now)
 {
-    size_t l = pToClient_len_;
-    if (l == 0)
-        return true;
     if (std::chrono::duration_cast<std::chrono::milliseconds>
-        (remote_read_ts_ - now).count() < max_buffer_ms / 2U)
+        (now - remote_read_ts_).count() < max_buffer_ms / 2U)
         return true;
+    boost::system::error_code ec;
+    remote_socket_.cancel(ec);
+    size_t l = pToClient_len_;
+    if (l == 0) {
+        close_pipe_to_client();
+        tcp_remote_socket_read();
+        return false;
+    }
     auto n = splicePipeToClient(true);
     if (!n)
         return false;
     if (l - *n > 0) {
-        strand_R->post([this]() { kickClientPipeBG(); });
-        return true;
+        kickClientPipeBG();
+        return false;
     }
+    close_pipe_to_client();
+    tcp_remote_socket_read();
     std::cerr << "kicked client pipe\n";
-    return true;
+    return false;
 }
 
 void SocksTCP::kickClientPipeBG()
@@ -1292,33 +1299,40 @@ void SocksTCP::kickClientPipeBG()
              }
              if (!splicePipeToClient())
                  return;
-             auto now = std::chrono::high_resolution_clock::now();
-             if (std::chrono::duration_cast<std::chrono::milliseconds>
-                 (remote_read_ts_ - now).count() < max_buffer_ms / 2U)
-                 return;
              if (pToClient_len_ > 0)
                  kickClientPipeBG();
+             else {
+                 close_pipe_to_client();
+                 tcp_remote_socket_read();
+             }
          }));
 }
 
-// Ret: Is the connection still alive?
+// Ret: Is the connection still alive and splicing?
 bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now)
 {
-    size_t l = pToRemote_len_;
-    if (l == 0)
-        return true;
     if (std::chrono::duration_cast<std::chrono::milliseconds>
-        (client_read_ts_ - now).count() < max_buffer_ms / 2U)
+        (now - client_read_ts_).count() < max_buffer_ms / 2U)
         return true;
+    boost::system::error_code ec;
+    client_socket_.cancel(ec);
+    size_t l = pToRemote_len_;
+    if (l == 0) {
+        close_pipe_to_remote();
+        tcp_client_socket_read();
+        return false;
+    }
     auto n = splicePipeToRemote(true);
     if (!n)
         return false;
     if (l - *n > 0) {
-        strand_C->post([this]() { kickRemotePipeBG(); });
-        return true;
+        kickRemotePipeBG();
+        return false;
     }
+    close_pipe_to_remote();
+    tcp_client_socket_read();
     std::cerr << "kicked remote pipe\n";
-    return true;
+    return false;
 }
 
 void SocksTCP::kickRemotePipeBG()
@@ -1341,12 +1355,12 @@ void SocksTCP::kickRemotePipeBG()
                 }
                 if (!splicePipeToRemote())
                     return;
-                auto now = std::chrono::high_resolution_clock::now();
-                if (std::chrono::duration_cast<std::chrono::milliseconds>
-                    (client_read_ts_ - now).count() < max_buffer_ms / 2U)
-                    return;
                 if (pToRemote_len_ > 0)
                     kickRemotePipeBG();
+                else {
+                    close_pipe_to_remote();
+                    tcp_client_socket_read();
+                }
             }));
 }
 
