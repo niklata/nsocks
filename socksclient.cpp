@@ -165,6 +165,10 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
     boost::system::error_code ec;
     auto sao = sa.is_open();
     auto sbo = sb.is_open();
+    if (sao)
+        sa.cancel(ec);
+    if (sbo)
+        sb.cancel(ec);
     if (p_len == 0 && sao && sbo) {
 #ifdef HAS_64BIT
         auto s0 = sa.release();
@@ -196,10 +200,6 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
 #endif
         return;
     }
-    if (sao)
-        sa.cancel(ec);
-    if (sbo)
-        sb.cancel(ec);
     if (sao)
         sa.close(ec);
     if (sbo)
