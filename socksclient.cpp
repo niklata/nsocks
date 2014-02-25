@@ -50,6 +50,7 @@
 #endif
 
 #include "socksclient.hpp"
+#include "socks_tracker.hpp"
 #include "asio_addrcmp.hpp"
 
 #define MAX_BIND_TRIES 10
@@ -93,219 +94,15 @@ void SocksTCP::set_splice_pipe_size(int size) {
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
+#include "bind_port_assigner.hpp"
+
 static std::unique_ptr <boost::asio::strand> strand_C;
 static std::unique_ptr <boost::asio::strand> strand_R;
 
 static void print_trackers_logentry(const std::string &host, uint16_t port);
 
-template <typename T>
-class ephTrackerList : boost::noncopyable
-{
-public:
-    ephTrackerList(ba::io_service &iosrv, std::size_t cyclefreq)
-        : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
-    ~ephTrackerList()
-    {
-        for (std::size_t j = 0; j < 2; ++j)
-            list_cancel(j);
-    }
-    void store(std::shared_ptr<T> &&ssc)
-    {
-        {
-            std::lock_guard<std::mutex> wl(lock_);
-            list_[hidx_].emplace_front(ssc);
-            ssc->set_tracker_iterator(list_[hidx_].begin(), hidx_);
-        }
-        if (swapTimer_.expires_from_now() <=
-            boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
-    }
-    void erase(typename std::list<std::weak_ptr<T>>::iterator it, std::size_t lidx) {
-        std::lock_guard<std::mutex> wl(lock_);
-        list_[lidx].erase(it);
-    }
-    template <typename... Args>
-    void emplace(Args&&... args)
-    {
-        auto x = std::make_shared<T>(std::forward<Args>(args)...);
-        {
-            std::lock_guard<std::mutex> wl(lock_);
-            list_[hidx_].emplace_front(x);
-            x->set_tracker_iterator(list_[hidx_].begin(), hidx_);
-        }
-        x->start();
-        if (swapTimer_.expires_from_now() <=
-            boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
-    }
-    std::size_t size() { return list_[0].size() + list_[1].size(); }
-private:
-    inline void list_cancel(std::size_t x) {
-        auto end = list_[x].end();
-        typename std::list<std::weak_ptr<T>>::iterator ip;
-        for (auto i = list_[x].begin(); i != end;) {
-            auto j = i->lock();
-            if (j) {
-                j->set_untracked();
-                j->cancel();
-            }
-            ip = i++;
-            list_[x].erase(ip);
-        }
-    }
-    void doSwap() {
-        std::size_t hnext = hidx_ ^ 1;
-        list_cancel(hnext);
-        hidx_ = hnext;
-    }
-    void setTimer(bool expidite) {
-        if (expidite)
-            swapTimer_.expires_from_now
-                (boost::posix_time::seconds(cyclefreq_));
-        else
-            swapTimer_.expires_from_now
-                (boost::posix_time::milliseconds(cyclefreq_ * 100));
-        swapTimer_.async_wait([this](const boost::system::error_code& error)
-                              {
-                                  if (error)
-                                      return;
-                                  if (lock_.try_lock()) {
-                                      doSwap();
-                                      auto sz = size();
-                                      lock_.unlock();
-                                      if (sz)
-                                          setTimer(false);
-                                  } else
-                                      setTimer(true);
-                              });
-    }
-    std::mutex lock_;
-    const std::size_t cyclefreq_;
-    std::atomic<std::size_t> hidx_;
-    ba::deadline_timer swapTimer_;
-    std::list<std::weak_ptr<T>> list_[2];
-};
-
-template <typename T>
-class ephTrackerVec : boost::noncopyable
-{
-public:
-    ephTrackerVec(ba::io_service &iosrv, std::size_t cyclefreq)
-        : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
-    ~ephTrackerVec()
-    {
-        for (std::size_t j = 0; j < 2; ++j)
-            vec_cancel(j);
-    }
-    template <typename... Args>
-    void emplace(Args&&... args)
-    {
-        auto x = std::make_shared<T>(std::forward<Args>(args)...);
-        {
-            std::lock_guard<std::mutex> wl(lock_);
-            vec_[hidx_].emplace_back(x);
-        }
-        x->start();
-        if (swapTimer_.expires_from_now() <=
-            boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
-    }
-    std::size_t size() { return vec_[0].size() + vec_[1].size(); }
-private:
-    inline void vec_cancel(std::size_t x) {
-        for (auto &i: vec_[x]) {
-            auto j = i.lock();
-            if (j && !j->is_bind_listen())
-                j->cancel();
-        }
-    }
-    void doSwap() {
-        std::size_t hnext = hidx_ ^ 1;
-        vec_cancel(hnext);
-        vec_[hnext].clear();
-        hidx_ = hnext;
-    }
-    void setTimer(bool expidite) {
-        if (expidite)
-            swapTimer_.expires_from_now
-                (boost::posix_time::seconds(cyclefreq_));
-        else
-            swapTimer_.expires_from_now
-                (boost::posix_time::milliseconds(cyclefreq_ * 100));
-        swapTimer_.async_wait([this](const boost::system::error_code& error)
-                              {
-                                  if (error)
-                                      return;
-                                  //print_trackers_logentry("[DOSWAP-]", hidx_);
-                                  if (lock_.try_lock()) {
-                                      doSwap();
-                                      auto sz = size();
-                                      lock_.unlock();
-                                      //print_trackers_logentry("[DOSWAP+]", hidx_);
-                                      if (sz)
-                                          setTimer(false);
-                                  } else
-                                      setTimer(true);
-                              });
-    }
-    std::mutex lock_;
-    const std::size_t cyclefreq_;
-    std::atomic<std::size_t> hidx_;
-    ba::deadline_timer swapTimer_;
-    std::vector<std::weak_ptr<T>> vec_[2];
-};
-
 static std::unique_ptr<ephTrackerVec<SocksInit>> conntracker_hs;
 static std::unique_ptr<ephTrackerList<SocksInit>> conntracker_bindlisten;
-
-template <typename T>
-class connTracker : boost::noncopyable
-{
-public:
-    connTracker() {}
-    ~connTracker()
-    {
-        for (auto &i: list_) {
-            auto j = i.lock();
-            if (!j)
-                continue;
-            j->cancel();
-            j->set_terminated();
-        }
-    }
-    void erase(typename std::list<std::weak_ptr<T>>::iterator it) {
-        std::lock_guard<std::mutex> wl(lock_);
-        list_.erase(it);
-    }
-    template <typename... Args>
-    void emplace(Args&&... args)
-    {
-        auto x = std::make_shared<T>(std::forward<Args>(args)...);
-        {
-            std::lock_guard<std::mutex> wl(lock_);
-            list_.emplace_front(x);
-            x->set_tracker_iterator(list_.begin());
-        }
-        x->start();
-    }
-    boost::optional<std::shared_ptr<T>>
-    find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        for (auto &i: list_) {
-            auto j = i.lock();
-            if (!j)
-                continue;
-            if (j->matches_dst(addr, port))
-                return j;
-        }
-        return boost::optional<std::shared_ptr<T>>();
-    }
-    std::size_t size() const { return list_.size(); }
-
-    std::mutex lock_;
-    std::list<std::weak_ptr<T>> list_;
-};
 
 // The only purpose of this tracker is for find_by_addr_port for BIND.
 static connTracker<SocksTCP> conntracker_tcp;
@@ -460,56 +257,6 @@ static void print_trackers_logentry(const std::string &host, uint16_t port)
               << udp_alive_count
               << " / " << socks_alive_count << ")" << std::endl;
 }
-
-class BindPortAssigner : boost::noncopyable
-{
-public:
-    BindPortAssigner(uint16_t start, uint16_t end)
-            : ports_used_(end - start + 1), random_portrange_(start, end),
-              random_port_(g_random_prng, random_portrange_),
-              start_port_(start), end_port_(end)
-    {
-        assert(start <= end);
-    }
-    uint16_t get_port()
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        auto rp = random_port_();
-        for (int i = rp; i <= end_port_; ++i) {
-            auto p = i - start_port_;
-            if (ports_used_[p])
-                continue;
-            ports_used_[p] = 1;
-            return p;
-        }
-        for (int i = start_port_; i < rp; ++i) {
-            auto p = i - start_port_;
-            if (ports_used_[p])
-                continue;
-            ports_used_[p] = 1;
-            return p;
-        }
-        throw std::out_of_range("no free ports");
-    }
-    void release_port(uint16_t port)
-    {
-        std::lock_guard<std::mutex> wl(lock_);
-        if (port < start_port_ || port > end_port_) {
-            std::cerr << "BindPortAssigner::release_port: port="
-                      << port << " out of range\n";
-            return;
-        }
-        ports_used_[port - start_port_] = 0;
-    }
-private:
-    std::mutex lock_;
-    boost::dynamic_bitset<> ports_used_;
-    boost::uniform_int<uint16_t> random_portrange_;
-    boost::variate_generator<boost::mt19937&, boost::uniform_int<uint16_t>>
-        random_port_;
-    uint16_t start_port_;
-    uint16_t end_port_;
-};
 
 static std::unique_ptr<BindPortAssigner> BPA;
 static std::unique_ptr<BindPortAssigner> UPA;
