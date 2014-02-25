@@ -902,38 +902,34 @@ boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
     // We only accept Socks5.
     if (poff == ibSiz_)
         return boost::optional<SocksInit::ReplyCode>();
-    if (inBytes_[poff] != 0x05)
+    if (inBytes_[poff++] != 0x05)
         return RplFail;
-    ++poff;
 
     // Client command.
     if (poff == ibSiz_)
         return boost::optional<SocksInit::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    switch (static_cast<uint8_t>(inBytes_[poff++])) {
     case 0x1: cmd_code_ = CmdTCPConnect; break;
     case 0x2: cmd_code_ = CmdTCPBind; break;
     case 0x3: cmd_code_ = CmdUDP; break;
     default: return RplCmdNotSupp;
     }
-    ++poff;
 
     // Must be zero (reserved).
     if (poff == ibSiz_)
         return boost::optional<SocksInit::ReplyCode>();
-    if (inBytes_[poff] != 0x0)
+    if (inBytes_[poff++] != 0x0)
         return RplFail;
-    ++poff;
 
     // Address type.
     if (poff == ibSiz_)
         return boost::optional<SocksInit::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff])) {
+    switch (static_cast<uint8_t>(inBytes_[poff++])) {
     case 0x1: addr_type_ = AddrIPv4; break;
     case 0x3: addr_type_ = AddrDNS; break;
     case 0x4: addr_type_ = AddrIPv6; break;
     default: return RplAddrNotSupp;
     }
-    ++poff;
 
     // Destination address.
     if (poff == ibSiz_)
@@ -961,8 +957,7 @@ boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
             break;
         }
         case AddrDNS: {
-            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff]);
-            ++poff;
+            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff++]);
             if (ibSiz_ - poff != dnssiz + 2)
                 return RplFail;
             dst_hostname_ = std::string(inBytes_.data() + poff, dnssiz);
