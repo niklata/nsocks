@@ -165,10 +165,6 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
     boost::system::error_code ec;
     auto sao = sa.is_open();
     auto sbo = sb.is_open();
-    if (sao)
-        sa.cancel(ec);
-    if (sbo)
-        sb.cancel(ec);
     if (p_len == 0 && sao && sbo) {
 #ifdef HAS_64BIT
         auto s0 = sa.release();
@@ -1364,7 +1360,7 @@ void SocksTCP::kickClientPipeBG()
         return;
     kicking_client_pipe_bg_ = true;
     auto sfd = shared_from_this();
-    sdToClient_.async_read_some
+    client_socket_.async_write_some
         (ba::null_buffers(), strand_R->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -1422,7 +1418,7 @@ void SocksTCP::kickRemotePipeBG()
         return;
     kicking_remote_pipe_bg_ = true;
     auto sfd = shared_from_this();
-    sdToRemote_.async_read_some
+    remote_socket_.async_write_some
         (ba::null_buffers(), strand_C->wrap(
             [this, sfd](const boost::system::error_code &ec,
                         std::size_t bytes_xferred)
@@ -1570,7 +1566,7 @@ void SocksTCP::doFlushPipeToRemote(bool closing)
         return;
     }
     auto sfd = shared_from_this();
-    sdToRemote_.async_read_some
+    remote_socket_.async_write_some
         (ba::null_buffers(), strand_C->wrap(
          [this, sfd, closing](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
@@ -1598,7 +1594,7 @@ void SocksTCP::doFlushPipeToClient(bool closing)
         return;
     }
     auto sfd = shared_from_this();
-    sdToClient_.async_read_some
+    client_socket_.async_write_some
         (ba::null_buffers(), strand_R->wrap(
          [this, sfd, closing](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
