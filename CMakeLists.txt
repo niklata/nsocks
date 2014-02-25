@@ -112,6 +112,12 @@ if (${OSNAME} STREQUAL "Linux")
   endif()
 endif()
 
+if (CMAKE_SIZEOF_VOID_P EQUAL 8)
+  message("Detected that the current host is a 64-bit system.")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAS_64BIT")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DHAS_64BIT")
+endif()
+
 include_directories("${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/ncmlib")
 add_subdirectory(ncmlib)
 

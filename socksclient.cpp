@@ -26,7 +26,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define HAS_64BIT
 #define SPLICE_CACHE_SIZE 20
 
 #include <iostream>
