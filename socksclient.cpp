@@ -1064,6 +1064,7 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           remote_socket_(std::move(remote_socket)),
           dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind),
 #ifdef USE_SPLICE
+          kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
           pToRemote_(io_service), pToClient_(io_service)
@@ -1360,6 +1361,9 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickClientPipeBG()
 {
+    if (kicking_client_pipe_bg_)
+        return;
+    kicking_client_pipe_bg_ = true;
     std::cerr << "kicked client pipe (more left)\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
@@ -1367,6 +1371,7 @@ void SocksTCP::kickClientPipeBG()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
+             kicking_client_pipe_bg_ = false;
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
                      std::cerr << "kickClientPipeBG error: "
@@ -1416,6 +1421,9 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickRemotePipeBG()
 {
+    if (kicking_remote_pipe_bg_)
+        return;
+    kicking_remote_pipe_bg_ = true;
     std::cerr << "kicked remote pipe (more left)\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
@@ -1423,6 +1431,7 @@ void SocksTCP::kickRemotePipeBG()
             [this, sfd](const boost::system::error_code &ec,
                         std::size_t bytes_xferred)
             {
+                kicking_remote_pipe_bg_ = false;
                 if (ec) {
                     if (ec != ba::error::operation_aborted) {
                         std::cerr << "kickRemotePipeBG error: "
