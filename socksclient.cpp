@@ -881,16 +881,14 @@ boost::optional<SocksInit::ReplyCode> SocksInit::process_greet_v4(size_t poff)
     poff += 4;
 
     // Null-terminated userid.
-    std::string userid; // XXX: Could be more efficient.
-    for (std::size_t i = 0; poff < ibSiz_; ++poff, ++i) {
-        auto c = inBytes_[poff];
-        userid[i] = c;
-        if (c == '\0') {
+    for (; poff < ibSiz_; ++poff) {
+        if (inBytes_[poff] == '\0') {
             ibSiz_ = 0;
             dispatch_connrq();
             return RplSuccess;
         }
     }
+
     return boost::optional<SocksInit::ReplyCode>();
 }
 
