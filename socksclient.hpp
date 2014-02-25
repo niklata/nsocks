@@ -221,6 +221,8 @@ private:
 
     std::atomic<bool> terminated_;
     std::list<std::weak_ptr<SocksTCP>>::iterator tracker_iterator_;
+    boost::asio::streambuf client_buf_;
+    boost::asio::streambuf remote_buf_;
 
     // Shared with SocksInit
     std::string dst_hostname_;
@@ -348,8 +350,6 @@ private:
     inline void tcp_client_socket_read_again(size_t bytes_xferred)
         { tcp_client_socket_read(); }
 #endif
-    boost::asio::streambuf client_buf_;
-    boost::asio::streambuf remote_buf_;
 
     static std::size_t send_buffer_chunk_size;
     static std::size_t receive_buffer_chunk_size;
