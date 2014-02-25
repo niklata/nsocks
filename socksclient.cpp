@@ -1355,7 +1355,6 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
     }
     close_pipe_to_client();
     tcp_remote_socket_read();
-    std::cerr << "kicked client pipe\n";
     return false;
 }
 
@@ -1364,7 +1363,6 @@ void SocksTCP::kickClientPipeBG()
     if (kicking_client_pipe_bg_)
         return;
     kicking_client_pipe_bg_ = true;
-    std::cerr << "kicked client pipe (more left)\n";
     auto sfd = shared_from_this();
     sdToClient_.async_read_some
         (ba::null_buffers(), strand_R->wrap(
@@ -1415,7 +1413,6 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
     }
     close_pipe_to_remote();
     tcp_client_socket_read();
-    std::cerr << "kicked remote pipe\n";
     return false;
 }
 
@@ -1424,7 +1421,6 @@ void SocksTCP::kickRemotePipeBG()
     if (kicking_remote_pipe_bg_)
         return;
     kicking_remote_pipe_bg_ = true;
-    std::cerr << "kicked remote pipe (more left)\n";
     auto sfd = shared_from_this();
     sdToRemote_.async_read_some
         (ba::null_buffers(), strand_C->wrap(
