@@ -262,7 +262,7 @@ private:
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
-    inline boost::optional<std::size_t> splicePipeToClient(bool noterm = false)
+    inline boost::optional<std::size_t> splicePipeToClient()
     {
         try {
             auto n = spliceit(sdToClient_.native_handle(),
@@ -271,15 +271,13 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            if (!noterm) {
-                std::cerr << "splicePipeToClient: TERMINATE/"
-                          << e.what() <<"/\n";
-                terminate_client();
-            }
+            std::cerr << "splicePipeToClient: TERMINATE/"
+                      << e.what() <<"/\n";
+            terminate_client();
             return boost::optional<std::size_t>();
         }
     }
-    inline boost::optional<std::size_t> splicePipeToRemote(bool noterm = false)
+    inline boost::optional<std::size_t> splicePipeToRemote()
     {
         try {
             auto n = spliceit(sdToRemote_.native_handle(),
@@ -288,11 +286,9 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            if (!noterm) {
-                std::cerr << "splicePipeToRemote: TERMINATE/"
-                          << e.what() <<"/\n";
-                terminate_remote();
-            }
+            std::cerr << "splicePipeToRemote: TERMINATE/"
+                      << e.what() <<"/\n";
+            terminate_remote();
             return boost::optional<std::size_t>();
         }
     }

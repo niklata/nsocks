@@ -1345,7 +1345,7 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
         tcp_remote_socket_read();
         return false;
     }
-    auto n = splicePipeToClient(true);
+    auto n = splicePipeToClient();
     if (!n)
         return false;
     if (l - *n > 0) {
@@ -1401,7 +1401,7 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
         tcp_client_socket_read();
         return false;
     }
-    auto n = splicePipeToRemote(true);
+    auto n = splicePipeToRemote();
     if (!n)
         return false;
     if (l - *n > 0) {
