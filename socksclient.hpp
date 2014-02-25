@@ -78,7 +78,9 @@ public:
         RplConnRefused = 5,
         RplTTLExpired = 6,
         RplCmdNotSupp = 7,
-        RplAddrNotSupp = 8
+        RplAddrNotSupp = 8,
+        RplIdentUnreach = 9,
+        RplIdentWrong = 10,
     };
 
 private:
@@ -119,6 +121,8 @@ private:
     void read_greet();
     void read_conn_request();
     boost::optional<bool> process_greet();
+    boost::optional<bool> process_greet_v5(size_t poff);
+    boost::optional<ReplyCode> process_greet_v4(size_t poff);
     boost::optional<ReplyCode> process_connrq();
     void dispatch_connrq();
 
@@ -143,6 +147,7 @@ private:
     // Maximum packet size for handshakes is 262
     std::array<char, 272> inBytes_;
     uint16_t ibSiz_;
+    bool is_socks_v4_;
     bool bind_listen_;
     bool auth_none_;
     bool auth_gssapi_;
@@ -164,7 +169,7 @@ public:
              boost::asio::ip::tcp::socket client_socket,
              boost::asio::ip::tcp::socket remote_socket,
              boost::asio::ip::address dst_address,
-             uint16_t dst_port, bool is_bind,
+             uint16_t dst_port, bool is_bind, bool is_socks_v4,
              std::string dst_hostname = "");
     ~SocksTCP();
     void start();
@@ -224,6 +229,7 @@ private:
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     uint16_t dst_port_;
+    bool is_socks_v4_;
     bool is_bind_;
 
 #ifdef USE_SPLICE

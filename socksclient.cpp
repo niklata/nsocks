@@ -545,8 +545,8 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static inline void send_reply_code(std::string &outbuf,
-                                   SocksInit::ReplyCode replycode)
+static inline void send_reply_code_v5(std::string &outbuf,
+                                      SocksInit::ReplyCode replycode)
 {
     outbuf.clear();
     outbuf.append(1, 0x05);
@@ -554,8 +554,8 @@ static inline void send_reply_code(std::string &outbuf,
     outbuf.append(1, 0x00);
 }
 
-static inline void send_reply_binds(std::string &outbuf,
-                                    ba::ip::tcp::endpoint ep)
+static inline void send_reply_binds_v5(std::string &outbuf,
+                                       ba::ip::tcp::endpoint ep)
 {
     auto bnd_addr = ep.address();
     if (bnd_addr.is_v4()) {
@@ -578,6 +578,47 @@ static inline void send_reply_binds(std::string &outbuf,
     outbuf.append(1, portu.b[1]);
 }
 
+static inline void send_reply_code_v4(std::string &outbuf,
+                                      SocksInit::ReplyCode replycode)
+{
+    outbuf.clear();
+    outbuf.append(1, 0x0);
+    uint8_t rc;
+    switch (replycode) {
+        case SocksInit::RplSuccess: rc = 90; break;
+        default:
+        case SocksInit::RplFail: rc = 91; break;
+        case SocksInit::RplDeny: rc = 91; break;
+        case SocksInit::RplNetUnreach: rc = 91; break;
+        case SocksInit::RplHostUnreach: rc = 91; break;
+        case SocksInit::RplConnRefused: rc = 91; break;
+        case SocksInit::RplTTLExpired: rc = 91; break;
+        case SocksInit::RplCmdNotSupp: rc = 91; break;
+        case SocksInit::RplAddrNotSupp: rc = 91; break;
+        case SocksInit::RplIdentUnreach: rc = 92; break;
+        case SocksInit::RplIdentWrong: rc = 93; break;
+    }
+    outbuf.append(1, rc);
+}
+
+static inline void send_reply_binds_v4(std::string &outbuf,
+                                       ba::ip::tcp::endpoint ep)
+{
+    union {
+        uint16_t p;
+        char b[2];
+    } portu;
+    portu.p = htons(ep.port());
+    outbuf.append(1, portu.b[0]);
+    outbuf.append(1, portu.b[1]);
+
+    auto bnd_addr = ep.address();
+    assert(bnd_addr.is_v4());
+    auto v4b = bnd_addr.to_v4().to_bytes();
+    for (auto &i: v4b)
+        outbuf.append(1, i);
+}
+
 static const char * const replyCodeString[] = {
     "Success",
     "Fail",
@@ -586,13 +627,16 @@ static const char * const replyCodeString[] = {
     "HostUnreach",
     "ConnRefused",
     "TTLExpired",
-    "RplCmdNotSupp",
-    "RplAddrNotSupp",
+    "CmdNotSupp",
+    "AddrNotSupp",
+    "IdentUnreach",
+    "IdentWrong",
 };
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : untracked_(false), ibSiz_(0), bind_listen_(false),
+        : untracked_(false), ibSiz_(0), is_socks_v4_(false),
+          bind_listen_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service)
@@ -690,14 +734,15 @@ void SocksInit::read_greet()
              ibSiz_ += bytes_xferred;
              auto x = process_greet();
              if (x) {
-                 if (*x)
-                     read_conn_request();
-                 else {
+                 if (!*x) {
                      std::cerr << "process_greet(): bad input -> terminate!\n";
                      terminate();
                  }
-             } else
-                 read_greet();
+                 if (!is_socks_v4_)
+                     read_conn_request();
+                 return;
+             }
+             read_greet();
          }));
 }
 
@@ -727,8 +772,9 @@ void SocksInit::read_conn_request()
                  // On failure we will terminate via the send_reply() response.
                  if (*rc != RplSuccess)
                      send_reply(*rc);
-             } else
-                 read_conn_request();
+                 return;
+             }
+             read_conn_request();
          }));
 }
 
@@ -740,18 +786,30 @@ boost::optional<bool> SocksInit::process_greet()
 {
     size_t poff = 0;
 
-    // We only accept Socks5.
     if (poff == ibSiz_)
         return boost::optional<bool>();
-    if (inBytes_[poff] != 0x05)
-        return false;
-    ++poff;
+    switch (inBytes_[poff++]) {
+        case 0x05: return process_greet_v5(poff);
+        case 0x04: {
+            is_socks_v4_ = true;
+            auto orc = process_greet_v4(poff);
+            if (!orc)
+                return boost::optional<bool>();
+            if (*orc != RplSuccess)
+                send_reply(*orc);
+            return true;
+        }
+        default: return false;
+    }
+}
 
+// Returns false if the object needs to be destroyed by the caller.
+boost::optional<bool> SocksInit::process_greet_v5(size_t poff)
+{
     // Number of authentication methods supported.
     if (poff == ibSiz_)
         return boost::optional<bool>();
-    size_t nauth = static_cast<uint8_t>(inBytes_[poff]);
-    ++poff;
+    size_t nauth = static_cast<uint8_t>(inBytes_[poff++]);
 
     // Types of authentication methods supported.
     size_t aendsiz = nauth + 2;
@@ -789,6 +847,51 @@ boost::optional<bool> SocksInit::process_greet()
             }
         }));
     return true;
+}
+
+// Returns false if the object needs to be destroyed by the caller.
+boost::optional<SocksInit::ReplyCode> SocksInit::process_greet_v4(size_t poff)
+{
+    // Client command.
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    switch (static_cast<uint8_t>(inBytes_[poff++])) {
+    case 0x1: cmd_code_ = CmdTCPConnect; break;
+    case 0x2: cmd_code_ = CmdTCPBind; break;
+    default: return RplCmdNotSupp;
+    }
+
+    // Destination port.
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    if (ibSiz_ - poff < 2)
+        return RplFail;
+    uint16_t tmp;
+    memcpy(&tmp, inBytes_.data() + poff, 2);
+    dst_port_ = ntohs(tmp);
+    poff += 2;
+
+    if (poff == ibSiz_)
+        return boost::optional<SocksInit::ReplyCode>();
+    if (ibSiz_ - poff < 4)
+        return RplFail;
+    ba::ip::address_v4::bytes_type v4o;
+    memcpy(v4o.data(), inBytes_.data() + poff, 4);
+    dst_address_ = ba::ip::address_v4(v4o);
+    poff += 4;
+
+    // Null-terminated userid.
+    std::string userid; // XXX: Could be more efficient.
+    for (std::size_t i = 0; poff < ibSiz_; ++poff, ++i) {
+        auto c = inBytes_[poff];
+        userid[i] = c;
+        if (c == '\0') {
+            ibSiz_ = 0;
+            dispatch_connrq();
+            return RplSuccess;
+        }
+    }
+    return boost::optional<SocksInit::ReplyCode>();
 }
 
 // Returns false if the object needs to be destroyed by the caller.
@@ -880,6 +983,7 @@ boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
     uint16_t tmp;
     memcpy(&tmp, inBytes_.data() + poff, 2);
     dst_port_ = ntohs(tmp);
+
     ibSiz_ = 0;
     dispatch_connrq();
     return RplSuccess;
@@ -996,7 +1100,7 @@ void SocksInit::dispatch_tcp_connect()
              set_remote_socket_options();
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_), std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, false,
+                   std::move(dst_address_), dst_port_, false, is_socks_v4_,
                    std::move(dst_hostname_));
          }));
 }
@@ -1107,7 +1211,7 @@ void SocksInit::dispatch_tcp_bind()
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_),
                    std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, true,
+                   std::move(dst_address_), dst_port_, true, is_socks_v4_,
                    std::move(dst_hostname_));
          }));
     send_reply(RplSuccess);
@@ -1169,13 +1273,20 @@ void SocksInit::dispatch_udp()
 
 void SocksInit::send_reply(ReplyCode replycode)
 {
-    send_reply_code(outbuf_, replycode);
-    if (replycode == RplSuccess) {
-        if (cmd_code_ != CmdTCPBind || !bound_) {
-            throw std::logic_error
-                ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
-        } else
-            send_reply_binds(outbuf_, bound_->local_endpoint_);
+    if (!is_socks_v4_) {
+        assert(replycode != RplIdentWrong && replycode != RplIdentUnreach);
+        send_reply_code_v5(outbuf_, replycode);
+        if (replycode == RplSuccess) {
+            if (cmd_code_ != CmdTCPBind || !bound_) {
+                throw std::logic_error
+                    ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
+            } else
+                send_reply_binds_v5(outbuf_, bound_->local_endpoint_);
+        }
+    } else {
+        send_reply_code_v4(outbuf_, replycode);
+        if (!bound_) outbuf_.append(6, 0x0);
+        else send_reply_binds_v4(outbuf_, bound_->local_endpoint_);
     }
     auto sfd = shared_from_this();
     ba::async_write
@@ -1203,12 +1314,13 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
                    boost::asio::ip::tcp::socket client_socket,
                    boost::asio::ip::tcp::socket remote_socket,
                    boost::asio::ip::address dst_address,
-                   uint16_t dst_port, bool is_bind, std::string dst_hostname)
+                   uint16_t dst_port, bool is_bind, bool is_socks_v4,
+                   std::string dst_hostname)
         : terminated_(false),
           dst_hostname_(dst_hostname), dst_address_(dst_address),
           client_socket_(std::move(client_socket)),
           remote_socket_(std::move(remote_socket)),
-          dst_port_(dst_port), is_bind_(is_bind),
+          dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind),
 #ifdef USE_SPLICE
           pToRemote_len_(0), pToClient_len_(0),
           sdToRemote_(io_service), sdToClient_(io_service),
@@ -1871,9 +1983,15 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
 void SocksTCP::start()
 {
     std::string ob;
-    send_reply_code(ob, SocksInit::ReplyCode::RplSuccess);
-    if (!is_bind_) send_reply_binds(ob, remote_socket_.local_endpoint());
-    else send_reply_binds(ob, remote_socket_.remote_endpoint());;
+    if (!is_socks_v4_) {
+        send_reply_code_v5(ob, SocksInit::ReplyCode::RplSuccess);
+        if (!is_bind_) send_reply_binds_v5(ob, remote_socket_.local_endpoint());
+        else send_reply_binds_v5(ob, remote_socket_.remote_endpoint());
+    } else {
+        send_reply_code_v4(ob, SocksInit::ReplyCode::RplSuccess);
+        if (!is_bind_) send_reply_binds_v4(ob, remote_socket_.local_endpoint());
+        else send_reply_binds_v4(ob, remote_socket_.remote_endpoint());
+    }
     auto sfd = shared_from_this();
     auto ibm = client_buf_.prepare(ob.size());
     auto siz = std::min(ob.size(), boost::asio::buffer_size(ibm));
@@ -1940,10 +2058,10 @@ void SocksUDP::terminate()
 
 void SocksUDP::start()
 {
-    send_reply_code(out_header_, SocksInit::ReplyCode::RplSuccess);
+    send_reply_code_v5(out_header_, SocksInit::ReplyCode::RplSuccess);
     auto ep = client_socket_.local_endpoint();
-    send_reply_binds(out_header_,
-                     ba::ip::tcp::endpoint(ep.address(), ep.port()));
+    send_reply_binds_v5(out_header_,
+                        ba::ip::tcp::endpoint(ep.address(), ep.port()));
     auto sfd = shared_from_this();
     ba::async_write
         (tcp_client_socket_, ba::buffer(out_header_, out_header_.size()),
