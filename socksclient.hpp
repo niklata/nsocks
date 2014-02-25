@@ -41,8 +41,6 @@
 
 #include "make_unique.hpp"
 
-#define SPLICE_SIZE (1024 * 256)
-
 class SocksInit
     : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
 {
@@ -193,6 +191,7 @@ public:
 
     static void set_send_buffer_chunk_size(std::size_t size);
     static void set_receive_buffer_chunk_size(std::size_t size);
+    static void set_splice_pipe_size(int size);
 
 private:
     void untrack();
@@ -206,7 +205,7 @@ private:
     static inline boost::optional<std::size_t> spliceit(int infd, int outfd)
     {
       retry:
-        auto spliced = splice(infd, NULL, outfd, NULL, SPLICE_SIZE,
+        auto spliced = splice(infd, NULL, outfd, NULL, splice_pipe_size,
                               SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
         if (spliced <= 0) {
             if (spliced == 0)
@@ -359,6 +358,7 @@ private:
     static std::size_t receive_buffer_chunk_size;
     static std::size_t send_minsplice_size;
     static std::size_t receive_minsplice_size;
+    static int splice_pipe_size;
 
     void tcp_client_socket_read();
     void tcp_remote_socket_read();
@@ -478,8 +478,6 @@ extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_bind_allow_masks;
 extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_client_udp_allow_masks;
-
-#undef SPLICE_SIZE
 
 #endif /* NK_SOCKSCLIENT_H */
 

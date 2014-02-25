@@ -28,7 +28,6 @@
 
 #define HAS_64BIT
 #define SPLICE_CACHE_SIZE 20
-#define SPLICE_PIPE_SIZE (1024 * 256)
 
 #include <iostream>
 #include <forward_list>
@@ -79,6 +78,7 @@ std::size_t SocksTCP::send_buffer_chunk_size = 1024;
 std::size_t SocksTCP::receive_buffer_chunk_size = 2048;
 std::size_t SocksTCP::send_minsplice_size = 768;
 std::size_t SocksTCP::receive_minsplice_size = 1536;
+int SocksTCP::splice_pipe_size = 1024 * 256;
 void SocksTCP::set_send_buffer_chunk_size(std::size_t size) {
     send_buffer_chunk_size = size;
     send_minsplice_size = size / 4 * 3;
@@ -86,6 +86,9 @@ void SocksTCP::set_send_buffer_chunk_size(std::size_t size) {
 void SocksTCP::set_receive_buffer_chunk_size(std::size_t size) {
     receive_buffer_chunk_size = size;
     receive_minsplice_size = size / 4 * 3;
+}
+void SocksTCP::set_splice_pipe_size(int size) {
+    splice_pipe_size = std::max(PIPE_BUF, size);
 }
 
 static boost::random::random_device g_random_secure;
@@ -1433,12 +1436,12 @@ bool SocksTCP::init_pipe_client()
     if (!got_free_pipe) {
         if (pipe2(pipes, O_NONBLOCK))
             return false;
-        auto r = fcntl(pipes[0], F_SETPIPE_SZ, SPLICE_PIPE_SIZE);
-        if (r < SPLICE_PIPE_SIZE)
+        auto r = fcntl(pipes[0], F_SETPIPE_SZ, splice_pipe_size);
+        if (r < splice_pipe_size)
             std::cerr << "toRemote: Pipe size could only be set to " << r << ".\n";
         else if (r == -1) {
             switch (errno) {
-                case EPERM: std::cerr << "toRemote: EPERM when trying to set splice pipe size to " << SPLICE_PIPE_SIZE << ".\n";
+                case EPERM: std::cerr << "toRemote: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
                 default: std::cerr << "toRemote: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
             }
         }
@@ -1480,12 +1483,12 @@ bool SocksTCP::init_pipe_remote()
     if (!got_free_pipe) {
         if (pipe2(pipes, O_NONBLOCK))
             return false;
-        auto r = fcntl(pipes[0], F_SETPIPE_SZ, SPLICE_PIPE_SIZE);
-        if (r < SPLICE_PIPE_SIZE)
+        auto r = fcntl(pipes[0], F_SETPIPE_SZ, splice_pipe_size);
+        if (r < splice_pipe_size)
             std::cerr << "toClient: Pipe size could only be set to " << r << ".\n";
         else if (r == -1) {
             switch (errno) {
-                case EPERM: std::cerr << "toClient: EPERM when trying to set splice pipe size to " << SPLICE_PIPE_SIZE << ".\n";
+                case EPERM: std::cerr << "toClient: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
                 default: std::cerr << "toClient: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
             }
         }

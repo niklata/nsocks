@@ -187,6 +187,8 @@ static po::variables_map fetch_options(int ac, char *av[])
          "bytes of ram used as buffer when sending data for a connection")
         ("receive-chunksize", po::value<std::size_t>()->default_value(2048),
          "bytes of ram used as buffer when receiving data for a connection")
+        ("splice-size", po::value<std::size_t>()->default_value(1024 * 256),
+         "max byte size of the pipe buffer used for splicing data")
         ("max-buffer-ms", po::value<unsigned int>()->default_value(250),
          "max milliseconds that data can stay buffered in splice pipeline")
         ("listenqueue,L", po::value<std::size_t>(),
@@ -368,6 +370,10 @@ static void process_options(int ac, char *av[])
     if (vm.count("receive-chunksize")) {
         auto t = vm["receive-chunksize"].as<std::size_t>();
         SocksTCP::set_receive_buffer_chunk_size(t);
+    }
+    if (vm.count("splice-size")) {
+        auto t = vm["splice-size"].as<std::size_t>();
+        SocksTCP::set_splice_pipe_size(t);
     }
     if (vm.count("max-buffer-ms")) {
         auto t = vm["max-buffer-ms"].as<unsigned int>();
