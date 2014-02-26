@@ -34,9 +34,12 @@ class ephTrackerVec : boost::noncopyable
 {
 public:
     ephTrackerVec(boost::asio::io_service &iosrv, std::size_t cyclefreq)
-        : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
+            : cyclefreq_(cyclefreq), timer_set_(false), hidx_(0),
+              swapTimer_(iosrv) {}
     ~ephTrackerVec()
     {
+        boost::system::error_code ec;
+        swapTimer_.cancel(ec);
         for (std::size_t j = 0; j < 2; ++j)
             vec_cancel(j);
     }
@@ -51,9 +54,12 @@ public:
         x->start();
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
+            setTimer();
     }
-    std::size_t size() { return vec_[0].size() + vec_[1].size(); }
+    std::size_t size() {
+        std::lock_guard<std::mutex> wl(lock_);
+        return vec_[0].size() + vec_[1].size();
+    }
 private:
     inline void vec_cancel(std::size_t x) {
         for (auto &i: vec_[x]) {
@@ -62,37 +68,39 @@ private:
                 j->cancel();
         }
     }
-    void doSwap() {
+    bool doSwap() {
+        bool is_empty;
         std::size_t hnext = hidx_ ^ 1;
         vec_cancel(hnext);
         vec_[hnext].clear();
+        {
+            std::lock_guard<std::mutex> wl(lock_);
+            is_empty = !!vec_[hidx_].size();
+        }
         hidx_ = hnext;
+        return is_empty;
     }
-    void setTimer(bool expidite) {
-        if (expidite)
-            swapTimer_.expires_from_now
-                (boost::posix_time::seconds(cyclefreq_));
-        else
-            swapTimer_.expires_from_now
-                (boost::posix_time::milliseconds(cyclefreq_ * 100));
+    void setTimer() {
+        if (timer_set_)
+            return;
+        timer_set_ = true;
+        swapTimer_.expires_from_now
+            (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
+                                  timer_set_ = false;
                                   if (error)
                                       return;
                                   //print_trackers_logentry("[DOSWAP-]", hidx_);
-                                  if (lock_.try_lock()) {
-                                      doSwap();
-                                      auto sz = size();
-                                      lock_.unlock();
-                                      //print_trackers_logentry("[DOSWAP+]", hidx_);
-                                      if (sz)
-                                          setTimer(false);
-                                  } else
-                                      setTimer(true);
+                                  auto is_empty = doSwap();
+                                  //print_trackers_logentry("[DOSWAP+]", hidx_);
+                                  if (!is_empty)
+                                      setTimer();
                               });
     }
     std::mutex lock_;
     const std::size_t cyclefreq_;
+    std::atomic<bool> timer_set_;
     std::atomic<std::size_t> hidx_;
     boost::asio::deadline_timer swapTimer_;
     std::vector<std::weak_ptr<T>> vec_[2];
@@ -103,9 +111,12 @@ class ephTrackerList : boost::noncopyable
 {
 public:
     ephTrackerList(boost::asio::io_service &iosrv, std::size_t cyclefreq)
-        : cyclefreq_(cyclefreq), hidx_(0), swapTimer_(iosrv) {}
+        : cyclefreq_(cyclefreq), timer_set_(false), hidx_(0),
+          swapTimer_(iosrv) {}
     ~ephTrackerList()
     {
+        boost::system::error_code ec;
+        swapTimer_.cancel(ec);
         for (std::size_t j = 0; j < 2; ++j)
             list_cancel(j);
     }
@@ -118,7 +129,7 @@ public:
         }
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
+            setTimer();
     }
     void erase(typename std::list<std::weak_ptr<T>>::iterator it, std::size_t lidx) {
         std::lock_guard<std::mutex> wl(lock_);
@@ -136,9 +147,12 @@ public:
         x->start();
         if (swapTimer_.expires_from_now() <=
             boost::posix_time::time_duration(0,0,0,0))
-            setTimer(false);
+            setTimer();
     }
-    std::size_t size() { return list_[0].size() + list_[1].size(); }
+    std::size_t size() {
+        std::lock_guard<std::mutex> wl(lock_);
+        return list_[0].size() + list_[1].size();
+    }
 private:
     inline void list_cancel(std::size_t x) {
         auto end = list_[x].end();
@@ -153,34 +167,33 @@ private:
             list_[x].erase(ip);
         }
     }
-    void doSwap() {
+    bool doSwap() {
         std::size_t hnext = hidx_ ^ 1;
+        std::lock_guard<std::mutex> wl(lock_);
         list_cancel(hnext);
+        bool is_empty = !!list_[hidx_].size();
         hidx_ = hnext;
+        return is_empty;
     }
-    void setTimer(bool expidite) {
-        if (expidite)
-            swapTimer_.expires_from_now
-                (boost::posix_time::seconds(cyclefreq_));
-        else
-            swapTimer_.expires_from_now
-                (boost::posix_time::milliseconds(cyclefreq_ * 100));
+    void setTimer() {
+        if (timer_set_)
+            return;
+        timer_set_ = true;
+        swapTimer_.expires_from_now
+            (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
+                                  timer_set_ = false;
                                   if (error)
                                       return;
-                                  if (lock_.try_lock()) {
-                                      doSwap();
-                                      auto sz = size();
-                                      lock_.unlock();
-                                      if (sz)
-                                          setTimer(false);
-                                  } else
-                                      setTimer(true);
+                                  auto is_empty = doSwap();
+                                  if (!is_empty)
+                                      setTimer();
                               });
     }
     std::mutex lock_;
     const std::size_t cyclefreq_;
+    std::atomic<bool> timer_set_;
     std::atomic<std::size_t> hidx_;
     boost::asio::deadline_timer swapTimer_;
     std::list<std::weak_ptr<T>> list_[2];
@@ -229,7 +242,10 @@ public:
         }
         return boost::optional<std::shared_ptr<T>>();
     }
-    std::size_t size() const { return list_.size(); }
+    std::size_t size() {
+        std::lock_guard<std::mutex> wl(lock_);
+        return list_.size();
+    }
 
     std::mutex lock_;
     std::list<std::weak_ptr<T>> list_;
