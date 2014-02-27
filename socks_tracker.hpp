@@ -81,9 +81,9 @@ private:
         return is_empty;
     }
     void setTimer() {
-        if (timer_set_)
+        bool cxr(false);
+        if (!timer_set_.compare_exchange_strong(cxr, true))
             return;
-        timer_set_ = true;
         swapTimer_.expires_from_now
             (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
@@ -176,9 +176,9 @@ private:
         return is_empty;
     }
     void setTimer() {
-        if (timer_set_)
+        bool cxr(false);
+        if (!timer_set_.compare_exchange_strong(cxr, true))
             return;
-        timer_set_ = true;
         swapTimer_.expires_from_now
             (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)

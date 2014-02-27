@@ -380,7 +380,7 @@ static const char * const replyCodeString[] = {
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : untracked_(false), ibSiz_(0), is_socks_v4_(false),
+        : tracked_(true), ibSiz_(0), is_socks_v4_(false),
           bind_listen_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_(std::move(client_socket)),
@@ -394,8 +394,7 @@ SocksInit::SocksInit(ba::io_service &io_service,
 
 SocksInit::~SocksInit()
 {
-    if (!untracked_)
-        untrack();
+    untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
         print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
@@ -436,7 +435,10 @@ void SocksInit::untrack()
 {
     if (!bind_listen_)
         return;
-    conntracker_bindlisten->erase(get_tracker_iterator(), get_tracker_idx());
+    bool cxr(true);
+    if (tracked_.compare_exchange_strong(cxr, false))
+        conntracker_bindlisten->erase(get_tracker_iterator(),
+                                      get_tracker_idx());
 }
 
 void SocksInit::cancel()
@@ -451,9 +453,7 @@ void SocksInit::cancel()
 void SocksInit::terminate()
 {
     cancel();
-    if (!untracked_)
-        untrack();
-    untracked_ = true;
+    untrack();
 }
 
 void SocksInit::read_greet()
@@ -1128,9 +1128,9 @@ void SocksTCP::cancel()
 
 void SocksTCP::terminate()
 {
-    if (terminated_)
+    bool cxr(false);
+    if (!terminated_.compare_exchange_strong(cxr, true))
         return;
-    terminated_ = true;
     cancel();
     untrack();
     // std::cout << "Connection to "

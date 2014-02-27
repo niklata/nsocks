@@ -50,7 +50,7 @@ public:
     ~SocksInit();
     void terminate();
     void cancel();
-    inline void set_untracked() { untracked_ = true; }
+    inline void set_untracked() { tracked_ = false; }
     inline void start() { read_greet(); }
     inline bool is_bind_listen() const { return bind_listen_; }
     void set_tracker_iterator(std::list<std::weak_ptr<SocksInit>>::iterator it,
@@ -136,7 +136,7 @@ private:
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
-    std::atomic<bool> untracked_;
+    std::atomic<bool> tracked_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string outbuf_;
