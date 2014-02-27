@@ -158,10 +158,10 @@ private:
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
     std::array<char, 48> inBytes_;
+    std::array<char, 24> outBytes_;
     std::atomic<bool> tracked_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
-    std::string outbuf_;
     std::string dst_hostname_; // Shared
     boost::asio::ip::address dst_address_; // Shared
     boost::asio::ip::tcp::socket client_socket_; // Shared

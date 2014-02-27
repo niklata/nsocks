@@ -291,44 +291,45 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static inline void send_reply_code_v5(std::string &outbuf,
-                                      SocksInit::ReplyCode replycode)
+static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
+                                        SocksInit::ReplyCode replycode)
 {
-    outbuf.clear();
-    outbuf.append(1, 0x05);
-    outbuf.append(1, replycode);
-    outbuf.append(1, 0x00);
+    arr[0] = 0x05;
+    arr[1] = replycode;
+    arr[2] = 0;
+    return 3;
 }
 
-static inline void send_reply_binds_v5(std::string &outbuf,
-                                       ba::ip::tcp::endpoint ep)
+static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
+                                         std::size_t asiz,
+                                         ba::ip::tcp::endpoint ep)
 {
     auto bnd_addr = ep.address();
     if (bnd_addr.is_v4()) {
         auto v4b = bnd_addr.to_v4().to_bytes();
-        outbuf.append(1, 0x01);
+        arr[asiz++] = 0x01;
         for (auto &i: v4b)
-            outbuf.append(1, i);
+            arr[asiz++] = i;
     } else {
         auto v6b = bnd_addr.to_v6().to_bytes();
-        outbuf.append(1, 0x04);
+        arr[asiz++] = 0x04;
         for (auto &i: v6b)
-            outbuf.append(1, i);
+            arr[asiz++] = i;
     }
     union {
         uint16_t p;
         char b[2];
     } portu;
     portu.p = htons(ep.port());
-    outbuf.append(1, portu.b[0]);
-    outbuf.append(1, portu.b[1]);
+    arr[asiz++] = portu.b[0];
+    arr[asiz++] = portu.b[1];
+    return asiz;
 }
 
-static inline void send_reply_code_v4(std::string &outbuf,
-                                      SocksInit::ReplyCode replycode)
+static inline size_t send_reply_code_v4(std::array<char, 24> &arr,
+                                        SocksInit::ReplyCode replycode)
 {
-    outbuf.clear();
-    outbuf.append(1, 0x0);
+    arr[0] = 0;
     uint8_t rc;
     switch (replycode) {
         case SocksInit::RplSuccess: rc = 90; break;
@@ -344,25 +345,28 @@ static inline void send_reply_code_v4(std::string &outbuf,
         case SocksInit::RplIdentUnreach: rc = 92; break;
         case SocksInit::RplIdentWrong: rc = 93; break;
     }
-    outbuf.append(1, rc);
+    arr[1] = rc;
+    return 2;
 }
 
-static inline void send_reply_binds_v4(std::string &outbuf,
-                                       ba::ip::tcp::endpoint ep)
+static inline size_t send_reply_binds_v4(std::array<char, 24> &arr,
+                                         std::size_t asiz,
+                                         ba::ip::tcp::endpoint ep)
 {
     union {
         uint16_t p;
         char b[2];
     } portu;
     portu.p = htons(ep.port());
-    outbuf.append(1, portu.b[0]);
-    outbuf.append(1, portu.b[1]);
+    arr[asiz++] = portu.b[0];
+    arr[asiz++] = portu.b[1];
 
     auto bnd_addr = ep.address();
     assert(bnd_addr.is_v4());
     auto v4b = bnd_addr.to_v4().to_bytes();
     for (auto &i: v4b)
-        outbuf.append(1, i);
+        arr[asiz++] = i;
+    return asiz;
 }
 
 static const char * const replyCodeString[] = {
@@ -1039,25 +1043,31 @@ void SocksInit::dispatch_udp()
 
 void SocksInit::send_reply(ReplyCode replycode)
 {
+    std::size_t ssiz(0);
     if (!is_socks_v4_) {
         assert(replycode != RplIdentWrong && replycode != RplIdentUnreach);
-        send_reply_code_v5(outbuf_, replycode);
+        ssiz = send_reply_code_v5(outBytes_, replycode);
         if (replycode == RplSuccess) {
             if (cmd_code_ != CmdTCPBind || !bound_) {
                 throw std::logic_error
                     ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
             } else
-                send_reply_binds_v5(outbuf_, bound_->local_endpoint_);
+                ssiz = send_reply_binds_v5(outBytes_, ssiz,
+                                           bound_->local_endpoint_);
         }
     } else {
-        send_reply_code_v4(outbuf_, replycode);
-        if (!bound_) outbuf_.append(6, 0x0);
-        else send_reply_binds_v4(outbuf_, bound_->local_endpoint_);
+        ssiz = send_reply_code_v4(outBytes_, replycode);
+        if (!bound_) {
+            for (auto i = 0; i < 6; ++i)
+                outBytes_[ssiz++] = 0;
+        }
+        else ssiz = send_reply_binds_v4(outBytes_, ssiz,
+                                        bound_->local_endpoint_);
     }
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_,
-         ba::buffer(outbuf_, outbuf_.size()),
+         ba::buffer(outBytes_.data(), ssiz),
          strand_C->wrap(
          [this, sfd, replycode](const boost::system::error_code &ec,
                                 std::size_t bytes_xferred)
@@ -1753,20 +1763,30 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
 
 void SocksTCP::start()
 {
-    std::string ob;
+    std::array<char, 24> sbuf;
+    std::size_t ssiz;
+
     if (!is_socks_v4_) {
-        send_reply_code_v5(ob, SocksInit::ReplyCode::RplSuccess);
-        if (!is_bind_) send_reply_binds_v5(ob, remote_socket_.local_endpoint());
-        else send_reply_binds_v5(ob, remote_socket_.remote_endpoint());
+        ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
+        if (!is_bind_)
+            ssiz = send_reply_binds_v5(sbuf, ssiz,
+                                       remote_socket_.local_endpoint());
+        else
+            ssiz = send_reply_binds_v5(sbuf, ssiz,
+                                       remote_socket_.remote_endpoint());
     } else {
-        send_reply_code_v4(ob, SocksInit::ReplyCode::RplSuccess);
-        if (!is_bind_) send_reply_binds_v4(ob, remote_socket_.local_endpoint());
-        else send_reply_binds_v4(ob, remote_socket_.remote_endpoint());
+        ssiz = send_reply_code_v4(sbuf, SocksInit::ReplyCode::RplSuccess);
+        if (!is_bind_)
+            ssiz = send_reply_binds_v4(sbuf, ssiz,
+                                       remote_socket_.local_endpoint());
+        else
+            ssiz = send_reply_binds_v4(sbuf, ssiz,
+                                       remote_socket_.remote_endpoint());
     }
     auto sfd = shared_from_this();
-    auto ibm = client_buf_.prepare(ob.size());
-    auto siz = std::min(ob.size(), boost::asio::buffer_size(ibm));
-    memcpy(boost::asio::buffer_cast<char *>(ibm), ob.data(), siz);
+    auto ibm = client_buf_.prepare(ssiz);
+    auto siz = std::min(ssiz, boost::asio::buffer_size(ibm));
+    memcpy(boost::asio::buffer_cast<char *>(ibm), sbuf.data(), siz);
     client_buf_.commit(siz);
     ba::async_write
         (client_socket_, client_buf_, strand_R->wrap(
@@ -1829,10 +1849,15 @@ void SocksUDP::terminate()
 
 void SocksUDP::start()
 {
-    send_reply_code_v5(out_header_, SocksInit::ReplyCode::RplSuccess);
+    std::array<char, 24> sbuf;
+    std::size_t ssiz;
+
+    ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
     auto ep = client_socket_.local_endpoint();
-    send_reply_binds_v5(out_header_,
-                        ba::ip::tcp::endpoint(ep.address(), ep.port()));
+    ssiz = send_reply_binds_v5
+        (sbuf, ssiz, ba::ip::tcp::endpoint(ep.address(), ep.port()));
+    // XXX: out_header_ may be able to be replaced with a static array?
+    out_header_ = std::string(sbuf.data(), ssiz);
     auto sfd = shared_from_this();
     ba::async_write
         (tcp_client_socket_, ba::buffer(out_header_, out_header_.size()),
