@@ -157,29 +157,27 @@ private:
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
+    std::array<char, 48> inBytes_;
     std::atomic<bool> tracked_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string outbuf_;
+    std::string dst_hostname_; // Shared
+    boost::asio::ip::address dst_address_; // Shared
+    boost::asio::ip::tcp::socket client_socket_; // Shared
+    boost::asio::ip::tcp::socket remote_socket_; // Shared
     CommandCode cmd_code_;
     AddressType addr_type_;
-    std::array<char, 48> inBytes_;
     uint16_t ibSiz_;
     uint16_t poff_;
     uint16_t ptmp_;
+    uint16_t dst_port_; // Shared
     uint8_t pstate_;
     bool is_socks_v4_;
     bool bind_listen_;
     bool auth_none_;
     bool auth_gssapi_;
     bool auth_unpw_;
-
-    // Shared items
-    std::string dst_hostname_;
-    boost::asio::ip::address dst_address_;
-    boost::asio::ip::tcp::socket client_socket_;
-    boost::asio::ip::tcp::socket remote_socket_;
-    uint16_t dst_port_;
 };
 
 class SocksTCP

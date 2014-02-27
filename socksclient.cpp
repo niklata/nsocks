@@ -381,12 +381,11 @@ static const char * const replyCodeString[] = {
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : tracked_(true), ibSiz_(0), poff_(0), ptmp_(0),
-          pstate_(ParsedState::Parsed_None),
-          is_socks_v4_(false), bind_listen_(false),
-          auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
-          client_socket_(std::move(client_socket)),
-          remote_socket_(io_service)
+        : tracked_(true), client_socket_(std::move(client_socket)),
+          remote_socket_(io_service), ibSiz_(0), poff_(0), ptmp_(0),
+          pstate_(ParsedState::Parsed_None), is_socks_v4_(false),
+          bind_listen_(false), auth_none_(false), auth_gssapi_(false),
+          auth_unpw_(false)
 {
     if (g_verbose_logs)
         ++socks_alive_count;
