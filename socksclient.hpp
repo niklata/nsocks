@@ -455,7 +455,7 @@ private:
     boost::asio::ip::address daddr_;
     std::vector<uint8_t> inbuf_;
     std::vector<uint8_t> outbuf_;
-    std::string out_header_;
+    std::array<char, 24> out_header_;
     std::vector<boost::asio::const_buffer> out_bufs_;
     std::size_t poffset_;
     std::size_t psize_;

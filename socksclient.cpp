@@ -1839,12 +1839,10 @@ void SocksUDP::start()
     auto ep = client_socket_.local_endpoint();
     ssiz = send_reply_binds_v5
         (sbuf, ssiz, ba::ip::tcp::endpoint(ep.address(), ep.port()));
-    // XXX: out_header_ may be able to be replaced with a static array?
-    out_header_ = std::string(sbuf.data(), ssiz);
+    memcpy(out_header_.data(), sbuf.data(), ssiz);
     auto sfd = shared_from_this();
     ba::async_write
-        (tcp_client_socket_, ba::buffer(out_header_, out_header_.size()),
-         strand_C->wrap(
+        (tcp_client_socket_, ba::buffer(out_header_.data(), ssiz),
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1856,11 +1854,10 @@ void SocksUDP::start()
                  terminate();
                  return;
              }
-             out_header_.clear();
              udp_tcp_socket_read();
              udp_client_socket_read();
              udp_remote_socket_read();
-         }));
+         });
 }
 
 void SocksUDP::close_udp_sockets()
@@ -2106,7 +2103,6 @@ void SocksUDP::udp_remote_socket_read()
 {
     auto sfd = shared_from_this();
     outbuf_.clear();
-    out_header_.clear();
     out_bufs_.clear();
     outbuf_.reserve(UDP_BUFSIZE);
     remote_socket_.async_receive_from
@@ -2127,26 +2123,33 @@ void SocksUDP::udp_remote_socket_read()
              // Attach the header.
              auto saddr = rsender_endpoint_.address();
              uint16_t sport = rsender_endpoint_.port();
+             std::size_t ohs = 4;
              if (saddr.is_v4()) {
-                 out_header_.append("\0\0\0\x1");
+                 out_header_[0] = 0;
+                 out_header_[1] = 0;
+                 out_header_[2] = 0;
+                 out_header_[3] = 1;
                  auto v4b = saddr.to_v4().to_bytes();
                  for (auto &i: v4b)
-                     out_header_.append(1, i);
+                     out_header_[ohs++] = i;
              } else {
-                 out_header_.append("\0\0\0\x4");
+                 out_header_[0] = 0;
+                 out_header_[1] = 0;
+                 out_header_[2] = 0;
+                 out_header_[3] = 4;
                  auto v6b = saddr.to_v6().to_bytes();
                  for (auto &i: v6b)
-                     out_header_.append(1, i);
+                     out_header_[ohs++] = i;
              }
              union {
                  uint16_t p;
                  char b[2];
              } portu;
              portu.p = htons(sport);
-             out_header_.append(1, portu.b[0]);
-             out_header_.append(1, portu.b[1]);
+             out_header_[ohs++] = portu.b[0];
+             out_header_[ohs++] = portu.b[1];
              // Forward it to the client socket.
-             out_bufs_.push_back(boost::asio::buffer(out_header_));
+             out_bufs_.push_back(boost::asio::buffer(out_header_.data(), ohs));
              out_bufs_.push_back(boost::asio::buffer(outbuf_));
              client_socket_.async_send_to
                  (out_bufs_, client_remote_endpoint_, strand_C->wrap(
