@@ -95,6 +95,7 @@ private:
         Parsed5CR_Cmd,
         Parsed5CR_Resv,
         Parsed5CR_AddrType,
+        Parsed5CR_DNSLen,
         Parsed5CR_DAddr,
 
         // greet_v4

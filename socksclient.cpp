@@ -700,23 +700,21 @@ p4g_version:
             if (g_disable_ipv6)
                 return RplAddrNotSupp;
         } else if (addr_type_ == AddrDNS) {
-            // XXX: This could be improved to consume as it goes to avoid
-            //      length-limiting DNS too much.
-            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff_]);
-            if (dnssiz == 0)
-                return RplAddrNotSupp;
-            if (ibSiz_ - (poff_+1U) < dnssiz)
+            if (ibSiz_ - poff_ < 1)
                 return boost::optional<ReplyCode>();
-            pstate_ = Parsed5CR_DAddr;
-            consumed += dnssiz+1;
-            dst_hostname_ = std::string(inBytes_.data() + (poff_+1), dnssiz);
-            poff_ += dnssiz+1;
+            pstate_ = Parsed5CR_DNSLen;
+            consumed++;
+            ptmp_ = static_cast<uint8_t>(inBytes_[poff_++]);
+            if (ptmp_ == 0)
+                return RplAddrNotSupp;
+            goto parsed5cr_dnslen;
         } else {
             std::cerr << "parse_greet(): unknown address type: "
                       << addr_type_ << "\n";
             return RplAddrNotSupp;
         }
     }
+parsed5cr_daddr:
     case Parsed5CR_DAddr: {
         std::cerr << "=> Parsed5CR_DAddr\n";
         if (ibSiz_ - poff_ < 2)
@@ -735,6 +733,23 @@ parsed_finished:
         poff_ = 0;
         dispatch_connrq();
         return RplSuccess;
+    }
+parsed5cr_dnslen:
+    case Parsed5CR_DNSLen: {
+        uint16_t csiz = std::min(static_cast<uint16_t>(ibSiz_ - poff_), ptmp_);
+        if (csiz < 1)
+            return boost::optional<ReplyCode>();
+        consumed += csiz;
+        dst_hostname_.append(inBytes_.data() + poff_, csiz);
+        poff_ += csiz;
+        auto dsiz = dst_hostname_.size();
+        if (dsiz < csiz)
+            return boost::optional<ReplyCode>();
+        else if (dsiz > csiz) {
+            std::cerr << "parse_greet(): Bad DNS name length="<<dsiz<<".\n";
+            return RplAddrNotSupp;
+        }
+        goto parsed5cr_daddr;
     }
     default: throw std::logic_error("undefined parse state");
     }
