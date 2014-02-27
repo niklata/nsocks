@@ -157,8 +157,7 @@ private:
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
-    std::array<char, 48> inBytes_;
-    std::array<char, 24> outBytes_;
+    std::array<char, 48> sockbuf_;
     std::atomic<bool> tracked_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;

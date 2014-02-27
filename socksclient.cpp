@@ -291,7 +291,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
+static inline size_t send_reply_code_v5(std::array<char, 48> &arr,
                                         SocksInit::ReplyCode replycode)
 {
     arr[0] = 0x05;
@@ -300,7 +300,7 @@ static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
     return 3;
 }
 
-static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
+static inline size_t send_reply_binds_v5(std::array<char, 48> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
@@ -326,7 +326,7 @@ static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
     return asiz;
 }
 
-static inline size_t send_reply_code_v4(std::array<char, 24> &arr,
+static inline size_t send_reply_code_v4(std::array<char, 48> &arr,
                                         SocksInit::ReplyCode replycode)
 {
     arr[0] = 0;
@@ -349,7 +349,7 @@ static inline size_t send_reply_code_v4(std::array<char, 24> &arr,
     return 2;
 }
 
-static inline size_t send_reply_binds_v4(std::array<char, 24> &arr,
+static inline size_t send_reply_binds_v4(std::array<char, 48> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
@@ -465,7 +465,7 @@ void SocksInit::read_greet()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
+        (ba::buffer(sockbuf_.data() + ibSiz_, sockbuf_.size() - ibSiz_),
          strand_C->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
@@ -491,7 +491,7 @@ void SocksInit::read_greet()
              } else {
                  ibSiz_ -= consumed;
                  poff_ -= consumed;
-                 memmove(inBytes_.data(), inBytes_.data() + consumed, ibSiz_);
+                 memmove(sockbuf_.data(), sockbuf_.data() + consumed, ibSiz_);
              }
              read_greet();
          }));
@@ -510,7 +510,7 @@ SocksInit::parse_greet(std::size_t &consumed)
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         if (c == 0x05) {
             pstate_ = Parsed5G_Version;
         } else if (c == 0x04) {
@@ -526,14 +526,14 @@ SocksInit::parse_greet(std::size_t &consumed)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5G_NumAuth;
         ++consumed;
-        ptmp_ = static_cast<uint8_t>(inBytes_[poff_++]);
+        ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
     }
     case Parsed5G_NumAuth: {
         std::cerr << "=> Parsed5G_NumAuth\n";
         size_t aendsiz = poff_ + ptmp_;
         for (;poff_ < aendsiz && poff_ < ibSiz_; ++poff_,--ptmp_) {
             ++consumed;
-            uint8_t atype = static_cast<uint8_t>(inBytes_[poff_]);
+            uint8_t atype = static_cast<uint8_t>(sockbuf_[poff_]);
             if (atype == 0x0)
                 auth_none_ = true;
             else if (atype == 0x1)
@@ -580,7 +580,7 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_Cmd;
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         if (c == 0x1) {
             cmd_code_ = CmdTCPConnect;
         } else if (c == 0x2) {
@@ -596,7 +596,7 @@ p4g_version:
         pstate_ = Parsed4G_DPort;
         consumed += 2;
         uint16_t tmp;
-        memcpy(&tmp, inBytes_.data() + poff_, 2);
+        memcpy(&tmp, sockbuf_.data() + poff_, 2);
         dst_port_ = ntohs(tmp);
         poff_ += 2;
     }
@@ -607,7 +607,7 @@ p4g_version:
         pstate_ = Parsed4G_DAddr;
         consumed += 4;
         ba::ip::address_v4::bytes_type v4o;
-        memcpy(v4o.data(), inBytes_.data() + poff_, 4);
+        memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
         dst_address_ = ba::ip::address_v4(v4o);
         poff_ += 4;
     }
@@ -617,7 +617,7 @@ p4g_version:
         for (; poff_ < ibSiz_; ++poff_) {
             ++consumed;
             ++ptmp_;
-            if (inBytes_[poff_] == '\0') {
+            if (sockbuf_[poff_] == '\0') {
                 ptmp_ = 0;
                 pstate_ = Parsed_Finished;
                 goto parsed_finished;
@@ -633,7 +633,7 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Version;
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         std::cout << "Replied c == " << static_cast<uint8_t>(c) << "\n";
         if (c != 0x5)
             return RplFail;
@@ -644,7 +644,7 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Cmd;
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         if (c == 0x1) {
             cmd_code_ = CmdTCPConnect;
         } else if (c == 0x2) {
@@ -660,7 +660,7 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Resv;
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         if (c != 0x0)
             return RplFail;
     }
@@ -670,7 +670,7 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_AddrType;
         ++consumed;
-        auto c = inBytes_[poff_++];
+        auto c = sockbuf_[poff_++];
         if (c == 0x1) {
             addr_type_ = AddrIPv4;
         } else if (c == 0x4) {
@@ -688,7 +688,7 @@ p4g_version:
             pstate_ = Parsed5CR_DAddr;
             consumed += 4;
             ba::ip::address_v4::bytes_type v4o;
-            memcpy(v4o.data(), inBytes_.data() + poff_, 4);
+            memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
             dst_address_ = ba::ip::address_v4(v4o);
             poff_ += 4;
         } else if (addr_type_ == AddrIPv6) {
@@ -697,7 +697,7 @@ p4g_version:
             pstate_ = Parsed5CR_DAddr;
             consumed += 16;
             ba::ip::address_v6::bytes_type v6o;
-            memcpy(v6o.data(), inBytes_.data() + poff_, 16);
+            memcpy(v6o.data(), sockbuf_.data() + poff_, 16);
             dst_address_ = ba::ip::address_v6(v6o);
             poff_ += 16;
             if (g_disable_ipv6)
@@ -707,7 +707,7 @@ p4g_version:
                 return boost::optional<ReplyCode>();
             pstate_ = Parsed5CR_DNSLen;
             consumed++;
-            ptmp_ = static_cast<uint8_t>(inBytes_[poff_++]);
+            ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
             if (ptmp_ == 0)
                 return RplAddrNotSupp;
             goto parsed5cr_dnslen;
@@ -725,7 +725,7 @@ parsed5cr_daddr:
         pstate_ = Parsed_Finished;
         consumed += 2;
         uint16_t tmp;
-        memcpy(&tmp, inBytes_.data() + poff_, 2);
+        memcpy(&tmp, sockbuf_.data() + poff_, 2);
         dst_port_ = ntohs(tmp);
         poff_ += 2;
     }
@@ -743,7 +743,7 @@ parsed5cr_dnslen:
         if (csiz < 1)
             return boost::optional<ReplyCode>();
         consumed += csiz;
-        dst_hostname_.append(inBytes_.data() + poff_, csiz);
+        dst_hostname_.append(sockbuf_.data() + poff_, csiz);
         poff_ += csiz;
         auto dsiz = dst_hostname_.size();
         if (dsiz < csiz)
@@ -1046,28 +1046,28 @@ void SocksInit::send_reply(ReplyCode replycode)
     std::size_t ssiz(0);
     if (!is_socks_v4_) {
         assert(replycode != RplIdentWrong && replycode != RplIdentUnreach);
-        ssiz = send_reply_code_v5(outBytes_, replycode);
+        ssiz = send_reply_code_v5(sockbuf_, replycode);
         if (replycode == RplSuccess) {
             if (cmd_code_ != CmdTCPBind || !bound_) {
                 throw std::logic_error
                     ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
             } else
-                ssiz = send_reply_binds_v5(outBytes_, ssiz,
+                ssiz = send_reply_binds_v5(sockbuf_, ssiz,
                                            bound_->local_endpoint_);
         }
     } else {
-        ssiz = send_reply_code_v4(outBytes_, replycode);
+        ssiz = send_reply_code_v4(sockbuf_, replycode);
         if (!bound_) {
             for (auto i = 0; i < 6; ++i)
-                outBytes_[ssiz++] = 0;
+                sockbuf_[ssiz++] = 0;
         }
-        else ssiz = send_reply_binds_v4(outBytes_, ssiz,
+        else ssiz = send_reply_binds_v4(sockbuf_, ssiz,
                                         bound_->local_endpoint_);
     }
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_,
-         ba::buffer(outBytes_.data(), ssiz),
+         ba::buffer(sockbuf_.data(), ssiz),
          strand_C->wrap(
          [this, sfd, replycode](const boost::system::error_code &ec,
                                 std::size_t bytes_xferred)
@@ -1763,7 +1763,7 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
 
 void SocksTCP::start()
 {
-    std::array<char, 24> sbuf;
+    std::array<char, 48> sbuf;
     std::size_t ssiz;
 
     if (!is_socks_v4_) {
@@ -1849,7 +1849,7 @@ void SocksUDP::terminate()
 
 void SocksUDP::start()
 {
-    std::array<char, 24> sbuf;
+    std::array<char, 48> sbuf;
     std::size_t ssiz;
 
     ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
