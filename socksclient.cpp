@@ -55,6 +55,7 @@
 
 #define MAX_BIND_TRIES 10
 #define UDP_BUFSIZE 1536
+#define MAX_IDENT_LEN 1024
 
 namespace ba = boost::asio;
 
@@ -380,8 +381,9 @@ static const char * const replyCodeString[] = {
 
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
-        : tracked_(true), ibSiz_(0), is_socks_v4_(false),
-          bind_listen_(false),
+        : tracked_(true), ibSiz_(0), poff_(0), ptmp_(0),
+          pstate_(ParsedState::Parsed_None),
+          is_socks_v4_(false), bind_listen_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false),
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service)
@@ -477,254 +479,266 @@ void SocksInit::read_greet()
              if (!bytes_xferred)
                  return;
              ibSiz_ += bytes_xferred;
-             auto x = process_greet();
-             if (x) {
-                 if (!*x) {
-                     std::cerr << "process_greet(): bad input -> terminate!\n";
-                     terminate();
-                 }
-                 if (!is_socks_v4_)
-                     read_conn_request();
-                 return;
-             }
-             read_greet();
-         }));
-}
-
-void SocksInit::read_conn_request()
-{
-    auto sfd = shared_from_this();
-    client_socket_.async_read_some
-        (ba::buffer(inBytes_.data() + ibSiz_, inBytes_.size() - ibSiz_),
-         strand_C->wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
-         {
-             if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     std::cerr << "read_conn_request() error: "
-                               << boost::system::system_error(ec).what()
-                               << std::endl;
-                     terminate();
-                 }
-                 return;
-             }
-             if (!bytes_xferred)
-                 return;
-             ibSiz_ += bytes_xferred;
-             auto rc = process_connrq();
+             size_t consumed;
+             auto rc = parse_greet(consumed);
              if (rc) {
-                 // On failure we will terminate via the send_reply() response.
                  if (*rc != RplSuccess)
                      send_reply(*rc);
                  return;
+             } else {
+                 ibSiz_ -= consumed;
+                 poff_ -= consumed;
+                 memmove(inBytes_.data(), inBytes_.data() + consumed, ibSiz_);
              }
-             read_conn_request();
+             read_greet();
          }));
 }
 
 // We don't support authentication.
 static const char reply_greetz[2] = {'\x5','\x0'};
 
-// Returns false if the object needs to be destroyed by the caller.
-boost::optional<bool> SocksInit::process_greet()
+boost::optional<SocksInit::ReplyCode>
+SocksInit::parse_greet(std::size_t &consumed)
 {
-    size_t poff = 0;
-
-    if (poff == ibSiz_)
-        return boost::optional<bool>();
-    switch (inBytes_[poff++]) {
-        case 0x05: return process_greet_v5(poff);
-        case 0x04: {
+    consumed = 0;
+    switch (pstate_) {
+    case Parsed_None: {
+        std::cerr << "=> Parsed_None\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        if (c == 0x05) {
+            pstate_ = Parsed5G_Version;
+        } else if (c == 0x04) {
+            pstate_ = Parsed4G_Version;
             is_socks_v4_ = true;
-            auto orc = process_greet_v4(poff);
-            if (!orc)
-                return boost::optional<bool>();
-            if (*orc != RplSuccess)
-                send_reply(*orc);
-            return true;
+            goto p4g_version;
+        } else
+            return RplFail;
+    }
+    case Parsed5G_Version: {
+        std::cerr << "=> Parsed5G_Version\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed5G_NumAuth;
+        ++consumed;
+        ptmp_ = static_cast<uint8_t>(inBytes_[poff_++]);
+    }
+    case Parsed5G_NumAuth: {
+        std::cerr << "=> Parsed5G_NumAuth\n";
+        size_t aendsiz = poff_ + ptmp_;
+        for (;poff_ < aendsiz && poff_ < ibSiz_; ++poff_,--ptmp_) {
+            ++consumed;
+            uint8_t atype = static_cast<uint8_t>(inBytes_[poff_]);
+            if (atype == 0x0)
+                auth_none_ = true;
+            else if (atype == 0x1)
+                auth_gssapi_ = true;
+            else if (atype == 0x2)
+                auth_unpw_ = true;
         }
-        default: return false;
+        if (ptmp_ == 0) {
+            pstate_ = Parsed5G_Auth;
+            if (poff_ != ibSiz_) // Reject if there are excess bytes in buffer.
+                return RplFail;
+            if (!auth_none_)
+                return RplFail;
+        } else if (ptmp_ > 0) {
+            return boost::optional<ReplyCode>();
+        } else {
+            std::cerr << "Parsed5CR_NumAuth: nauth < 0!\n";
+            return RplFail;
+        }
     }
-}
-
-// Returns false if the object needs to be destroyed by the caller.
-boost::optional<bool> SocksInit::process_greet_v5(size_t poff)
-{
-    // Number of authentication methods supported.
-    if (poff == ibSiz_)
-        return boost::optional<bool>();
-    size_t nauth = static_cast<uint8_t>(inBytes_[poff++]);
-
-    // Types of authentication methods supported.
-    size_t aendsiz = nauth + 2;
-    // If buffer is too long, kill the connection.  If it's not long enough,
-    // wait for more data.  If it's just right, proceed.
-    if (ibSiz_ > aendsiz)
-        return false;
-    if (ibSiz_ < aendsiz)
-        return boost::optional<bool>();
-    for (;poff < aendsiz; ++poff) {
-        uint8_t atype = static_cast<uint8_t>(inBytes_[poff]);
-        if (atype == 0x0)
-            auth_none_ = true;
-        if (atype == 0x1)
-            auth_gssapi_ = true;
-        if (atype == 0x2)
-            auth_unpw_ = true;
+    case Parsed5G_Auth: {
+        std::cerr << "=> Parsed5G_Auth\n";
+        auto sfd = shared_from_this();
+        ba::async_write(
+            client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
+            strand_C->wrap(
+                [this, sfd](const boost::system::error_code &ec,
+                            std::size_t bytes_xferred)
+                {
+                    if (ec && ec != ba::error::operation_aborted) {
+                        std::cerr << "failed writing reply_greetz: "
+                                  << boost::system::system_error(ec).what()
+                                  << std::endl;
+                        terminate();
+                    }
+                }));
+        pstate_ = Parsed5G_Replied;
+        return boost::optional<ReplyCode>();
     }
-    ibSiz_ = 0;
-    if (!auth_none_)
-        return false;
-
-    auto sfd = shared_from_this();
-    ba::async_write(
-        client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
-        strand_C->wrap(
-        [this, sfd](const boost::system::error_code &ec,
-                    std::size_t bytes_xferred)
-        {
-            if (ec && ec != ba::error::operation_aborted) {
-                std::cerr << "failed writing reply_greetz: "
-                          << boost::system::system_error(ec).what()
-                          << std::endl;
-                terminate();
+p4g_version:
+    case Parsed4G_Version: {
+        std::cerr << "=> Parsed4G_Version\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed4G_Cmd;
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        if (c == 0x1) {
+            cmd_code_ = CmdTCPConnect;
+        } else if (c == 0x2) {
+            cmd_code_ = CmdTCPConnect;
+        } else {
+            return RplCmdNotSupp;
+        }
+    }
+    case Parsed4G_Cmd: {
+        std::cerr << "=> Parsed4G_Cmd\n";
+        if (ibSiz_ - poff_ < 2)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed4G_DPort;
+        consumed += 2;
+        uint16_t tmp;
+        memcpy(&tmp, inBytes_.data() + poff_, 2);
+        dst_port_ = ntohs(tmp);
+        poff_ += 2;
+    }
+    case Parsed4G_DPort: {
+        std::cerr << "=> Parsed4G_DPort\n";
+        if (ibSiz_ - poff_ < 4)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed4G_DAddr;
+        consumed += 4;
+        ba::ip::address_v4::bytes_type v4o;
+        memcpy(v4o.data(), inBytes_.data() + poff_, 4);
+        dst_address_ = ba::ip::address_v4(v4o);
+        poff_ += 4;
+    }
+    case Parsed4G_DAddr: {
+        std::cerr << "=> Parsed4G_DAddr\n";
+        // Null-terminated userid.
+        for (; poff_ < ibSiz_; ++poff_) {
+            ++consumed;
+            ++ptmp_;
+            if (inBytes_[poff_] == '\0') {
+                ptmp_ = 0;
+                pstate_ = Parsed_Finished;
+                goto parsed_finished;
             }
-        }));
-    return true;
-}
-
-// Returns false if the object needs to be destroyed by the caller.
-boost::optional<SocksInit::ReplyCode> SocksInit::process_greet_v4(size_t poff)
-{
-    // Client command.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff++])) {
-    case 0x1: cmd_code_ = CmdTCPConnect; break;
-    case 0x2: cmd_code_ = CmdTCPBind; break;
-    default: return RplCmdNotSupp;
-    }
-
-    // Destination port.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    if (ibSiz_ - poff < 2)
-        return RplFail;
-    uint16_t tmp;
-    memcpy(&tmp, inBytes_.data() + poff, 2);
-    dst_port_ = ntohs(tmp);
-    poff += 2;
-
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    if (ibSiz_ - poff < 4)
-        return RplFail;
-    ba::ip::address_v4::bytes_type v4o;
-    memcpy(v4o.data(), inBytes_.data() + poff, 4);
-    dst_address_ = ba::ip::address_v4(v4o);
-    poff += 4;
-
-    // Null-terminated userid.
-    for (; poff < ibSiz_; ++poff) {
-        if (inBytes_[poff] == '\0') {
-            ibSiz_ = 0;
-            dispatch_connrq();
-            return RplSuccess;
-        }
-    }
-
-    return boost::optional<SocksInit::ReplyCode>();
-}
-
-// Returns false if the object needs to be destroyed by the caller.
-boost::optional<SocksInit::ReplyCode> SocksInit::process_connrq()
-{
-    size_t poff = 0;
-
-    // We only accept Socks5.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    if (inBytes_[poff++] != 0x05)
-        return RplFail;
-
-    // Client command.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff++])) {
-    case 0x1: cmd_code_ = CmdTCPConnect; break;
-    case 0x2: cmd_code_ = CmdTCPBind; break;
-    case 0x3: cmd_code_ = CmdUDP; break;
-    default: return RplCmdNotSupp;
-    }
-
-    // Must be zero (reserved).
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    if (inBytes_[poff++] != 0x0)
-        return RplFail;
-
-    // Address type.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    switch (static_cast<uint8_t>(inBytes_[poff++])) {
-    case 0x1: addr_type_ = AddrIPv4; break;
-    case 0x3: addr_type_ = AddrDNS; break;
-    case 0x4: addr_type_ = AddrIPv6; break;
-    default: return RplAddrNotSupp;
-    }
-
-    // Destination address.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    switch (addr_type_) {
-        case AddrIPv4: {
-            // ibSiz_ = 10, poff = 4
-            if (ibSiz_ - poff != 6)
+            if (ptmp_ > MAX_IDENT_LEN)
                 return RplFail;
-            ba::ip::address_v4::bytes_type v4o;
-            memcpy(v4o.data(), inBytes_.data() + poff, 4);
-            dst_address_ = ba::ip::address_v4(v4o);
-            poff += 4;
-            break;
         }
-        case AddrIPv6: {
-            if (ibSiz_ - poff != 18)
-                return RplFail;
-            ba::ip::address_v6::bytes_type v6o;
-            memcpy(v6o.data(), inBytes_.data() + poff, 16);
-            dst_address_ = ba::ip::address_v6(v6o);
-            poff += 16;
-            if (g_disable_ipv6)
-                return RplAddrNotSupp;
-            break;
-        }
-        case AddrDNS: {
-            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff++]);
-            if (ibSiz_ - poff != dnssiz + 2)
-                return RplFail;
-            dst_hostname_ = std::string(inBytes_.data() + poff, dnssiz);
-            poff += dnssiz;
-            break;
-        }
-        default:
-            std::cerr << "reply_greet(): unknown address type: "
-                      << addr_type_ << "\n";
+        return boost::optional<ReplyCode>();
+    }
+    case Parsed5G_Replied: {
+        std::cerr << "=> Parsed5G_Replied\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed5CR_Version;
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        std::cout << "Replied c == " << static_cast<uint8_t>(c) << "\n";
+        if (c != 0x5)
+            return RplFail;
+    }
+    case Parsed5CR_Version: {
+        std::cerr << "=> Parsed5CR_Version\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed5CR_Cmd;
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        if (c == 0x1) {
+            cmd_code_ = CmdTCPConnect;
+        } else if (c == 0x2) {
+            cmd_code_ = CmdTCPBind;
+        } else if (c == 0x3) {
+            cmd_code_ = CmdUDP;
+        } else
+            return RplCmdNotSupp;
+    }
+    case Parsed5CR_Cmd: {
+        std::cerr << "=> Parsed5CR_Cmd\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed5CR_Resv;
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        if (c != 0x0)
+            return RplFail;
+    }
+    case Parsed5CR_Resv: {
+        std::cerr << "=> Parsed5CR_Resv\n";
+        if (ibSiz_ - poff_ < 1)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed5CR_AddrType;
+        ++consumed;
+        auto c = inBytes_[poff_++];
+        if (c == 0x1) {
+            addr_type_ = AddrIPv4;
+        } else if (c == 0x4) {
+            addr_type_ = AddrIPv6;
+        } else if (c == 0x3) {
+            addr_type_ = AddrDNS;
+        } else
             return RplAddrNotSupp;
     }
-
-    // Destination port.
-    if (poff == ibSiz_)
-        return boost::optional<SocksInit::ReplyCode>();
-    if (ibSiz_ - poff != 2)
-        return RplFail;
-    uint16_t tmp;
-    memcpy(&tmp, inBytes_.data() + poff, 2);
-    dst_port_ = ntohs(tmp);
-
-    ibSiz_ = 0;
-    dispatch_connrq();
-    return RplSuccess;
+    case Parsed5CR_AddrType: {
+        std::cerr << "=> Parsed5CR_AddrType\n";
+        if (addr_type_ == AddrIPv4) {
+            if (ibSiz_ - poff_ < 4)
+                return boost::optional<ReplyCode>();
+            pstate_ = Parsed5CR_DAddr;
+            consumed += 4;
+            ba::ip::address_v4::bytes_type v4o;
+            memcpy(v4o.data(), inBytes_.data() + poff_, 4);
+            dst_address_ = ba::ip::address_v4(v4o);
+            poff_ += 4;
+        } else if (addr_type_ == AddrIPv6) {
+            if (ibSiz_ - poff_ < 16)
+                return boost::optional<ReplyCode>();
+            pstate_ = Parsed5CR_DAddr;
+            consumed += 16;
+            ba::ip::address_v6::bytes_type v6o;
+            memcpy(v6o.data(), inBytes_.data() + poff_, 16);
+            dst_address_ = ba::ip::address_v6(v6o);
+            poff_ += 16;
+            if (g_disable_ipv6)
+                return RplAddrNotSupp;
+        } else if (addr_type_ == AddrDNS) {
+            // XXX: This could be improved to consume as it goes to avoid
+            //      length-limiting DNS too much.
+            size_t dnssiz = static_cast<uint8_t>(inBytes_[poff_]);
+            if (dnssiz == 0)
+                return RplAddrNotSupp;
+            if (ibSiz_ - (poff_+1U) < dnssiz)
+                return boost::optional<ReplyCode>();
+            pstate_ = Parsed5CR_DAddr;
+            consumed += dnssiz+1;
+            dst_hostname_ = std::string(inBytes_.data() + (poff_+1), dnssiz);
+            poff_ += dnssiz+1;
+        } else {
+            std::cerr << "parse_greet(): unknown address type: "
+                      << addr_type_ << "\n";
+            return RplAddrNotSupp;
+        }
+    }
+    case Parsed5CR_DAddr: {
+        std::cerr << "=> Parsed5CR_DAddr\n";
+        if (ibSiz_ - poff_ < 2)
+            return boost::optional<ReplyCode>();
+        pstate_ = Parsed_Finished;
+        consumed += 2;
+        uint16_t tmp;
+        memcpy(&tmp, inBytes_.data() + poff_, 2);
+        dst_port_ = ntohs(tmp);
+        poff_ += 2;
+    }
+parsed_finished:
+    case Parsed_Finished: {
+        std::cerr << "=> Parsed_Finished\n";
+        ibSiz_ = 0;
+        poff_ = 0;
+        dispatch_connrq();
+        return RplSuccess;
+    }
+    default: throw std::logic_error("undefined parse state");
+    }
+    return boost::optional<ReplyCode>();
 }
 
 void SocksInit::dispatch_connrq()

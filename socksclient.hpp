@@ -82,6 +82,30 @@ public:
     };
 
 private:
+    enum ParsedState {
+        // greet
+        Parsed_None = 0,
+        // greet_v5
+        Parsed5G_Version,
+        Parsed5G_NumAuth,
+        Parsed5G_Auth,
+        Parsed5G_Replied,
+        // process_connrq
+        Parsed5CR_Version,
+        Parsed5CR_Cmd,
+        Parsed5CR_Resv,
+        Parsed5CR_AddrType,
+        Parsed5CR_DAddr,
+
+        // greet_v4
+        Parsed4G_Version,
+        Parsed4G_Cmd,
+        Parsed4G_DPort,
+        Parsed4G_DAddr,
+
+        Parsed_Finished
+    };
+
     enum CommandCode {
         CmdTCPConnect,
         CmdTCPBind,
@@ -117,11 +141,7 @@ private:
 
     void untrack();
     void read_greet();
-    void read_conn_request();
-    boost::optional<bool> process_greet();
-    boost::optional<bool> process_greet_v5(size_t poff);
-    boost::optional<ReplyCode> process_greet_v4(size_t poff);
-    boost::optional<ReplyCode> process_connrq();
+    boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     void dispatch_connrq();
 
     void dispatch_tcp_connect();
@@ -142,9 +162,11 @@ private:
     std::string outbuf_;
     CommandCode cmd_code_;
     AddressType addr_type_;
-    // Maximum packet size for handshakes is 262
-    std::array<char, 272> inBytes_;
+    std::array<char, 48> inBytes_;
     uint16_t ibSiz_;
+    uint16_t poff_;
+    uint16_t ptmp_;
+    uint8_t pstate_;
     bool is_socks_v4_;
     bool bind_listen_;
     bool auth_none_;
