@@ -506,7 +506,6 @@ SocksInit::parse_greet(std::size_t &consumed)
     consumed = 0;
     switch (pstate_) {
     case Parsed_None: {
-        std::cerr << "=> Parsed_None\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         ++consumed;
@@ -521,7 +520,6 @@ SocksInit::parse_greet(std::size_t &consumed)
             return RplFail;
     }
     case Parsed5G_Version: {
-        std::cerr << "=> Parsed5G_Version\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5G_NumAuth;
@@ -529,7 +527,6 @@ SocksInit::parse_greet(std::size_t &consumed)
         ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
     }
     case Parsed5G_NumAuth: {
-        std::cerr << "=> Parsed5G_NumAuth\n";
         size_t aendsiz = poff_ + ptmp_;
         for (;poff_ < aendsiz && poff_ < ibSiz_; ++poff_,--ptmp_) {
             ++consumed;
@@ -550,12 +547,10 @@ SocksInit::parse_greet(std::size_t &consumed)
         } else if (ptmp_ > 0) {
             return boost::optional<ReplyCode>();
         } else {
-            std::cerr << "Parsed5CR_NumAuth: nauth < 0!\n";
             return RplFail;
         }
     }
     case Parsed5G_Auth: {
-        std::cerr << "=> Parsed5G_Auth\n";
         auto sfd = shared_from_this();
         ba::async_write(
             client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
@@ -575,7 +570,6 @@ SocksInit::parse_greet(std::size_t &consumed)
     }
 p4g_version:
     case Parsed4G_Version: {
-        std::cerr << "=> Parsed4G_Version\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_Cmd;
@@ -590,7 +584,6 @@ p4g_version:
         }
     }
     case Parsed4G_Cmd: {
-        std::cerr << "=> Parsed4G_Cmd\n";
         if (ibSiz_ - poff_ < 2)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_DPort;
@@ -601,7 +594,6 @@ p4g_version:
         poff_ += 2;
     }
     case Parsed4G_DPort: {
-        std::cerr << "=> Parsed4G_DPort\n";
         if (ibSiz_ - poff_ < 4)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_DAddr;
@@ -612,7 +604,6 @@ p4g_version:
         poff_ += 4;
     }
     case Parsed4G_DAddr: {
-        std::cerr << "=> Parsed4G_DAddr\n";
         // Null-terminated userid.
         for (; poff_ < ibSiz_; ++poff_) {
             ++consumed;
@@ -628,18 +619,15 @@ p4g_version:
         return boost::optional<ReplyCode>();
     }
     case Parsed5G_Replied: {
-        std::cerr << "=> Parsed5G_Replied\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Version;
         ++consumed;
         auto c = sockbuf_[poff_++];
-        std::cout << "Replied c == " << static_cast<uint8_t>(c) << "\n";
         if (c != 0x5)
             return RplFail;
     }
     case Parsed5CR_Version: {
-        std::cerr << "=> Parsed5CR_Version\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Cmd;
@@ -655,7 +643,6 @@ p4g_version:
             return RplCmdNotSupp;
     }
     case Parsed5CR_Cmd: {
-        std::cerr << "=> Parsed5CR_Cmd\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_Resv;
@@ -665,7 +652,6 @@ p4g_version:
             return RplFail;
     }
     case Parsed5CR_Resv: {
-        std::cerr << "=> Parsed5CR_Resv\n";
         if (ibSiz_ - poff_ < 1)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed5CR_AddrType;
@@ -681,7 +667,6 @@ p4g_version:
             return RplAddrNotSupp;
     }
     case Parsed5CR_AddrType: {
-        std::cerr << "=> Parsed5CR_AddrType\n";
         if (addr_type_ == AddrIPv4) {
             if (ibSiz_ - poff_ < 4)
                 return boost::optional<ReplyCode>();
@@ -719,7 +704,6 @@ p4g_version:
     }
 parsed5cr_daddr:
     case Parsed5CR_DAddr: {
-        std::cerr << "=> Parsed5CR_DAddr\n";
         if (ibSiz_ - poff_ < 2)
             return boost::optional<ReplyCode>();
         pstate_ = Parsed_Finished;
@@ -731,7 +715,6 @@ parsed5cr_daddr:
     }
 parsed_finished:
     case Parsed_Finished: {
-        std::cerr << "=> Parsed_Finished\n";
         ibSiz_ = 0;
         poff_ = 0;
         dispatch_connrq();
