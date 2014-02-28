@@ -250,8 +250,8 @@ private:
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     uint16_t dst_port_;
-    bool is_socks_v4_;
-    bool is_bind_;
+    bool is_socks_v4_:1;
+    bool is_bind_:1;
 
 #ifdef USE_SPLICE
     bool kicking_client_pipe_bg_;
