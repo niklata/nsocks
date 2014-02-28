@@ -316,6 +316,15 @@ private:
         }
     }
 
+    inline void tcp_client_socket_read_stopsplice() {
+        close_pipe_to_remote();
+        tcp_client_socket_read();
+    }
+    inline void tcp_remote_socket_read_stopsplice() {
+        close_pipe_to_client();
+        tcp_remote_socket_read();
+    }
+
     inline void flushPipeToRemote(bool closing)
     {
         if (!splicePipeToRemote())

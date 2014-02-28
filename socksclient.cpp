@@ -1361,8 +1361,7 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
     remote_socket_.cancel(ec);
     size_t l = pToClient_len_;
     if (l == 0) {
-        close_pipe_to_client();
-        tcp_remote_socket_read();
+        tcp_remote_socket_read_stopsplice();
         return false;
     }
     auto n = splicePipeToClient();
@@ -1372,8 +1371,7 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
         kickClientPipeBG();
         return false;
     }
-    close_pipe_to_client();
-    tcp_remote_socket_read();
+    tcp_remote_socket_read_stopsplice();
     return false;
 }
 
@@ -1402,10 +1400,8 @@ void SocksTCP::kickClientPipeBG()
                  return;
              if (pToClient_len_ > 0)
                  kickClientPipeBG();
-             else {
-                 close_pipe_to_client();
-                 tcp_remote_socket_read();
-             }
+             else
+                 tcp_remote_socket_read_stopsplice();
          }));
 }
 
@@ -1419,8 +1415,7 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
     client_socket_.cancel(ec);
     size_t l = pToRemote_len_;
     if (l == 0) {
-        close_pipe_to_remote();
-        tcp_client_socket_read();
+        tcp_client_socket_read_stopsplice();
         return false;
     }
     auto n = splicePipeToRemote();
@@ -1430,8 +1425,7 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
         kickRemotePipeBG();
         return false;
     }
-    close_pipe_to_remote();
-    tcp_client_socket_read();
+    tcp_client_socket_read_stopsplice();
     return false;
 }
 
@@ -1460,10 +1454,8 @@ void SocksTCP::kickRemotePipeBG()
                     return;
                 if (pToRemote_len_ > 0)
                     kickRemotePipeBG();
-                else {
-                    close_pipe_to_remote();
-                    tcp_client_socket_read();
-                }
+                else
+                    tcp_client_socket_read_stopsplice();
             }));
 }
 
@@ -1510,10 +1502,8 @@ void SocksTCP::tcp_client_socket_read_splice()
                  if (*n < send_minsplice_size) {
                      if (pToRemote_len_ > 0)
                          flushPipeToRemote(false);
-                     else {
-                         close_pipe_to_remote();
-                         tcp_client_socket_read();
-                     }
+                     else
+                         tcp_client_socket_read_stopsplice();
                      return;
                  }
              } catch (const std::runtime_error &e) {
@@ -1561,10 +1551,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  if (*n < receive_minsplice_size) {
                      if (pToClient_len_ > 0)
                          flushPipeToClient(false);
-                     else {
-                         close_pipe_to_client();
-                         tcp_remote_socket_read();
-                     }
+                     else
+                         tcp_remote_socket_read_stopsplice();
                      return;
                  }
              } catch (const std::runtime_error &e) {
