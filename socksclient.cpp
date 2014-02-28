@@ -1437,26 +1437,26 @@ void SocksTCP::kickRemotePipeBG()
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_C->wrap(
-            [this, sfd](const boost::system::error_code &ec,
-                        std::size_t bytes_xferred)
-            {
-                kicking_remote_pipe_bg_ = false;
-                if (ec) {
-                    if (ec != ba::error::operation_aborted) {
-                        std::cerr << "kickRemotePipeBG error: "
-                                  << boost::system::system_error(ec).what()
-                                  << "\n";
-                        terminate_remote();
-                    }
-                    return;
-                }
-                if (!splicePipeToRemote())
-                    return;
-                if (pToRemote_len_ > 0)
-                    kickRemotePipeBG();
-                else
-                    tcp_client_socket_read_stopsplice();
-            }));
+         [this, sfd](const boost::system::error_code &ec,
+                     std::size_t bytes_xferred)
+         {
+             kicking_remote_pipe_bg_ = false;
+             if (ec) {
+                 if (ec != ba::error::operation_aborted) {
+                     std::cerr << "kickRemotePipeBG error: "
+                               << boost::system::system_error(ec).what()
+                               << "\n";
+                     terminate_remote();
+                 }
+                 return;
+             }
+             if (!splicePipeToRemote())
+                 return;
+             if (pToRemote_len_ > 0)
+                 kickRemotePipeBG();
+             else
+                 tcp_client_socket_read_stopsplice();
+         }));
 }
 
 void SocksTCP::addToSpliceClientList()
