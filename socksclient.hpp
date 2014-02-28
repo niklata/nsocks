@@ -41,6 +41,17 @@
 
 #include "make_unique.hpp"
 
+#ifdef USE_SPLICE
+extern void pipe_close_raw(std::atomic<std::size_t> &p_len,
+                           boost::asio::posix::stream_descriptor &sa,
+                           boost::asio::posix::stream_descriptor &sb);
+extern bool pipe_close(boost::asio::posix::stream_descriptor &sa,
+                       boost::asio::posix::stream_descriptor &sb,
+                       std::atomic<std::size_t> &p_len,
+                       boost::asio::ip::tcp::socket &s_reader,
+                       boost::asio::ip::tcp::socket &s_writer);
+#endif
+
 class SocksInit
     : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
 {
@@ -266,8 +277,6 @@ private:
     boost::asio::posix::stream_descriptor pToClient_;
     bool init_pipe_client();
     bool init_pipe_remote();
-    void close_pipe_to_client();
-    void close_pipe_to_remote();
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(bool closing);
@@ -314,6 +323,24 @@ private:
             terminate_remote();
             return boost::optional<std::size_t>();
         }
+    }
+
+    inline void close_pipe_to_client() {
+        assert(pToClient_len_ == 0);
+        pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
+    }
+    inline void close_pipe_to_remote() {
+        assert(pToRemote_len_ == 0);
+        pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
+    }
+
+    inline bool close_client_socket() {
+        return pipe_close(sdToClient_, pToClient_, pToClient_len_,
+                          client_socket_, remote_socket_);
+    }
+    inline bool close_remote_socket() {
+        return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
+                          remote_socket_, client_socket_);
     }
 
     inline void tcp_client_socket_read_stopsplice() {
@@ -378,6 +405,8 @@ private:
         { tcp_remote_socket_read(); }
     inline void tcp_client_socket_read_again(size_t bytes_xferred)
         { tcp_client_socket_read(); }
+    inline bool close_client_socket() { close_cr_socket(client_socket_); return false; }
+    inline bool close_remote_socket() { close_cr_socket(remote_socket_); return false; }
 #endif
 
     static std::size_t send_buffer_chunk_size;
@@ -389,8 +418,6 @@ private:
     void tcp_client_socket_read();
     void tcp_remote_socket_read();
 
-    bool close_client_socket();
-    bool close_remote_socket();
     void close_bind_listen_socket();
 };
 

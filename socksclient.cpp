@@ -159,9 +159,9 @@ static inline void close_cr_socket(ba::ip::tcp::socket &s)
 }
 
 #ifdef USE_SPLICE
-static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
-                                  ba::posix::stream_descriptor &sa,
-                                  ba::posix::stream_descriptor &sb)
+void pipe_close_raw(std::atomic<std::size_t> &p_len,
+                    ba::posix::stream_descriptor &sa,
+                    ba::posix::stream_descriptor &sb)
 {
     boost::system::error_code ec;
     auto sao = sa.is_open();
@@ -204,11 +204,11 @@ static inline void pipe_close_raw(std::atomic<std::size_t> &p_len,
     p_len = 0;
 }
 
-static inline bool pipe_close(ba::posix::stream_descriptor &sa,
-                              ba::posix::stream_descriptor &sb,
-                              std::atomic<std::size_t> &p_len,
-                              ba::ip::tcp::socket &s_reader,
-                              ba::ip::tcp::socket &s_writer)
+bool pipe_close(ba::posix::stream_descriptor &sa,
+                ba::posix::stream_descriptor &sb,
+                std::atomic<std::size_t> &p_len,
+                ba::ip::tcp::socket &s_reader,
+                ba::ip::tcp::socket &s_writer)
 {
     boost::system::error_code ec;
     bool ret(false);
@@ -1104,39 +1104,6 @@ SocksTCP::~SocksTCP()
                                   dst_port_);
     }
 }
-
-#ifdef USE_SPLICE
-void SocksTCP::close_pipe_to_client()
-{
-    boost::system::error_code ec;
-    assert(pToClient_len_ == 0);
-    pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
-}
-
-void SocksTCP::close_pipe_to_remote()
-{
-    boost::system::error_code ec;
-    assert(pToRemote_len_ == 0);
-    pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
-}
-
-bool SocksTCP::close_client_socket()
-{
-    boost::system::error_code ec;
-    return pipe_close(sdToClient_, pToClient_, pToClient_len_,
-                      client_socket_, remote_socket_);
-}
-
-bool SocksTCP::close_remote_socket()
-{
-    boost::system::error_code ec;
-    return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
-                      remote_socket_, client_socket_);
-}
-#else
-bool SocksTCP::close_client_socket() { close_cr_socket(client_socket_); return false; }
-bool SocksTCP::close_remote_socket() { close_cr_socket(remote_socket_); return false; }
-#endif
 
 void SocksTCP::untrack()
 {
