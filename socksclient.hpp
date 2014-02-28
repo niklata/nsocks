@@ -281,8 +281,8 @@ private:
     void doFlushPipeToRemote(bool closing);
     void doFlushPipeToClient(bool closing);
 public:
-    void terminate_client();
-    void terminate_remote();
+    void terminate_flush_to_remote();
+    void terminate_flush_to_client();
     inline bool is_remote_splicing() { return pToClient_.is_open(); }
     inline bool is_client_splicing() { return pToRemote_.is_open(); }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
@@ -293,7 +293,7 @@ private:
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
-    inline boost::optional<std::size_t> splicePipeToClient()
+    inline boost::optional<std::size_t> splicePipeToClient(bool closing = false)
     {
         try {
             auto n = spliceit(sdToClient_.native_handle(),
@@ -304,11 +304,12 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToClient: TERMINATE/"
                       << e.what() <<"/\n";
-            terminate_client();
+            if (!closing) terminate_flush_to_remote();
+            else terminate();
             return boost::optional<std::size_t>();
         }
     }
-    inline boost::optional<std::size_t> splicePipeToRemote()
+    inline boost::optional<std::size_t> splicePipeToRemote(bool closing = false)
     {
         try {
             auto n = spliceit(sdToRemote_.native_handle(),
@@ -319,7 +320,8 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToRemote: TERMINATE/"
                       << e.what() <<"/\n";
-            terminate_remote();
+            if (!closing) terminate_flush_to_client();
+            else terminate();
             return boost::optional<std::size_t>();
         }
     }
@@ -351,18 +353,24 @@ private:
         tcp_remote_socket_read();
     }
 
-    inline void flushPipeToRemote(bool closing)
+    inline bool flushPipeToRemote(bool closing)
     {
-        if (!splicePipeToRemote())
-            return;
+        if (!remote_socket_.is_open())
+            return false;
+        if (!splicePipeToRemote(closing))
+            return false;
         doFlushPipeToRemote(closing);
+        return true;
     }
 
-    inline void flushPipeToClient(bool closing)
+    inline bool flushPipeToClient(bool closing)
     {
-        if (!splicePipeToClient())
-            return;
+        if (!client_socket_.is_open())
+            return false;
+        if (!splicePipeToClient(closing))
+            return false;
         doFlushPipeToClient(closing);
+        return true;
     }
 
     inline void tcp_client_socket_read_again(size_t bytes_xferred,
@@ -398,8 +406,8 @@ private:
         tcp_remote_socket_read();
     }
 #else
-    inline void terminate_client() { terminate(); }
-    inline void terminate_remote() { terminate(); }
+    inline void terminate_flush_to_remote() { terminate(); }
+    inline void terminate_flush_to_client() { terminate(); }
     inline void tcp_remote_socket_read_again(size_t bytes_xferred)
         { tcp_remote_socket_read(); }
     inline void tcp_client_socket_read_again(size_t bytes_xferred)
