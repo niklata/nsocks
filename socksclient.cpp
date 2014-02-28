@@ -1571,11 +1571,6 @@ void SocksTCP::tcp_remote_socket_read_splice()
 
 void SocksTCP::doFlushPipeToRemote(bool closing)
 {
-    if (pToRemote_len_ == 0) {
-        if (closing) terminate_remote();
-        else tcp_client_socket_read_splice();
-        return;
-    }
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_C->wrap(
@@ -1593,17 +1588,17 @@ void SocksTCP::doFlushPipeToRemote(bool closing)
              }
              if (!splicePipeToRemote())
                  return;
+             if (pToRemote_len_ == 0) {
+                 if (!closing) tcp_client_socket_read_splice();
+                 else terminate_remote();
+                 return;
+             }
              doFlushPipeToRemote(closing);
          }));
 }
 
 void SocksTCP::doFlushPipeToClient(bool closing)
 {
-    if (pToClient_len_ == 0) {
-        if (closing) terminate_client();
-        else tcp_remote_socket_read_splice();
-        return;
-    }
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_R->wrap(
@@ -1621,6 +1616,11 @@ void SocksTCP::doFlushPipeToClient(bool closing)
              }
              if (!splicePipeToClient())
                  return;
+             if (pToClient_len_ == 0) {
+                 if (!closing) tcp_remote_socket_read_splice();
+                 else terminate_client();
+                 return;
+             }
              doFlushPipeToClient(closing);
          }));
 }
