@@ -157,7 +157,7 @@ private:
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 
-    std::array<char, 48> sockbuf_;
+    std::array<char, 24> sockbuf_;
     std::atomic<bool> tracked_;
     std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
@@ -165,18 +165,18 @@ private:
     boost::asio::ip::address dst_address_; // Shared
     boost::asio::ip::tcp::socket client_socket_; // Shared
     boost::asio::ip::tcp::socket remote_socket_; // Shared
-    CommandCode cmd_code_;
-    AddressType addr_type_;
     uint16_t ibSiz_;
     uint16_t poff_;
     uint16_t ptmp_;
     uint16_t dst_port_; // Shared
     uint8_t pstate_;
-    bool is_socks_v4_;
-    bool bind_listen_;
-    bool auth_none_;
-    bool auth_gssapi_;
-    bool auth_unpw_;
+    uint8_t cmd_code_;
+    uint8_t addr_type_;
+    bool is_socks_v4_:1;
+    bool bind_listen_:1;
+    bool auth_none_:1;
+    bool auth_gssapi_:1;
+    bool auth_unpw_:1;
 };
 
 class SocksTCP

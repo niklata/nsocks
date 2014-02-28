@@ -291,7 +291,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static inline size_t send_reply_code_v5(std::array<char, 48> &arr,
+static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
                                         SocksInit::ReplyCode replycode)
 {
     arr[0] = 0x05;
@@ -300,7 +300,7 @@ static inline size_t send_reply_code_v5(std::array<char, 48> &arr,
     return 3;
 }
 
-static inline size_t send_reply_binds_v5(std::array<char, 48> &arr,
+static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
@@ -326,7 +326,7 @@ static inline size_t send_reply_binds_v5(std::array<char, 48> &arr,
     return asiz;
 }
 
-static inline size_t send_reply_code_v4(std::array<char, 48> &arr,
+static inline size_t send_reply_code_v4(std::array<char, 24> &arr,
                                         SocksInit::ReplyCode replycode)
 {
     arr[0] = 0;
@@ -349,7 +349,7 @@ static inline size_t send_reply_code_v4(std::array<char, 48> &arr,
     return 2;
 }
 
-static inline size_t send_reply_binds_v4(std::array<char, 48> &arr,
+static inline size_t send_reply_binds_v4(std::array<char, 24> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
@@ -851,9 +851,10 @@ void SocksInit::dispatch_tcp_connect()
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
+             bool is_socks_v4(is_socks_v4_);
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_), std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, false, is_socks_v4_,
+                   std::move(dst_address_), dst_port_, false, is_socks_v4,
                    std::move(dst_hostname_));
          }));
 }
@@ -961,10 +962,11 @@ void SocksInit::dispatch_tcp_bind()
              }
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
+             bool is_socks_v4(is_socks_v4_);
              conntracker_tcp.emplace(io_service,
                    std::move(client_socket_),
                    std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, true, is_socks_v4_,
+                   std::move(dst_address_), dst_port_, true, is_socks_v4,
                    std::move(dst_hostname_));
          }));
     send_reply(RplSuccess);
@@ -1746,7 +1748,7 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
 
 void SocksTCP::start()
 {
-    std::array<char, 48> sbuf;
+    std::array<char, 24> sbuf;
     std::size_t ssiz;
 
     if (!is_socks_v4_) {
@@ -1832,7 +1834,7 @@ void SocksUDP::terminate()
 
 void SocksUDP::start()
 {
-    std::array<char, 48> sbuf;
+    std::array<char, 24> sbuf;
     std::size_t ssiz;
 
     ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
