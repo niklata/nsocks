@@ -210,8 +210,8 @@ public:
             auto j = i.lock();
             if (!j)
                 continue;
-            j->cancel();
-            j->set_terminated();
+            j->set_untracked();
+            j->terminate();
         }
     }
     void erase(typename std::list<std::weak_ptr<T>>::iterator it) {

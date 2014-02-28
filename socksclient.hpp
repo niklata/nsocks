@@ -202,10 +202,9 @@ public:
              std::string dst_hostname = "");
     ~SocksTCP();
     void start();
-    void cancel();
     void terminate();
 
-    inline void set_terminated() { terminated_ = true; }
+    inline void set_untracked() { tracked_ = false; }
     void set_tracker_iterator(std::list<std::weak_ptr<SocksTCP>>::iterator it) {
         tracker_iterator_ = it;
     }
@@ -250,7 +249,7 @@ private:
         return spliced;
     }
 
-    std::atomic<bool> terminated_;
+    std::atomic<bool> tracked_;
     std::list<std::weak_ptr<SocksTCP>>::iterator tracker_iterator_;
     boost::asio::streambuf client_buf_;
     boost::asio::streambuf remote_buf_;
@@ -433,7 +432,6 @@ public:
     ~SocksUDP();
     void start();
     void terminate();
-    void cancel();
 private:
     struct UDPFrags {
         UDPFrags(boost::asio::io_service &io_service)

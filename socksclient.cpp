@@ -1077,7 +1077,7 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
                    boost::asio::ip::address dst_address,
                    uint16_t dst_port, bool is_bind, bool is_socks_v4,
                    std::string dst_hostname)
-        : terminated_(false),
+        : tracked_(true),
           dst_hostname_(dst_hostname), dst_address_(dst_address),
           client_socket_(std::move(client_socket)),
           remote_socket_(std::move(remote_socket)),
@@ -1095,8 +1095,7 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
 
 SocksTCP::~SocksTCP()
 {
-    if (!terminated_)
-        untrack();
+    untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
         print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
@@ -1107,28 +1106,17 @@ SocksTCP::~SocksTCP()
 
 void SocksTCP::untrack()
 {
-    conntracker_tcp.erase(get_tracker_iterator());
-}
-
-void SocksTCP::cancel()
-{
-    close_remote_socket();
-    close_client_socket();
+    bool cxr(true);
+    if (tracked_.compare_exchange_strong(cxr, false))
+        conntracker_tcp.erase(get_tracker_iterator());
 }
 
 void SocksTCP::terminate()
 {
-    bool cxr(false);
-    if (!terminated_.compare_exchange_strong(cxr, true))
-        return;
-    cancel();
     untrack();
-    // std::cout << "Connection to "
-    //           << (dst_hostname_.size() ? dst_hostname_
-    //                                    : dst_address_.to_string())
-    //           << ":" << dst_port_ << " called terminate()." << std::endl;
+    close_remote_socket();
+    close_client_socket();
 }
-
 
 #ifdef USE_SPLICE
 
@@ -1226,24 +1214,30 @@ bool SocksTCP::init_pipe_remote()
     return true;
 }
 
+// Must be called while holding a shared_ptr
 void SocksTCP::terminate_client()
 {
+    untrack();
     bool remote_open = close_client_socket();
-    if (terminated_)
-        return;
-    if (remote_open && pToRemote_len_ > 0)
+    if (remote_open && pToRemote_len_ > 0) {
+        boost::system::error_code ec;
+        remote_socket_.cancel(ec);
         flushPipeToRemote(true);
-    terminate();
+    } else
+        close_remote_socket();
 }
 
+// Must be called while holding a shared_ptr
 void SocksTCP::terminate_remote()
 {
+    untrack();
     bool client_open = close_remote_socket();
-    if (terminated_)
-        return;
-    if (client_open && pToClient_len_ > 0)
+    if (client_open && pToClient_len_ > 0) {
+        boost::system::error_code ec;
+        client_socket_.cancel(ec);
         flushPipeToClient(true);
-    terminate();
+    } else
+        close_client_socket();
 }
 
 static void kickClientPipeTimer()
@@ -1557,7 +1551,7 @@ void SocksTCP::doFlushPipeToRemote(bool closing)
                  return;
              if (pToRemote_len_ == 0) {
                  if (!closing) tcp_client_socket_read_splice();
-                 else terminate_remote();
+                 else close_remote_socket();
                  return;
              }
              doFlushPipeToRemote(closing);
@@ -1585,7 +1579,7 @@ void SocksTCP::doFlushPipeToClient(bool closing)
                  return;
              if (pToClient_len_ == 0) {
                  if (!closing) tcp_remote_socket_read_splice();
-                 else terminate_client();
+                 else close_client_socket();
                  return;
              }
              doFlushPipeToClient(closing);
@@ -1777,14 +1771,9 @@ SocksUDP::~SocksUDP()
     }
 }
 
-void SocksUDP::cancel()
-{
-    close_udp_sockets();
-}
-
 void SocksUDP::terminate()
 {
-    cancel();
+    close_udp_sockets();
 }
 
 void SocksUDP::start()
