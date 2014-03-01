@@ -55,7 +55,6 @@
 
 #define MAX_BIND_TRIES 10
 #define UDP_BUFSIZE 1536
-#define MAX_IDENT_LEN 1024
 
 namespace ba = boost::asio;
 
@@ -386,8 +385,8 @@ static const char * const replyCodeString[] = {
 SocksInit::SocksInit(ba::io_service &io_service,
                      ba::ip::tcp::socket client_socket)
         : tracked_(true), client_socket_(std::move(client_socket)),
-          remote_socket_(io_service), ibSiz_(0), poff_(0), ptmp_(0),
-          pstate_(ParsedState::Parsed_None), is_socks_v4_(false),
+          remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
+          ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false),
           bind_listen_(false), auth_none_(false), auth_gssapi_(false),
           auth_unpw_(false)
 {
@@ -527,10 +526,11 @@ SocksInit::parse_greet(std::size_t &consumed)
         ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
     }
     case Parsed5G_NumAuth: {
-        size_t aendsiz = poff_ + ptmp_;
+        size_t aendsiz = static_cast<size_t>(poff_)
+                       + static_cast<size_t>(ptmp_);
         for (;poff_ < aendsiz && poff_ < ibSiz_; ++poff_,--ptmp_) {
             ++consumed;
-            uint8_t atype = static_cast<uint8_t>(sockbuf_[poff_]);
+            auto atype = static_cast<uint8_t>(sockbuf_[poff_]);
             if (atype == 0x0)
                 auth_none_ = true;
             else if (atype == 0x1)
@@ -613,7 +613,7 @@ p4g_version:
                 pstate_ = Parsed_Finished;
                 goto parsed_finished;
             }
-            if (ptmp_ > MAX_IDENT_LEN)
+            if (ptmp_ == UCHAR_MAX)
                 return RplFail;
         }
         return boost::optional<ReplyCode>();
@@ -722,11 +722,17 @@ parsed_finished:
     }
 parsed5cr_dnslen:
     case Parsed5CR_DNSLen: {
-        uint16_t csiz = std::min(static_cast<uint16_t>(ibSiz_ - poff_), ptmp_);
+        uint8_t csiz = std::min(static_cast<uint8_t>(ibSiz_ - poff_), ptmp_);
         if (csiz < 1)
             return boost::optional<ReplyCode>();
         consumed += csiz;
         dst_hostname_.append(sockbuf_.data() + poff_, csiz);
+        // Guard against overflow.  Should never trigger.
+        if (poff_ > static_cast<uint8_t>(UCHAR_MAX - csiz)) {
+            std::cerr << "parse_greet(): dnslen guard poff_="
+                      <<poff_<<" csiz="<<csiz<<"\n";
+            return RplFail;
+        }
         poff_ += csiz;
         auto dsiz = dst_hostname_.size();
         if (dsiz < csiz)

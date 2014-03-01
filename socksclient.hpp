@@ -176,13 +176,13 @@ private:
     boost::asio::ip::address dst_address_; // Shared
     boost::asio::ip::tcp::socket client_socket_; // Shared
     boost::asio::ip::tcp::socket remote_socket_; // Shared
-    uint16_t ibSiz_;
-    uint16_t poff_;
-    uint16_t ptmp_;
     uint16_t dst_port_; // Shared
     uint8_t pstate_;
-    uint8_t cmd_code_;
-    uint8_t addr_type_;
+    uint8_t ibSiz_;
+    uint8_t poff_;
+    uint8_t ptmp_;
+    uint8_t cmd_code_:4;
+    uint8_t addr_type_:4;
     bool is_socks_v4_:1;
     bool bind_listen_:1;
     bool auth_none_:1;
