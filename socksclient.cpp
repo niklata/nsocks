@@ -1177,12 +1177,8 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 void SocksTCP::terminate_flush_to_remote()
 {
     untrack();
-    try {
-        remote_socket_.cancel();
-    } catch (const boost::system::system_error &e) {
-        std::cerr << "terminate_flush_to_remote() remote_socket_.cancel ERROR: " << e.what() << "\n";
-    }
-    if (remote_socket_.is_open() && pToRemote_len_ > 0) {
+    auto remote_open = close_client_socket();
+    if (remote_open && pToRemote_len_ > 0) {
         auto sfd = shared_from_this();
         strand_C->post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
         return;
@@ -1194,12 +1190,8 @@ void SocksTCP::terminate_flush_to_remote()
 void SocksTCP::terminate_flush_to_client()
 {
     untrack();
-    try {
-        client_socket_.cancel();
-    } catch (const boost::system::system_error &e) {
-        std::cerr << "terminate_flush_to_client() client_socket_.cancel ERROR: " << e.what() << "\n";
-    }
-    if (client_socket_.is_open() && pToClient_len_ > 0) {
+    auto client_open = close_remote_socket();
+    if (client_open && pToClient_len_ > 0) {
         auto sfd = shared_from_this();
         strand_R->post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
         return;
