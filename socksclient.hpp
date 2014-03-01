@@ -357,8 +357,12 @@ private:
     {
         if (!remote_socket_.is_open())
             return false;
-        if (!splicePipeToRemote(closing))
-            return false;
+        if (!closing) {
+            if (!splicePipeToRemote(closing))
+                return false;
+            if (pToRemote_len_ == 0)
+                return false;
+        }
         doFlushPipeToRemote(closing);
         return true;
     }
@@ -367,8 +371,12 @@ private:
     {
         if (!client_socket_.is_open())
             return false;
-        if (!splicePipeToClient(closing))
-            return false;
+        if (!closing) {
+            if (!splicePipeToClient(closing))
+                return false;
+            if (pToClient_len_ == 0)
+                return false;
+        }
         doFlushPipeToClient(closing);
         return true;
     }
