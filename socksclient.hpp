@@ -274,12 +274,17 @@ private:
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
     boost::asio::posix::stream_descriptor pToClient_;
+    enum FlushPipeAction {
+        FlushThenSplice,
+        FlushThenRead,
+        FlushThenClose,
+    };
     bool init_pipe(boost::asio::posix::stream_descriptor &pwriter,
                    boost::asio::posix::stream_descriptor &preader);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void doFlushPipeToRemote(bool closing);
-    void doFlushPipeToClient(bool closing);
+    void doFlushPipeToRemote(FlushPipeAction action);
+    void doFlushPipeToClient(FlushPipeAction action);
 public:
     void terminate_flush_to_remote();
     void terminate_flush_to_client();
@@ -351,34 +356,6 @@ private:
     inline void tcp_remote_socket_read_stopsplice() {
         close_pipe_to_client();
         tcp_remote_socket_read();
-    }
-
-    inline bool flushPipeToRemote(bool closing)
-    {
-        if (!remote_socket_.is_open())
-            return false;
-        if (!closing) {
-            if (!splicePipeToRemote(closing))
-                return false;
-            if (pToRemote_len_ == 0)
-                return false;
-        }
-        doFlushPipeToRemote(closing);
-        return true;
-    }
-
-    inline bool flushPipeToClient(bool closing)
-    {
-        if (!client_socket_.is_open())
-            return false;
-        if (!closing) {
-            if (!splicePipeToClient(closing))
-                return false;
-            if (pToClient_len_ == 0)
-                return false;
-        }
-        doFlushPipeToClient(closing);
-        return true;
     }
 
     inline void tcp_client_socket_read_again(size_t bytes_xferred,
