@@ -264,8 +264,8 @@ private:
     bool is_bind_:1;
 
 #ifdef USE_SPLICE
-    bool kicking_client_pipe_bg_;
-    bool kicking_remote_pipe_bg_;
+    std::atomic<bool> kicking_client_pipe_bg_;
+    std::atomic<bool> kicking_remote_pipe_bg_;
     std::atomic<std::size_t> pToRemote_len_;
     std::atomic<std::size_t> pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;

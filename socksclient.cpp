@@ -1301,9 +1301,9 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickClientPipeBG()
 {
-    if (kicking_client_pipe_bg_)
+    bool cxr(false);
+    if (!kicking_client_pipe_bg_.compare_exchange_strong(cxr, true))
         return;
-    kicking_client_pipe_bg_ = true;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_R->wrap(
@@ -1355,9 +1355,9 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickRemotePipeBG()
 {
-    if (kicking_remote_pipe_bg_)
+    bool cxr(false);
+    if (!kicking_remote_pipe_bg_.compare_exchange_strong(cxr, true))
         return;
-    kicking_remote_pipe_bg_ = true;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_C->wrap(
