@@ -279,8 +279,8 @@ private:
         FlushThenRead,
         FlushThenClose,
     };
-    bool init_pipe(boost::asio::posix::stream_descriptor &pwriter,
-                   boost::asio::posix::stream_descriptor &preader);
+    bool init_pipe(boost::asio::posix::stream_descriptor &preader,
+                   boost::asio::posix::stream_descriptor &pwriter);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(FlushPipeAction action);

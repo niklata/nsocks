@@ -1125,8 +1125,8 @@ void SocksTCP::terminate()
 }
 
 #ifdef USE_SPLICE
-bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &pwriter,
-                         boost::asio::posix::stream_descriptor &preader)
+bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
+                         boost::asio::posix::stream_descriptor &pwriter)
 {
     int pipes[2];
 #ifdef HAS_64BIT
@@ -1168,8 +1168,8 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &pwriter,
             }
         }
     }
-    pwriter.assign(pipes[0]);
-    preader.assign(pipes[1]);
+    preader.assign(pipes[0]);
+    pwriter.assign(pipes[1]);
     return true;
 }
 
