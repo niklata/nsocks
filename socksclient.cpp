@@ -1183,7 +1183,8 @@ void SocksTCP::terminate_flush_to_remote()
         std::cerr << "terminate_flush_to_remote() remote_socket_.cancel ERROR: " << e.what() << "\n";
     }
     if (remote_socket_.is_open() && pToRemote_len_ > 0) {
-        doFlushPipeToRemote(FlushThenClose);
+        auto sfd = shared_from_this();
+        strand_C->post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
         return;
     }
     terminate();
@@ -1199,7 +1200,8 @@ void SocksTCP::terminate_flush_to_client()
         std::cerr << "terminate_flush_to_client() client_socket_.cancel ERROR: " << e.what() << "\n";
     }
     if (client_socket_.is_open() && pToClient_len_ > 0) {
-        doFlushPipeToClient(FlushThenClose);
+        auto sfd = shared_from_this();
+        strand_R->post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
         return;
     }
     terminate();
