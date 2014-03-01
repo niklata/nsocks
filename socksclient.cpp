@@ -1223,11 +1223,10 @@ void SocksTCP::terminate_flush_to_remote()
     } catch (const boost::system::system_error &e) {
         std::cerr << "terminate_flush_to_remote() remote_socket_.cancel ERROR: " << e.what() << "\n";
     }
-    if (remote_socket_.is_open() && pToRemote_len_ > 0) {
-        if (!flushPipeToRemote(true))
-            terminate();
-    } else
-        terminate();
+    if (remote_socket_.is_open()
+        && pToRemote_len_ > 0 && flushPipeToRemote(true))
+        return;
+    terminate();
 }
 
 // Must be called while holding a shared_ptr
@@ -1239,11 +1238,10 @@ void SocksTCP::terminate_flush_to_client()
     } catch (const boost::system::system_error &e) {
         std::cerr << "terminate_flush_to_client() client_socket_.cancel ERROR: " << e.what() << "\n";
     }
-    if (client_socket_.is_open() && pToClient_len_ > 0) {
-        if (!flushPipeToClient(true))
-            terminate();
-    } else
-        terminate();
+    if (client_socket_.is_open()
+        && pToClient_len_ > 0 && flushPipeToClient(true))
+        return;
+    terminate();
 }
 
 static void kickClientPipeTimer()
