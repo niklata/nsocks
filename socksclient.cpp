@@ -1125,8 +1125,8 @@ void SocksTCP::terminate()
 }
 
 #ifdef USE_SPLICE
-
-bool SocksTCP::init_pipe_client()
+bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &pwriter,
+                         boost::asio::posix::stream_descriptor &preader)
 {
     int pipes[2];
 #ifdef HAS_64BIT
@@ -1137,7 +1137,7 @@ bool SocksTCP::init_pipe_client()
         pipes[1] = static_cast<uint32_t>(sp >> 32U);
         if (g_verbose_logs) {
             --num_free_pipes;
-            std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+            std::cerr << "init_pipe: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
 #else
@@ -1151,7 +1151,7 @@ bool SocksTCP::init_pipe_client()
             pipes[1] = fp.second;
             free_pipes.pop_back();
             if (g_verbose_logs)
-                std::cerr << "toRemote: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+                std::cerr << "init_pipe: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
         }
     }
 #endif
@@ -1160,63 +1160,16 @@ bool SocksTCP::init_pipe_client()
             return false;
         auto r = fcntl(pipes[0], F_SETPIPE_SZ, splice_pipe_size);
         if (r < splice_pipe_size)
-            std::cerr << "toRemote: Pipe size could only be set to " << r << ".\n";
+            std::cerr << "init_pipe: Pipe size could only be set to " << r << ".\n";
         else if (r == -1) {
             switch (errno) {
-                case EPERM: std::cerr << "toRemote: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
-                default: std::cerr << "toRemote: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
+                case EPERM: std::cerr << "init_pipe: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
+                default: std::cerr << "init_pipe: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
             }
         }
     }
-    sdToRemote_.assign(pipes[0]);
-    pToRemote_.assign(pipes[1]);
-    return true;
-}
-
-bool SocksTCP::init_pipe_remote()
-{
-    int pipes[2];
-#ifdef HAS_64BIT
-    uint64_t sp;
-    bool got_free_pipe = free_pipes.pop(sp);
-    if (got_free_pipe) {
-        pipes[0] = static_cast<uint32_t>(sp & 0xffffffffUL);
-        pipes[1] = static_cast<uint32_t>(sp >> 32U);
-        if (g_verbose_logs) {
-            --num_free_pipes;
-            std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
-        }
-    }
-#else
-    bool got_free_pipe(false);
-    {
-        std::lock_guard<std::mutex> wl(free_pipe_lock);
-        if (free_pipes.size()) {
-            got_free_pipe = true;
-            auto fp = free_pipes.back();
-            pipes[0] = fp.first;
-            pipes[1] = fp.second;
-            free_pipes.pop_back();
-            if (g_verbose_logs)
-                std::cerr << "toClient: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
-        }
-    }
-#endif
-    if (!got_free_pipe) {
-        if (pipe2(pipes, O_NONBLOCK))
-            return false;
-        auto r = fcntl(pipes[0], F_SETPIPE_SZ, splice_pipe_size);
-        if (r < splice_pipe_size)
-            std::cerr << "toClient: Pipe size could only be set to " << r << ".\n";
-        else if (r == -1) {
-            switch (errno) {
-                case EPERM: std::cerr << "toClient: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
-                default: std::cerr << "toClient: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
-            }
-        }
-    }
-    sdToClient_.assign(pipes[0]);
-    pToClient_.assign(pipes[1]);
+    pwriter.assign(pipes[0]);
+    preader.assign(pipes[1]);
     return true;
 }
 

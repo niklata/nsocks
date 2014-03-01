@@ -274,8 +274,8 @@ private:
     boost::asio::posix::stream_descriptor sdToClient_;
     boost::asio::posix::stream_descriptor pToRemote_;
     boost::asio::posix::stream_descriptor pToClient_;
-    bool init_pipe_client();
-    bool init_pipe_remote();
+    bool init_pipe(boost::asio::posix::stream_descriptor &pwriter,
+                   boost::asio::posix::stream_descriptor &preader);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(bool closing);
@@ -379,7 +379,7 @@ private:
         // std::cerr << "sbx=" << bytes_xferred << " sms="
         //           << send_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
-            if (init_pipe_client()) {
+            if (init_pipe(sdToRemote_, pToRemote_)) {
                 // std::cerr << "client->remote switched to splice\n";
                 addToSpliceRemoteList();
                 tcp_client_socket_read_splice();
@@ -395,7 +395,7 @@ private:
         // std::cerr << "rbx=" << bytes_xferred << " rms="
         //           << receive_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
-            if (init_pipe_remote()) {
+            if (init_pipe(sdToClient_, pToClient_)) {
                 // std::cerr << "remote->client switched to splice\n";
                 addToSpliceClientList();
                 tcp_remote_socket_read_splice();
