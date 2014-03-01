@@ -270,10 +270,10 @@ private:
     std::atomic<std::size_t> pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;
     std::chrono::high_resolution_clock::time_point remote_read_ts_;
-    boost::asio::posix::stream_descriptor sdToRemote_;
-    boost::asio::posix::stream_descriptor sdToClient_;
-    boost::asio::posix::stream_descriptor pToRemote_;
-    boost::asio::posix::stream_descriptor pToClient_;
+    boost::asio::posix::stream_descriptor pToRemoteR_;
+    boost::asio::posix::stream_descriptor pToClientR_;
+    boost::asio::posix::stream_descriptor pToRemoteW_;
+    boost::asio::posix::stream_descriptor pToClientW_;
     enum FlushPipeAction {
         FlushThenSplice,
         FlushThenRead,
@@ -288,8 +288,8 @@ private:
 public:
     void terminate_flush_to_remote();
     void terminate_flush_to_client();
-    inline bool is_remote_splicing() { return pToClient_.is_open(); }
-    inline bool is_client_splicing() { return pToRemote_.is_open(); }
+    inline bool is_remote_splicing() { return pToClientW_.is_open(); }
+    inline bool is_client_splicing() { return pToRemoteW_.is_open(); }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
     bool kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now);
 private:
@@ -301,7 +301,7 @@ private:
     inline boost::optional<std::size_t> splicePipeToClient(bool closing = false)
     {
         try {
-            auto n = spliceit(sdToClient_.native_handle(),
+            auto n = spliceit(pToClientR_.native_handle(),
                               client_socket_.native_handle());
             if (n) pToClient_len_ -= *n;
             else throw std::runtime_error("EOF");
@@ -317,7 +317,7 @@ private:
     inline boost::optional<std::size_t> splicePipeToRemote(bool closing = false)
     {
         try {
-            auto n = spliceit(sdToRemote_.native_handle(),
+            auto n = spliceit(pToRemoteR_.native_handle(),
                               remote_socket_.native_handle());
             if (n) pToRemote_len_ -= *n;
             else throw std::runtime_error("EOF");
@@ -333,19 +333,19 @@ private:
 
     inline void close_pipe_to_client() {
         assert(pToClient_len_ == 0);
-        pipe_close_raw(pToClient_len_, sdToClient_, pToClient_);
+        pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
     }
     inline void close_pipe_to_remote() {
         assert(pToRemote_len_ == 0);
-        pipe_close_raw(pToRemote_len_, sdToRemote_, pToRemote_);
+        pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
     }
 
     inline bool close_client_socket() {
-        return pipe_close(sdToClient_, pToClient_, pToClient_len_,
+        return pipe_close(pToClientR_, pToClientW_, pToClient_len_,
                           client_socket_, remote_socket_);
     }
     inline bool close_remote_socket() {
-        return pipe_close(sdToRemote_, pToRemote_, pToRemote_len_,
+        return pipe_close(pToRemoteR_, pToRemoteW_, pToRemote_len_,
                           remote_socket_, client_socket_);
     }
 
@@ -364,7 +364,7 @@ private:
         // std::cerr << "sbx=" << bytes_xferred << " sms="
         //           << send_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
-            if (init_pipe(sdToRemote_, pToRemote_)) {
+            if (init_pipe(pToRemoteR_, pToRemoteW_)) {
                 // std::cerr << "client->remote switched to splice\n";
                 addToSpliceRemoteList();
                 tcp_client_socket_read_splice();
@@ -380,7 +380,7 @@ private:
         // std::cerr << "rbx=" << bytes_xferred << " rms="
         //           << receive_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
-            if (init_pipe(sdToClient_, pToClient_)) {
+            if (init_pipe(pToClientR_, pToClientW_)) {
                 // std::cerr << "remote->client switched to splice\n";
                 addToSpliceClientList();
                 tcp_remote_socket_read_splice();

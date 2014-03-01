@@ -1091,8 +1091,8 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
 #ifdef USE_SPLICE
           kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
           pToRemote_len_(0), pToClient_len_(0),
-          sdToRemote_(io_service), sdToClient_(io_service),
-          pToRemote_(io_service), pToClient_(io_service)
+          pToRemoteR_(io_service), pToClientR_(io_service),
+          pToRemoteW_(io_service), pToClientW_(io_service)
 #endif
 {
     if (g_verbose_logs)
@@ -1422,7 +1422,7 @@ void SocksTCP::tcp_client_socket_read_splice()
              boost::optional<std::size_t> n;
              try {
                  n = spliceit(client_socket_.native_handle(),
-                              pToRemote_.native_handle());
+                              pToRemoteW_.native_handle());
                  if (!n) {
                      terminate_flush_to_remote();
                      return;
@@ -1485,7 +1485,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
              boost::optional<std::size_t> n;
              try {
                  n = spliceit(remote_socket_.native_handle(),
-                              pToClient_.native_handle());
+                              pToClientW_.native_handle());
                  if (!n) {
                      terminate_flush_to_client();
                      return;
