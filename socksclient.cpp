@@ -96,8 +96,7 @@ static boost::random::mt19937 g_random_prng(g_random_secure());
 
 #include "bind_port_assigner.hpp"
 
-static std::unique_ptr <boost::asio::strand> strand_C;
-static std::unique_ptr <boost::asio::strand> strand_R;
+static std::unique_ptr <boost::asio::strand> strand_CR;
 
 static void print_trackers_logentry(const std::string &host, uint16_t port);
 
@@ -129,8 +128,7 @@ static std::atomic<bool> rPipeTimerSet;
 
 void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {
-    strand_C = nk::make_unique<boost::asio::strand>(io_service);
-    strand_R = nk::make_unique<boost::asio::strand>(io_service);
+    strand_CR = nk::make_unique<boost::asio::strand>(io_service);
 #ifdef USE_SPLICE
     cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
     rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
@@ -465,7 +463,7 @@ void SocksInit::read_greet()
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(sockbuf_.data() + ibSiz_, sockbuf_.size() - ibSiz_),
-         strand_C->wrap(
+         strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -554,7 +552,7 @@ SocksInit::parse_greet(std::size_t &consumed)
         auto sfd = shared_from_this();
         ba::async_write(
             client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
-            strand_C->wrap(
+            strand_CR->wrap(
                 [this, sfd](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
                 {
@@ -757,7 +755,7 @@ void SocksInit::dispatch_connrq()
         try {
             init_resolver(client_socket_.get_io_service());
             tcp_resolver_->async_resolve
-                (query, strand_C->wrap(
+                (query, strand_CR->wrap(
                  [this, sfd](const boost::system::error_code &ec,
                              ba::ip::tcp::resolver::iterator it)
                  {
@@ -839,7 +837,7 @@ void SocksInit::dispatch_tcp_connect()
     auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
     auto sfd = shared_from_this();
     remote_socket_.async_connect
-        (ep, strand_C->wrap(
+        (ep, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
@@ -959,7 +957,7 @@ void SocksInit::dispatch_tcp_bind()
 
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
-        (remote_socket_, strand_C->wrap(
+        (remote_socket_, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
@@ -1059,7 +1057,7 @@ void SocksInit::send_reply(ReplyCode replycode)
     ba::async_write
         (client_socket_,
          ba::buffer(sockbuf_.data(), ssiz),
-         strand_C->wrap(
+         strand_CR->wrap(
          [this, sfd, replycode](const boost::system::error_code &ec,
                                 std::size_t bytes_xferred)
          {
@@ -1180,7 +1178,7 @@ void SocksTCP::terminate_flush_to_remote()
     auto remote_open = close_client_socket();
     if (remote_open && pToRemote_len_ > 0) {
         auto sfd = shared_from_this();
-        strand_C->post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
+        strand_CR->post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
         return;
     }
     terminate();
@@ -1193,7 +1191,7 @@ void SocksTCP::terminate_flush_to_client()
     auto client_open = close_remote_socket();
     if (client_open && pToClient_len_ > 0) {
         auto sfd = shared_from_this();
-        strand_R->post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
+        strand_CR->post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
         return;
     }
     terminate();
@@ -1205,7 +1203,7 @@ static void kickClientPipeTimer()
     if (cPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
         cPipeTimer->expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms / 2U));
-        cPipeTimer->async_wait(strand_R->wrap(
+        cPipeTimer->async_wait(strand_CR->wrap(
             [](const boost::system::error_code& error)
                 {
                     cPipeTimerSet = false;
@@ -1241,7 +1239,7 @@ static void kickRemotePipeTimer()
     if (rPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
         rPipeTimer->expires_from_now
             (boost::posix_time::milliseconds(max_buffer_ms / 2U));
-        rPipeTimer->async_wait(strand_C->wrap(
+        rPipeTimer->async_wait(strand_CR->wrap(
             [](const boost::system::error_code& error)
                 {
                     rPipeTimerSet = false;
@@ -1302,7 +1300,7 @@ void SocksTCP::kickClientPipeBG()
         return;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
-        (ba::null_buffers(), strand_R->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1356,7 +1354,7 @@ void SocksTCP::kickRemotePipeBG()
         return;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
-        (ba::null_buffers(), strand_C->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1396,7 +1394,7 @@ void SocksTCP::tcp_client_socket_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::null_buffers(), strand_C->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1458,7 +1456,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::null_buffers(), strand_R->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1519,7 +1517,7 @@ void SocksTCP::doFlushPipeToRemote(FlushPipeAction action)
 {
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
-        (ba::null_buffers(), strand_C->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd, action](const boost::system::error_code &ec,
                              std::size_t bytes_xferred)
          {
@@ -1552,7 +1550,7 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
 {
     auto sfd = shared_from_this();
     client_socket_.async_write_some
-        (ba::null_buffers(), strand_R->wrap(
+        (ba::null_buffers(), strand_CR->wrap(
          [this, sfd, action](const boost::system::error_code &ec,
                              std::size_t bytes_xferred)
          {
@@ -1589,7 +1587,7 @@ void SocksTCP::tcp_client_socket_read()
         = client_buf_.prepare(send_buffer_chunk_size);
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(ibm), strand_C->wrap(
+        (ba::buffer(ibm), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1614,7 +1612,7 @@ void SocksTCP::tcp_client_socket_read()
                      terminate_flush_to_client();
                  return;
              }
-             ba::async_write(remote_socket_, client_buf_, strand_C->wrap(
+             ba::async_write(remote_socket_, client_buf_, strand_CR->wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1637,7 +1635,7 @@ void SocksTCP::tcp_remote_socket_read()
         = remote_buf_.prepare(receive_buffer_chunk_size);
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::buffer(ibm), strand_R->wrap(
+        (ba::buffer(ibm), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1662,7 +1660,7 @@ void SocksTCP::tcp_remote_socket_read()
                      terminate_flush_to_remote();
                  return;
              }
-             ba::async_write(client_socket_, remote_buf_, strand_R->wrap(
+             ba::async_write(client_socket_, remote_buf_, strand_CR->wrap(
                              [this, sfd](const boost::system::error_code &ec,
                                          std::size_t bytes_xferred)
                              {
@@ -1718,7 +1716,7 @@ void SocksTCP::start()
     memcpy(boost::asio::buffer_cast<char *>(ibm), sbuf.data(), siz);
     client_buf_.commit(siz);
     ba::async_write
-        (client_socket_, client_buf_, strand_R->wrap(
+        (client_socket_, client_buf_, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1815,7 +1813,7 @@ void SocksUDP::udp_tcp_socket_read()
     auto sfd = shared_from_this();
     tcp_client_socket_.async_read_some
         (ba::buffer(tcp_inbuf_.data(),
-                    tcp_inbuf_.size()), strand_C->wrap(
+                    tcp_inbuf_.size()), strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1839,7 +1837,7 @@ void SocksUDP::udp_client_socket_read()
     auto sfd = shared_from_this();
     client_socket_.async_receive_from
         (ba::buffer(inbuf_),
-         csender_endpoint_, strand_C->wrap(
+         csender_endpoint_, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1982,7 +1980,7 @@ void SocksUDP::udp_proxy_packet()
     auto sfd = shared_from_this();
     remote_socket_.async_send_to
         (ba::buffer(inbuf_.data() + poffset_, psize_),
-         ba::ip::udp::endpoint(daddr_, dport_), 0, strand_C->wrap(
+         ba::ip::udp::endpoint(daddr_, dport_), 0, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -1997,7 +1995,7 @@ void SocksUDP::udp_dns_lookup(const std::string &dnsname)
     auto sfd = shared_from_this();
     try {
         resolver_.async_resolve
-            (query, strand_C->wrap(
+            (query, strand_CR->wrap(
              [this, sfd](const boost::system::error_code &ec,
                          ba::ip::udp::resolver::iterator it)
              {
@@ -2048,7 +2046,7 @@ void SocksUDP::udp_remote_socket_read()
     outbuf_.reserve(UDP_BUFSIZE);
     remote_socket_.async_receive_from
         (ba::buffer(outbuf_),
-         rsender_endpoint_, strand_C->wrap(
+         rsender_endpoint_, strand_CR->wrap(
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
@@ -2093,7 +2091,7 @@ void SocksUDP::udp_remote_socket_read()
              out_bufs_.push_back(boost::asio::buffer(out_header_.data(), ohs));
              out_bufs_.push_back(boost::asio::buffer(outbuf_));
              client_socket_.async_send_to
-                 (out_bufs_, client_remote_endpoint_, strand_C->wrap(
+                 (out_bufs_, client_remote_endpoint_, strand_CR->wrap(
                   [this, sfd](const boost::system::error_code &ec,
                               std::size_t bytes_xferred)
                   {
