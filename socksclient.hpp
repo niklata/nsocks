@@ -42,12 +42,12 @@
 #include "make_unique.hpp"
 
 #ifdef USE_SPLICE
-extern void pipe_close_raw(std::atomic<std::size_t> &p_len,
+extern void pipe_close_raw(std::size_t p_len,
                            boost::asio::posix::stream_descriptor &sa,
                            boost::asio::posix::stream_descriptor &sb);
 extern bool pipe_close(boost::asio::posix::stream_descriptor &sa,
                        boost::asio::posix::stream_descriptor &sb,
-                       std::atomic<std::size_t> &p_len,
+                       std::size_t p_len,
                        boost::asio::ip::tcp::socket &s_reader,
                        boost::asio::ip::tcp::socket &s_writer);
 #endif
@@ -266,10 +266,10 @@ private:
     bool is_bind_:1;
 
 #ifdef USE_SPLICE
-    std::atomic<bool> kicking_client_pipe_bg_;
-    std::atomic<bool> kicking_remote_pipe_bg_;
-    std::atomic<std::size_t> pToRemote_len_;
-    std::atomic<std::size_t> pToClient_len_;
+    bool kicking_client_pipe_bg_:1;
+    bool kicking_remote_pipe_bg_:1;
+    std::size_t pToRemote_len_;
+    std::size_t pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;
     std::chrono::high_resolution_clock::time_point remote_read_ts_;
     boost::asio::posix::stream_descriptor pToRemoteR_;
@@ -333,15 +333,6 @@ private:
         }
     }
 
-    inline void close_pipe_to_client() {
-        assert(pToClient_len_ == 0);
-        pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
-    }
-    inline void close_pipe_to_remote() {
-        assert(pToRemote_len_ == 0);
-        pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
-    }
-
     inline bool close_client_socket() {
         return pipe_close(pToClientR_, pToClientW_, pToClient_len_,
                           client_socket_, remote_socket_);
@@ -352,11 +343,13 @@ private:
     }
 
     inline void tcp_client_socket_read_stopsplice() {
-        close_pipe_to_remote();
+        assert(pToRemote_len_ == 0);
+        pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
         tcp_client_socket_read();
     }
     inline void tcp_remote_socket_read_stopsplice() {
-        close_pipe_to_client();
+        assert(pToClient_len_ == 0);
+        pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
         tcp_remote_socket_read();
     }
 

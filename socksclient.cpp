@@ -155,7 +155,7 @@ static inline void close_cr_socket(ba::ip::tcp::socket &s)
 }
 
 #ifdef USE_SPLICE
-void pipe_close_raw(std::atomic<std::size_t> &p_len,
+void pipe_close_raw(std::size_t p_len,
                     ba::posix::stream_descriptor &sa,
                     ba::posix::stream_descriptor &sb)
 {
@@ -202,7 +202,7 @@ void pipe_close_raw(std::atomic<std::size_t> &p_len,
 
 bool pipe_close(ba::posix::stream_descriptor &sa,
                 ba::posix::stream_descriptor &sb,
-                std::atomic<std::size_t> &p_len,
+                std::size_t p_len,
                 ba::ip::tcp::socket &s_reader,
                 ba::ip::tcp::socket &s_writer)
 {
@@ -1280,9 +1280,9 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickClientPipeBG()
 {
-    bool cxr(false);
-    if (!kicking_client_pipe_bg_.compare_exchange_strong(cxr, true))
+    if (kicking_client_pipe_bg_)
         return;
+    kicking_client_pipe_bg_ = true;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
@@ -1341,9 +1341,9 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
 
 void SocksTCP::kickRemotePipeBG()
 {
-    bool cxr(false);
-    if (!kicking_remote_pipe_bg_.compare_exchange_strong(cxr, true))
+    if (kicking_remote_pipe_bg_)
         return;
+    kicking_remote_pipe_bg_ = true;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
