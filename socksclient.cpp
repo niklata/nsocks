@@ -1415,13 +1415,12 @@ void SocksTCP::tcp_client_socket_read_splice()
              try {
                  n = spliceit(client_socket_.native_handle(),
                               pToRemoteW_.native_handle());
-                 if (!n) {
-                     terminate_flush_to_remote();
-                     return;
-                 }
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
+                 n = boost::optional<std::size_t>();
+             }
+             if (!n) {
                  terminate_flush_to_remote();
                  return;
              }
@@ -1478,13 +1477,12 @@ void SocksTCP::tcp_remote_socket_read_splice()
              try {
                  n = spliceit(remote_socket_.native_handle(),
                               pToClientW_.native_handle());
-                 if (!n) {
-                     terminate_flush_to_client();
-                     return;
-                 }
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
+                 n = boost::optional<std::size_t>();
+             }
+             if (!n) {
                  terminate_flush_to_client();
                  return;
              }
