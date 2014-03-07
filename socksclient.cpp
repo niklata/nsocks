@@ -118,8 +118,10 @@ static std::vector<std::pair<int, int>> free_pipes;
 
 static std::atomic<bool> cPipeTimerSet;
 static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
-static std::forward_list<std::weak_ptr<SocksTCP>> cSpliceList;
-static std::forward_list<std::weak_ptr<SocksTCP>> rSpliceList;
+static std::atomic<std::size_t> cSpliceListIdx;
+static std::forward_list<std::weak_ptr<SocksTCP>> cSpliceList[2];
+static std::forward_list<std::weak_ptr<SocksTCP>> rSpliceList[2];
+static std::atomic<std::size_t> rSpliceListIdx;
 static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
 static std::atomic<bool> rPipeTimerSet;
 #endif
@@ -1207,27 +1209,15 @@ static void kickClientPipeTimer()
                     cPipeTimerSet = false;
                     if (error)
                         return;
-                    bool erase_ipp(false);
                     auto now = std::chrono::high_resolution_clock::now();
-                    std::forward_list<std::weak_ptr<SocksTCP>>::iterator i, ip, ipp;
-                    const auto end = cSpliceList.end();
-                    for (i = cSpliceList.begin(),
-                         ip = cSpliceList.before_begin(),
-                         ipp = cSpliceList.before_begin();
-                         i != end;)
-                    {
-                        auto k = i->lock();
-                        // XXX: is_remote_splicing is not safe
-                        erase_ipp = (!k || !k->is_remote_splicing() ||
-                                     !k->kickClientPipe(now));
-                        ipp = ip, ip = i++;
-                        if (erase_ipp) {
-                            cSpliceList.erase_after(ipp);
-                            ip = ipp;
-                        }
+                    auto &csl = cSpliceList[cSpliceListIdx];
+                    cSpliceListIdx ^= 1;
+                    while (!csl.empty()) {
+                        auto k = csl.front().lock();
+                        if (k)
+                            k->kickClientPipe(now);
+                        csl.pop_front();
                     }
-                    if (!cSpliceList.empty())
-                        kickClientPipeTimer();
                 });
     }
 }
@@ -1244,40 +1234,30 @@ static void kickRemotePipeTimer()
                     rPipeTimerSet = false;
                     if (error)
                         return;
-                    bool erase_ipp(false);
                     auto now = std::chrono::high_resolution_clock::now();
-                    std::forward_list<std::weak_ptr<SocksTCP>>::iterator i, ip, ipp;
-                    const auto end = rSpliceList.end();
-                    for (i = rSpliceList.begin(),
-                         ip = rSpliceList.before_begin(),
-                         ipp = rSpliceList.before_begin();
-                         i != end;)
-                    {
-                        auto k = i->lock();
-                        // XXX: is_client_splicing is not safe
-                        erase_ipp = (!k || !k->is_client_splicing() ||
-                                     !k->kickRemotePipe(now));
-                        ipp = ip, ip = i++;
-                        if (erase_ipp) {
-                            rSpliceList.erase_after(ipp);
-                            ip = ipp;
-                        }
+                    auto &rsl = rSpliceList[rSpliceListIdx];
+                    rSpliceListIdx ^= 1;
+                    while (!rsl.empty()) {
+                        auto k = rsl.front().lock();
+                        if (k)
+                            k->kickRemotePipe(now);
+                        rsl.pop_front();
                     }
-                    if (!rSpliceList.empty())
-                        kickRemotePipeTimer();
                 });
     }
 }
 
-// Ret: Is the connection still alive and splicing?
 bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_point &now)
 {
-    // Reading remote_read_ts_ is racy.
-    if (std::chrono::duration_cast<std::chrono::milliseconds>
-        (now - remote_read_ts_).count() < max_buffer_ms / 2U)
-        return true;
     auto sfd = shared_from_this();
-    strand_.post([this, sfd] {
+    strand_.post([this, sfd, now] {
+            if (!is_remote_splicing())
+                return;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>
+                (now - remote_read_ts_).count() < max_buffer_ms / 2U) {
+                addToSpliceClientList();
+                return;
+            }
             boost::system::error_code ec;
             remote_socket_.cancel(ec);
             size_t l = pToClient_len_;
@@ -1328,15 +1308,17 @@ void SocksTCP::kickClientPipeBG()
          }));
 }
 
-// Ret: Is the connection still alive and splicing?
 bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now)
 {
-    // Reading client_read_ts_ is racy.
-    if (std::chrono::duration_cast<std::chrono::milliseconds>
-        (now - client_read_ts_).count() < max_buffer_ms / 2U)
-        return true;
     auto sfd = shared_from_this();
-    strand_.post([this, sfd] {
+    strand_.post([this, sfd, now] {
+            if (!is_client_splicing())
+                return;
+            if (std::chrono::duration_cast<std::chrono::milliseconds>
+                (now - client_read_ts_).count() < max_buffer_ms / 2U) {
+                addToSpliceRemoteList();
+                return;
+            }
             boost::system::error_code ec;
             client_socket_.cancel(ec);
             size_t l = pToRemote_len_;
@@ -1389,13 +1371,13 @@ void SocksTCP::kickRemotePipeBG()
 
 void SocksTCP::addToSpliceClientList()
 {
-    cSpliceList.emplace_front(shared_from_this());
+    cSpliceList[cSpliceListIdx].emplace_front(shared_from_this());
     kickClientPipeTimer();
 }
 
 void SocksTCP::addToSpliceRemoteList()
 {
-    rSpliceList.emplace_front(shared_from_this());
+    rSpliceList[rSpliceListIdx].emplace_front(shared_from_this());
     kickRemotePipeTimer();
 }
 
