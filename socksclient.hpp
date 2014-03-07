@@ -174,6 +174,7 @@ private:
     std::unique_ptr<BoundSocket> bound_;
     std::string dst_hostname_; // Shared
     boost::asio::ip::address dst_address_; // Shared
+    boost::asio::strand strand_;
     boost::asio::ip::tcp::socket client_socket_; // Shared
     boost::asio::ip::tcp::socket remote_socket_; // Shared
     uint16_t dst_port_; // Shared
@@ -257,6 +258,7 @@ private:
     // Shared with SocksInit
     std::string dst_hostname_;
     boost::asio::ip::address dst_address_;
+    boost::asio::strand strand_;
     boost::asio::ip::tcp::socket client_socket_;
     boost::asio::ip::tcp::socket remote_socket_;
     uint16_t dst_port_;
@@ -476,6 +478,7 @@ private:
     boost::asio::ip::udp::endpoint client_remote_endpoint_;
     boost::asio::ip::udp::endpoint csender_endpoint_;
     boost::asio::ip::udp::endpoint rsender_endpoint_;
+    boost::asio::strand strand_;
     boost::asio::ip::udp::socket client_socket_;
     boost::asio::ip::udp::socket remote_socket_;
     boost::asio::ip::udp::resolver resolver_;
