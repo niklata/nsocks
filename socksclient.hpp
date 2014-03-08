@@ -295,8 +295,8 @@ public:
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
     bool kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now);
 private:
-    void addToSpliceClientList();
-    void addToSpliceRemoteList();
+    void addToSpliceClientList(const std::shared_ptr<SocksTCP> &sfd);
+    void addToSpliceRemoteList(const std::shared_ptr<SocksTCP> &sfd);
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
@@ -353,15 +353,16 @@ private:
         tcp_remote_socket_read();
     }
 
-    inline void tcp_client_socket_read_again(size_t bytes_xferred,
-                                             bool splice_ok)
+    inline void tcp_client_socket_read_again
+    (const std::shared_ptr<SocksTCP> &sfd,
+     size_t bytes_xferred, bool splice_ok)
     {
         // std::cerr << "sbx=" << bytes_xferred << " sms="
         //           << send_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
             if (init_pipe(pToRemoteR_, pToRemoteW_)) {
                 // std::cerr << "client->remote switched to splice\n";
-                addToSpliceRemoteList();
+                addToSpliceRemoteList(sfd);
                 tcp_client_socket_read_splice();
                 return;
             } else
@@ -369,15 +370,16 @@ private:
         }
         tcp_client_socket_read();
     }
-    inline void tcp_remote_socket_read_again(size_t bytes_xferred,
-                                             bool splice_ok)
+    inline void tcp_remote_socket_read_again
+    (const std::shared_ptr<SocksTCP> &sfd,
+     size_t bytes_xferred, bool splice_ok)
     {
         // std::cerr << "rbx=" << bytes_xferred << " rms="
         //           << receive_minsplice_size << "\n";
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
             if (init_pipe(pToClientR_, pToClientW_)) {
                 // std::cerr << "remote->client switched to splice\n";
-                addToSpliceClientList();
+                addToSpliceClientList(sfd);
                 tcp_remote_socket_read_splice();
                 return;
             } else
