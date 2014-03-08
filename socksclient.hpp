@@ -392,8 +392,10 @@ private:
         { tcp_remote_socket_read(); }
     inline void tcp_client_socket_read_again(size_t bytes_xferred)
         { tcp_client_socket_read(); }
-    inline bool close_client_socket() { close_cr_socket(client_socket_); return false; }
-    inline bool close_remote_socket() { close_cr_socket(remote_socket_); return false; }
+    inline bool close_client_socket()
+        { close_cr_socket(client_socket_); return false; }
+    inline bool close_remote_socket()
+        { close_cr_socket(remote_socket_); return false; }
 #endif
 
     static std::size_t send_buffer_chunk_size;
