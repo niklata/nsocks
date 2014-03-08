@@ -390,14 +390,16 @@ private:
 #else
     inline void terminate_flush_to_remote() { terminate(); }
     inline void terminate_flush_to_client() { terminate(); }
-    inline void tcp_remote_socket_read_again(size_t bytes_xferred)
+    inline void tcp_remote_socket_read_again
+    (const std::shared_ptr<SocksTCP> &sfd,
+     size_t bytes_xferred, bool splice_ok)
         { tcp_remote_socket_read(); }
-    inline void tcp_client_socket_read_again(size_t bytes_xferred)
+    inline void tcp_client_socket_read_again
+    (const std::shared_ptr<SocksTCP> &sfd,
+     size_t bytes_xferred, bool splice_ok)
         { tcp_client_socket_read(); }
-    inline bool close_client_socket()
-        { close_cr_socket(client_socket_); return false; }
-    inline bool close_remote_socket()
-        { close_cr_socket(remote_socket_); return false; }
+    void close_client_socket();
+    void close_remote_socket();
 #endif
 
     static std::size_t send_buffer_chunk_size;

@@ -1085,8 +1085,9 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           dst_hostname_(dst_hostname), dst_address_(dst_address),
           strand_(io_service), client_socket_(std::move(client_socket)),
           remote_socket_(std::move(remote_socket)),
-          dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind),
+          dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind)
 #ifdef USE_SPLICE
+          ,
           kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
           pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
@@ -1569,6 +1570,15 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
              }
              doFlushPipeToClient(action);
          }));
+}
+#else
+void SocksTCP::close_client_socket()
+{
+    close_cr_socket(client_socket_);
+}
+void SocksTCP::close_remote_socket()
+{
+    close_cr_socket(remote_socket_);
 }
 #endif
 
