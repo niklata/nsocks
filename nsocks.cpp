@@ -70,23 +70,13 @@ extern "C" {
 namespace po = boost::program_options;
 
 boost::asio::io_service io_service;
+static boost::asio::signal_set asio_signal_set(io_service);
 static std::vector<std::unique_ptr<ClientListener>> listeners;
 static int nsocks_uid, nsocks_gid;
 static std::size_t num_worker_threads = 1;
 
-static boost::asio::signal_set asio_signal_set(io_service);
-
 static void process_signals()
 {
-    asio_signal_set.add(SIGINT);
-    asio_signal_set.add(SIGTERM);
-    asio_signal_set.async_wait(
-        [](const boost::system::error_code &, int signum) {
-            io_service.stop();
-        });
-}
-
-static void fix_signals(void) {
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGCHLD);
@@ -98,6 +88,12 @@ static void fix_signals(void) {
     sigaddset(&mask, SIGHUP);
     if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0)
         suicide("sigprocmask failed");
+    asio_signal_set.add(SIGINT);
+    asio_signal_set.add(SIGTERM);
+    asio_signal_set.async_wait(
+        [](const boost::system::error_code &, int signum) {
+            io_service.stop();
+        });
 }
 
 #if 0
@@ -442,7 +438,7 @@ static void process_options(int ac, char *av[])
         write_pid(pidfile.c_str());
 
     umask(077);
-    fix_signals();
+    process_signals();
 
     // bool v4only = false;
     // nlink = std::unique_ptr<Netlink>(new Netlink(v4only));
@@ -483,7 +479,6 @@ int main(int ac, char *av[])
     gflags_log_name = const_cast<char *>("nsocks");
 
     process_options(ac, av);
-    process_signals();
 
     if (num_worker_threads > 1) {
         std::vector<std::thread> threads;
