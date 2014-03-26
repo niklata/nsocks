@@ -158,8 +158,7 @@ static po::variables_map fetch_options(int ac, char *av[])
     cli_opts.add_options()
         ("config,c", po::value<std::string>(&config_file),
          "path to configuration file")
-        ("detach,d", "run as a background daemon (default)")
-        ("nodetach,n", "stay attached to TTY")
+        ("background", "run as a background daemon")
         ("verbose,V", "print details of normal operation")
         ("help,h", "print help message")
         ("version,v", "print version information")
@@ -315,10 +314,8 @@ static void process_options(int ac, char *av[])
     auto hs_secs = vm["handshake-gc-interval"].as<std::size_t>();
     auto bindlisten_secs = vm["bindlisten-gc-interval"].as<std::size_t>();
 
-    if (vm.count("detach"))
+    if (vm.count("background"))
         gflags_detach = 1;
-    if (vm.count("nodetach"))
-        gflags_detach = 0;
     if (vm.count("verbose"))
         g_verbose_logs = true;
     if (vm.count("pidfile"))
