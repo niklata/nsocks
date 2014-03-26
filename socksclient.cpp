@@ -760,30 +760,33 @@ void SocksInit::dispatch_connrq()
                              send_reply(RplHostUnreach);
                          return;
                      }
-                     ba::ip::tcp::resolver::iterator fv4, fv6, rie;
+                     std::vector<ba::ip::address> v4a;
+                     std::vector<ba::ip::address> v6a;
+                     ba::ip::tcp::resolver::iterator rie;
                      for (; it != rie; ++it) {
                          bool isv4 = it->endpoint().address().is_v4();
-                         if (isv4) {
-                             if (g_prefer_ipv4) {
-                                 dst_address_ = it->endpoint().address();
-                                 dispatch_connrq();
-                                 return;
-                             }
-                             if (fv4 == rie)
-                                 fv4 = it;
-                         } else {
-                             if (!g_prefer_ipv4) {
-                                 dst_address_ = it->endpoint().address();
-                                 dispatch_connrq();
-                                 return;
-                             }
-                             if (fv6 == rie)
-                                 fv6 = it;
-                         }
+                         if (isv4)
+                             v4a.push_back(it->endpoint().address());
+                         else
+                             v6a.push_back(it->endpoint().address());
                      }
-                     dst_address_ = g_prefer_ipv4 ? fv4->endpoint().address()
-                                                  : fv6->endpoint().address();
-                     if (g_disable_ipv6 && !dst_address_.is_v4()) {
+                     auto v4as = v4a.size();
+                     auto v6as = v6a.size();
+                     if (v4as && v6as) {
+                         if (g_prefer_ipv4 || g_disable_ipv6)
+                             dst_address_ = v4a[g_random_prng() % v4a.size()];
+                         else
+                             dst_address_ = v6a[g_random_prng() % v6a.size()];
+                     } else {
+                         if (!g_disable_ipv6 && v6as)
+                             dst_address_ = v6a[g_random_prng() % v6a.size()];
+                         else if (v4as)
+                             dst_address_ = v4a[g_random_prng() % v4a.size()];
+                         else
+                             send_reply(RplHostUnreach);
+                     }
+                     // Shouldn't trigger, but be safe.
+                     if (g_disable_ipv6 && dst_address_.is_v6()) {
                          send_reply(RplHostUnreach);
                          return;
                      }
