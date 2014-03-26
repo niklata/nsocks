@@ -94,6 +94,8 @@ void SocksTCP::set_splice_pipe_size(int size) {
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
+static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
+
 #include "bind_port_assigner.hpp"
 
 static void print_trackers_logentry(const std::string &host, uint16_t port);
@@ -136,6 +138,8 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
         (io_service, hs_secs);
     conntracker_bindlisten = nk::make_unique<ephTrackerList<SocksInit>>
         (io_service, bindlisten_secs);
+    tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
+        (io_service);
 }
 
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
@@ -693,6 +697,7 @@ p4g_version:
             ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
             if (ptmp_ == 0)
                 return RplAddrNotSupp;
+            dst_hostname_.reserve(ptmp_);
             goto parsed5cr_dnslen;
         } else {
             std::cerr << "parse_greet(): unknown address type: "
@@ -748,10 +753,11 @@ void SocksInit::dispatch_connrq()
     if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
         ba::ip::tcp::resolver::query query
             (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
+        dst_hostname_.clear();
+        dst_hostname_.shrink_to_fit();
         auto sfd = shared_from_this();
         try {
-            init_resolver(client_socket_.get_io_service());
-            tcp_resolver_->async_resolve
+            tcp_resolver->async_resolve
                 (query, strand_.wrap(
                  [this, sfd](const boost::system::error_code &ec,
                              ba::ip::tcp::resolver::iterator it)

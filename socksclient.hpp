@@ -140,11 +140,6 @@ private:
         unsigned char tracker_idx_;
     };
 
-    inline void init_resolver(boost::asio::io_service &io_service) {
-        tcp_resolver_ = nk::make_unique<boost::asio::ip::tcp::resolver>
-            (io_service);
-    }
-
     inline void set_remote_socket_options()
     {
         remote_socket_.non_blocking(true);
@@ -170,7 +165,6 @@ private:
 
     std::array<char, 24> sockbuf_;
     std::atomic<bool> tracked_;
-    std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver_;
     std::unique_ptr<BoundSocket> bound_;
     std::string dst_hostname_; // Shared
     boost::asio::ip::address dst_address_; // Shared
