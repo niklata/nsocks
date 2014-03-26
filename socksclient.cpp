@@ -721,24 +721,20 @@ parsed_finished:
 parsed5cr_dnslen:
     case Parsed5CR_DNSLen: {
         uint8_t csiz = std::min(static_cast<uint8_t>(ibSiz_ - poff_), ptmp_);
-        if (csiz < 1)
-            return boost::optional<ReplyCode>();
-        consumed += csiz;
-        dst_hostname_.append(sockbuf_.data() + poff_, csiz);
-        // Guard against overflow.  Should never trigger.
-        if (poff_ > static_cast<uint8_t>(UCHAR_MAX - csiz)) {
-            std::cerr << "parse_greet(): dnslen guard poff_="
-                      <<poff_<<" csiz="<<csiz<<"\n";
-            return RplFail;
+        if (csiz > 0) {
+            // Guard against overflow.  Should never trigger.
+            if (poff_ > static_cast<uint8_t>(UCHAR_MAX - csiz)) {
+                std::cerr << "parse_greet(): dnslen guard poff_="
+                          <<poff_<<" csiz="<<csiz<<"\n";
+                return RplFail;
+            }
+            consumed += csiz;
+            ptmp_ -= csiz;
+            dst_hostname_.append(sockbuf_.data() + poff_, csiz);
+            poff_ += csiz;
         }
-        poff_ += csiz;
-        auto dsiz = dst_hostname_.size();
-        if (dsiz < csiz)
+        if (ptmp_ > 0)
             return boost::optional<ReplyCode>();
-        else if (dsiz > csiz) {
-            std::cerr << "parse_greet(): Bad DNS name length="<<dsiz<<".\n";
-            return RplAddrNotSupp;
-        }
         goto parsed5cr_daddr;
     }
     default: throw std::logic_error("undefined parse state");
