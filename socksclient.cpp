@@ -742,6 +742,7 @@ parsed5cr_dnslen:
     return boost::optional<ReplyCode>();
 }
 
+enum class DNSType { None, V4, V6 };
 void SocksInit::dispatch_connrq()
 {
     if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
@@ -760,30 +761,54 @@ void SocksInit::dispatch_connrq()
                              send_reply(RplHostUnreach);
                          return;
                      }
-                     std::vector<ba::ip::address> v4a;
-                     std::vector<ba::ip::address> v6a;
-                     ba::ip::tcp::resolver::iterator rie;
+                     std::size_t cv6(0), cv4(0);
+                     ba::ip::tcp::resolver::iterator rie, oit(it);
+                     DNSType dt(DNSType::None);
                      for (; it != rie; ++it) {
-                         bool isv4 = it->endpoint().address().is_v4();
-                         if (isv4)
-                             v4a.push_back(it->endpoint().address());
-                         else
-                             v6a.push_back(it->endpoint().address());
+                         if (it->endpoint().address().is_v4()) ++cv4;
+                         else ++cv6;
                      }
-                     auto v4as = v4a.size();
-                     auto v6as = v6a.size();
-                     if (v4as && v6as) {
-                         if (g_prefer_ipv4 || g_disable_ipv6)
-                             dst_address_ = v4a[g_random_prng() % v4a.size()];
-                         else
-                             dst_address_ = v6a[g_random_prng() % v6a.size()];
+                     if (cv4 && cv6) {
+                         if (g_prefer_ipv4 || g_disable_ipv6) dt = DNSType::V4;
+                         else dt = DNSType::V6;
                      } else {
-                         if (!g_disable_ipv6 && v6as)
-                             dst_address_ = v6a[g_random_prng() % v6a.size()];
-                         else if (v4as)
-                             dst_address_ = v4a[g_random_prng() % v4a.size()];
-                         else
+                         if (!g_disable_ipv6 && cv6) dt = DNSType::V6;
+                         else if (cv4) dt = DNSType::V4;
+                         else send_reply(RplHostUnreach);
+                     }
+                     size_t i(0);
+                     switch (dt) {
+                         case DNSType::V4: {
+                             size_t c = g_random_prng() % cv4;
+                             for (it = oit; it != rie; ++it) {
+                                 if (it->endpoint().address().is_v4()) {
+                                     if (i == c) {
+                                         dst_address_ =
+                                             it->endpoint().address();
+                                         break;
+                                     }
+                                     ++i;
+                                 }
+                             }
+                             break;
+                         }
+                         case DNSType::V6: {
+                             size_t c = g_random_prng() % cv6;
+                             for (it = oit; it != rie; ++it) {
+                                 if (!it->endpoint().address().is_v4()) {
+                                     if (i == c) {
+                                         dst_address_ =
+                                             it->endpoint().address();
+                                         break;
+                                     }
+                                     ++i;
+                                 }
+                             }
+                             break;
+                         }
+                         case DNSType::None:
                              send_reply(RplHostUnreach);
+                             break;
                      }
                      // Shouldn't trigger, but be safe.
                      if (g_disable_ipv6 && dst_address_.is_v6()) {
