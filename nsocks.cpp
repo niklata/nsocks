@@ -447,6 +447,14 @@ static void process_options(int ac, char *av[])
     //     exit(EXIT_FAILURE);
     // }
 
+    /* This is tricky -- we *must* use a name that will not be in hosts,
+     * otherwise, at least with eglibc, the resolve and NSS libraries will not
+     * be properly loaded.  The '.invalid' label is RFC-guaranteed to never
+     * be installed into the root zone, so we use that to avoid harassing
+     * DNS servers at start.
+     */
+    (void) gethostbyname("fail.invalid");
+
     if (chroot_path.size()) {
         if (getuid())
             suicide("root required for chroot\n");
