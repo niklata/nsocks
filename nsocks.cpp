@@ -60,11 +60,10 @@
 #include "socksclient.hpp"
 
 extern "C" {
-#include "defines.h"
-#include "log.h"
-#include "chroot.h"
-#include "pidfile.h"
-#include "seccomp-bpf.h"
+#include "nk/log.h"
+#include "nk/privilege.h"
+#include "nk/pidfile.h"
+#include "nk/seccomp-bpf.h"
 }
 
 namespace po = boost::program_options;
@@ -452,16 +451,10 @@ static void process_options(int ac, char *av[])
      */
     (void) gethostbyname("fail.invalid");
 
-    if (chroot_path.size()) {
-        if (getuid())
-            suicide("root required for chroot\n");
-        if (chdir(chroot_path.c_str()))
-            suicide("failed to chdir(%s)\n", chroot_path.c_str());
-        if (chroot(chroot_path.c_str()))
-            suicide("failed to chroot(%s)\n", chroot_path.c_str());
-    }
-    if (nsocks_uid != 0 || nsocks_gid != 0)
-        drop_root(nsocks_uid, nsocks_gid);
+    if (chroot_path.size())
+        nk_set_chroot(chroot_path.c_str());
+    if (nsocks_uid || nsocks_gid)
+        nk_set_uidgid(nsocks_uid, nsocks_gid);
 
     // if (enforce_seccomp())
     //     log_line("seccomp filter cannot be installed");
