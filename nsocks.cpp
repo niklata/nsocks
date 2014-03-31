@@ -174,8 +174,6 @@ static po::variables_map fetch_options(int ac, char *av[])
          "'address[:port]' on which to listen (default all local)")
         ("user,u", po::value<std::string>(),
          "user name that nsocks should run as")
-        ("group,g", po::value<std::string>(),
-         "group name that nsocks should run as")
         ("threads,T", po::value<std::size_t>()->default_value(1),
          "number of worker threads that nsocks should use")
         ("send-chunksize", po::value<std::size_t>()->default_value(1024),
@@ -332,11 +330,8 @@ static void process_options(int ac, char *av[])
         udpallowsrclist = vm["udp-allow-src"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
-        nsocks_uid = nk_uidgidbyname(t.c_str(), &nsocks_gid);
-    }
-    if (vm.count("group")) {
-        auto t = vm["group"].as<std::string>();
-        nsocks_gid = nk_gidbyname(t.c_str());
+        if (nk_uidgidbyname(t.c_str(), &nsocks_uid, &nsocks_gid))
+            suicide("invalid user '%s' specified", t.c_str());
     }
     if (vm.count("threads"))
         num_worker_threads = vm["threads"].as<std::size_t>();
