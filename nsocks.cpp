@@ -71,7 +71,8 @@ namespace po = boost::program_options;
 boost::asio::io_service io_service;
 static boost::asio::signal_set asio_signal_set(io_service);
 static std::vector<std::unique_ptr<ClientListener>> listeners;
-static int nsocks_uid, nsocks_gid;
+static uid_t nsocks_uid;
+static gid_t nsocks_gid;
 static std::size_t num_worker_threads = 1;
 
 static void process_signals()
@@ -331,27 +332,11 @@ static void process_options(int ac, char *av[])
         udpallowsrclist = vm["udp-allow-src"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
-        try {
-            nsocks_uid = boost::lexical_cast<unsigned int>(t);
-        } catch (const boost::bad_lexical_cast&) {
-            auto pws = getpwnam(t.c_str());
-            if (pws) {
-                nsocks_uid = (int)pws->pw_uid;
-                if (!nsocks_gid)
-                    nsocks_gid = (int)pws->pw_gid;
-            } else suicide("invalid uid specified");
-        }
+        nsocks_uid = nk_uidgidbyname(t.c_str(), &nsocks_gid);
     }
     if (vm.count("group")) {
         auto t = vm["group"].as<std::string>();
-        try {
-            nsocks_gid = boost::lexical_cast<unsigned int>(t);
-        } catch (const boost::bad_lexical_cast&) {
-            auto grp = getgrnam(t.c_str());
-            if (grp) {
-                nsocks_gid = (int)grp->gr_gid;
-            } else suicide("invalid gid specified");
-        }
+        nsocks_gid = nk_gidbyname(t.c_str());
     }
     if (vm.count("threads"))
         num_worker_threads = vm["threads"].as<std::size_t>();
