@@ -434,7 +434,7 @@ static void process_options(int ac, char *av[])
     if (chroot_path.size())
         nk_set_chroot(chroot_path.c_str());
     if (nsocks_uid || nsocks_gid)
-        nk_set_uidgid(nsocks_uid, nsocks_gid, NULL);
+        nk_set_uidgid(nsocks_uid, nsocks_gid, NULL, 0);
 
     // if (enforce_seccomp())
     //     log_line("seccomp filter cannot be installed");
