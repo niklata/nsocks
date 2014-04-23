@@ -99,12 +99,12 @@ static int resolver_prunetimer_sec = 60;
 static std::mutex tcp_resolver_lock;
 static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
 static std::unique_ptr<boost::asio::deadline_timer> tcp_resolver_timer;
-static std::atomic<std::size_t> tcp_resolver_timer_seq;
+static std::size_t tcp_resolver_timer_seq;
 
 static std::mutex udp_resolver_lock;
 static std::unique_ptr<boost::asio::ip::udp::resolver> udp_resolver;
 static std::unique_ptr<boost::asio::deadline_timer> udp_resolver_timer;
-static std::atomic<std::size_t> udp_resolver_timer_seq;
+static std::size_t udp_resolver_timer_seq;
 
 #include "bind_port_assigner.hpp"
 
@@ -759,15 +759,15 @@ void SocksInit::kick_tcp_resolver_timer()
 {
     tcp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
-    size_t seq = tcp_resolver_timer_seq;
+    auto seq = tcp_resolver_timer_seq;
     tcp_resolver_timer->async_wait(
         [this, seq](const boost::system::error_code& error)
         {
             if (error)
                 return;
-            size_t cseq = tcp_resolver_timer_seq;
+            std::lock_guard<std::mutex> wl(tcp_resolver_lock);
+            auto cseq = tcp_resolver_timer_seq;
             if (cseq == seq) {
-                std::lock_guard<std::mutex> wl(tcp_resolver_lock);
                 tcp_resolver->cancel();
                 tcp_resolver.reset();
                 return;
@@ -2062,15 +2062,15 @@ void SocksUDP::kick_udp_resolver_timer()
 {
     udp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
-    size_t seq = udp_resolver_timer_seq;
+    auto seq = udp_resolver_timer_seq;
     udp_resolver_timer->async_wait(
         [this, seq](const boost::system::error_code& error)
         {
             if (error)
                 return;
-            size_t cseq = udp_resolver_timer_seq;
+            std::lock_guard<std::mutex> wl(udp_resolver_lock);
+            auto cseq = udp_resolver_timer_seq;
             if (cseq == seq) {
-                std::lock_guard<std::mutex> wl(udp_resolver_lock);
                 udp_resolver->cancel();
                 udp_resolver.reset();
                 return;
