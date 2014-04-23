@@ -94,6 +94,7 @@ void SocksTCP::set_splice_pipe_size(int size) {
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
+static std::mutex tcp_resolver_lock;
 static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
 
 #include "bind_port_assigner.hpp"
@@ -757,6 +758,7 @@ void SocksInit::dispatch_connrq()
         dst_hostname_.shrink_to_fit();
         auto sfd = shared_from_this();
         try {
+            std::lock_guard<std::mutex> wl(tcp_resolver_lock);
             tcp_resolver->async_resolve
                 (query, strand_.wrap(
                  [this, sfd](const boost::system::error_code &ec,
