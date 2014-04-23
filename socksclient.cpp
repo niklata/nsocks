@@ -94,8 +94,12 @@ void SocksTCP::set_splice_pipe_size(int size) {
 static boost::random::random_device g_random_secure;
 static boost::random::mt19937 g_random_prng(g_random_secure());
 
+static int resolver_prunetimer_sec = 60;
+
 static std::mutex tcp_resolver_lock;
 static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
+static std::unique_ptr<boost::asio::deadline_timer> tcp_resolver_timer;
+static std::atomic<std::size_t> tcp_resolver_timer_seq;
 
 #include "bind_port_assigner.hpp"
 
@@ -139,8 +143,6 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
         (io_service, hs_secs);
     conntracker_bindlisten = nk::make_unique<ephTrackerList<SocksInit>>
         (io_service, bindlisten_secs);
-    tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
-        (io_service);
 }
 
 static inline void tcp_socket_close(ba::ip::tcp::socket &s)
@@ -748,6 +750,27 @@ parsed5cr_dnslen:
     return boost::optional<ReplyCode>();
 }
 
+void SocksInit::kick_tcp_resolver_timer()
+{
+    tcp_resolver_timer->expires_from_now
+        (boost::posix_time::seconds(resolver_prunetimer_sec));
+    size_t seq = tcp_resolver_timer_seq;
+    tcp_resolver_timer->async_wait(
+        [this, seq](const boost::system::error_code& error)
+        {
+            if (error)
+                return;
+            size_t cseq = tcp_resolver_timer_seq;
+            if (cseq == seq) {
+                std::lock_guard<std::mutex> wl(tcp_resolver_lock);
+                tcp_resolver->cancel();
+                tcp_resolver.reset();
+                return;
+            }
+            kick_tcp_resolver_timer();
+        });
+}
+
 enum class DNSType { None, V4, V6 };
 void SocksInit::dispatch_connrq()
 {
@@ -759,6 +782,11 @@ void SocksInit::dispatch_connrq()
         auto sfd = shared_from_this();
         try {
             std::lock_guard<std::mutex> wl(tcp_resolver_lock);
+            if (!tcp_resolver) {
+                tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
+                    (io_service);
+                kick_tcp_resolver_timer();
+            }
             tcp_resolver->async_resolve
                 (query, strand_.wrap(
                  [this, sfd](const boost::system::error_code &ec,
@@ -825,6 +853,7 @@ void SocksInit::dispatch_connrq()
                      }
                      dispatch_connrq();
                  }));
+            ++tcp_resolver_timer_seq;
         } catch (const std::exception &) {
             send_reply(RplHostUnreach);
         }

@@ -149,6 +149,7 @@ private:
     void untrack();
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
+    void kick_tcp_resolver_timer();
     void dispatch_connrq();
 
     void dispatch_tcp_connect();
