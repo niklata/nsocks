@@ -101,6 +101,11 @@ static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
 static std::unique_ptr<boost::asio::deadline_timer> tcp_resolver_timer;
 static std::atomic<std::size_t> tcp_resolver_timer_seq;
 
+static std::mutex udp_resolver_lock;
+static std::unique_ptr<boost::asio::ip::udp::resolver> udp_resolver;
+static std::unique_ptr<boost::asio::deadline_timer> udp_resolver_timer;
+static std::atomic<std::size_t> udp_resolver_timer_seq;
+
 #include "bind_port_assigner.hpp"
 
 static void print_trackers_logentry(const std::string &host, uint16_t port);
@@ -1812,8 +1817,7 @@ SocksUDP::SocksUDP(ba::io_service &io_service,
           client_remote_endpoint_(client_remote_ep),
           strand_(io_service),
           client_socket_(io_service, client_ep),
-          remote_socket_(io_service, remote_ep),
-          resolver_(io_service)
+          remote_socket_(io_service, remote_ep)
 {
     if (g_verbose_logs) {
         ++socks_alive_count;
@@ -2054,13 +2058,40 @@ void SocksUDP::udp_proxy_packet()
          }));
 }
 
+void SocksUDP::kick_udp_resolver_timer()
+{
+    udp_resolver_timer->expires_from_now
+        (boost::posix_time::seconds(resolver_prunetimer_sec));
+    size_t seq = udp_resolver_timer_seq;
+    udp_resolver_timer->async_wait(
+        [this, seq](const boost::system::error_code& error)
+        {
+            if (error)
+                return;
+            size_t cseq = udp_resolver_timer_seq;
+            if (cseq == seq) {
+                std::lock_guard<std::mutex> wl(udp_resolver_lock);
+                udp_resolver->cancel();
+                udp_resolver.reset();
+                return;
+            }
+            kick_udp_resolver_timer();
+        });
+}
+
 void SocksUDP::udp_dns_lookup(const std::string &dnsname)
 {
     ba::ip::udp::resolver::query query
         (dnsname, boost::lexical_cast<std::string>(dport_));
     auto sfd = shared_from_this();
     try {
-        resolver_.async_resolve
+        std::lock_guard<std::mutex> wl(udp_resolver_lock);
+        if (!udp_resolver) {
+            udp_resolver = nk::make_unique<boost::asio::ip::udp::resolver>
+                (io_service);
+            kick_udp_resolver_timer();
+        }
+        udp_resolver->async_resolve
             (query, strand_.wrap(
              [this, sfd](const boost::system::error_code &ec,
                          ba::ip::udp::resolver::iterator it)
@@ -2099,6 +2130,7 @@ void SocksUDP::udp_dns_lookup(const std::string &dnsname)
                  }
                  udp_proxy_packet();
              }));
+        ++udp_resolver_timer_seq;
     } catch (const std::exception &) {
         udp_client_socket_read();
     }

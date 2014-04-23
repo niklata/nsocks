@@ -461,6 +461,7 @@ private:
     bool udp_frag_handle(uint8_t fragn, uint8_t atyp,
                          const std::string &dnsname);
     void udp_proxy_packet();
+    void kick_udp_resolver_timer();
     void udp_dns_lookup(const std::string &dnsname);
     void close_udp_sockets();
 
@@ -475,7 +476,6 @@ private:
     boost::asio::strand strand_;
     boost::asio::ip::udp::socket client_socket_;
     boost::asio::ip::udp::socket remote_socket_;
-    boost::asio::ip::udp::resolver resolver_;
     boost::asio::ip::address daddr_;
     std::vector<uint8_t> inbuf_;
     std::vector<uint8_t> outbuf_;
