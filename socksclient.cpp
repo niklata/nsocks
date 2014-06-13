@@ -1242,11 +1242,14 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 void SocksTCP::terminate_flush_to_remote()
 {
     untrack();
-    auto remote_open = close_client_socket();
-    if (remote_open && pToRemote_len_ > 0) {
-        auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
-        return;
+    boost::system::error_code ec;
+    if (remote_socket_.is_open()) {
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+        if (pToRemote_len_ > 0) {
+            auto sfd = shared_from_this();
+            strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
+            return;
+        }
     }
     terminate();
 }
@@ -1255,11 +1258,14 @@ void SocksTCP::terminate_flush_to_remote()
 void SocksTCP::terminate_flush_to_client()
 {
     untrack();
-    auto client_open = close_remote_socket();
-    if (client_open && pToClient_len_ > 0) {
-        auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
-        return;
+    boost::system::error_code ec;
+    if (client_socket_.is_open()) {
+        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+        if (pToClient_len_ > 0) {
+            auto sfd = shared_from_this();
+            strand_.post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
+            return;
+        }
     }
     terminate();
 }
