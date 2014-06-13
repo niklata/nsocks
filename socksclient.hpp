@@ -45,7 +45,7 @@
 extern void pipe_close_raw(std::size_t p_len,
                            boost::asio::posix::stream_descriptor &sa,
                            boost::asio::posix::stream_descriptor &sb);
-extern bool pipe_close(boost::asio::posix::stream_descriptor &sa,
+extern void pipe_close(boost::asio::posix::stream_descriptor &sa,
                        boost::asio::posix::stream_descriptor &sb,
                        std::size_t p_len,
                        boost::asio::ip::tcp::socket &s_reader,
@@ -328,13 +328,13 @@ private:
         }
     }
 
-    inline bool close_client_socket() {
-        return pipe_close(pToClientR_, pToClientW_, pToClient_len_,
-                          client_socket_, remote_socket_);
+    inline void close_client_socket() {
+        pipe_close(pToClientR_, pToClientW_, pToClient_len_,
+                   client_socket_, remote_socket_);
     }
-    inline bool close_remote_socket() {
-        return pipe_close(pToRemoteR_, pToRemoteW_, pToRemote_len_,
-                          remote_socket_, client_socket_);
+    inline void close_remote_socket() {
+        pipe_close(pToRemoteR_, pToRemoteW_, pToRemote_len_,
+                   remote_socket_, client_socket_);
     }
 
     inline void tcp_client_socket_read_stopsplice() {

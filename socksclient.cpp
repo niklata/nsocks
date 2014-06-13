@@ -212,27 +212,18 @@ void pipe_close_raw(std::size_t p_len,
     p_len = 0;
 }
 
-bool pipe_close(ba::posix::stream_descriptor &sa,
+void pipe_close(ba::posix::stream_descriptor &sa,
                 ba::posix::stream_descriptor &sb,
                 std::size_t p_len,
                 ba::ip::tcp::socket &s_reader,
                 ba::ip::tcp::socket &s_writer)
 {
     boost::system::error_code ec;
-    bool ret(false);
-    auto sro = s_reader.is_open();
-    if (sro)
-        s_reader.cancel(ec);
-    if (s_writer.is_open()) {
-        ret = true;
-        s_writer.cancel(ec);
-    }
-    pipe_close_raw(p_len, sa, sb);
-    if (sro)
+    if (s_reader.is_open())
         tcp_socket_close(s_reader);
-    if (ret)
-        s_writer.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    return ret;
+    if (s_writer.is_open())
+        tcp_socket_close(s_writer);
+    pipe_close_raw(p_len, sa, sb);
 }
 #endif
 
