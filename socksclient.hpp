@@ -258,6 +258,8 @@ private:
 #ifdef USE_SPLICE
     bool kicking_client_pipe_bg_:1;
     bool kicking_remote_pipe_bg_:1;
+    bool flushing_client_:1;
+    bool flushing_remote_:1;
     std::size_t pToRemote_len_;
     std::size_t pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;
@@ -278,8 +280,7 @@ private:
     void doFlushPipeToRemote(FlushPipeAction action);
     void doFlushPipeToClient(FlushPipeAction action);
 public:
-    void terminate_flush_to_remote();
-    void terminate_flush_to_client();
+    void flush_then_terminate();
     inline bool is_remote_splicing() { return pToClientW_.is_open(); }
     inline bool is_client_splicing() { return pToRemoteW_.is_open(); }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
@@ -290,7 +291,7 @@ private:
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
-    inline boost::optional<std::size_t> splicePipeToClient(bool closing = false)
+    inline boost::optional<std::size_t> splicePipeToClient()
     {
         try {
             auto n = spliceit(pToClientR_.native_handle(),
@@ -301,12 +302,13 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToClient: TERMINATE/"
                       << e.what() <<"/\n";
-            if (!closing) terminate_flush_to_remote();
-            else terminate();
+            flushing_client_ = false;
+            if (!flushing_remote_ && !flushing_client_) terminate();
+            else flush_then_terminate();
             return boost::optional<std::size_t>();
         }
     }
-    inline boost::optional<std::size_t> splicePipeToRemote(bool closing = false)
+    inline boost::optional<std::size_t> splicePipeToRemote()
     {
         try {
             auto n = spliceit(pToRemoteR_.native_handle(),
@@ -317,8 +319,9 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToRemote: TERMINATE/"
                       << e.what() <<"/\n";
-            if (!closing) terminate_flush_to_client();
-            else terminate();
+            flushing_remote_ = false;
+            if (!flushing_remote_ && !flushing_client_) terminate();
+            else flush_then_terminate();
             return boost::optional<std::size_t>();
         }
     }
@@ -369,8 +372,7 @@ private:
         tcp_remote_socket_read();
     }
 #else
-    inline void terminate_flush_to_remote() { terminate(); }
-    inline void terminate_flush_to_client() { terminate(); }
+    inline void flush_then_terminate() { terminate(); }
     inline void tcp_remote_socket_read_again
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)

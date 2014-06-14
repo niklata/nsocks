@@ -1135,6 +1135,7 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
 #ifdef USE_SPLICE
           ,
           kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
+          flushing_client_(false), flushing_remote_(false),
           pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
           pToRemoteW_(io_service), pToClientW_(io_service)
@@ -1220,47 +1221,33 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
     return true;
 }
 
-// XXX: Think about the case where both terminate_flush_to_(remote|client)
-//      are running concurrently with FlushThenClose.  In that case,
-//      we need to check for completion of the other half, and close
-//      only when that has happened.
-
 // Must be called while holding a shared_ptr
-void SocksTCP::terminate_flush_to_remote()
+void SocksTCP::flush_then_terminate()
 {
     untrack();
     boost::system::error_code ec;
-    if (remote_socket_.is_open()) {
-        if (client_socket_.is_open())
-            client_socket_.cancel();
-        remote_socket_.cancel();
-        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-        if (pToRemote_len_ > 0) {
-            auto sfd = shared_from_this();
-            strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
-            return;
-        }
-    }
-    terminate();
-}
-
-// Must be called while holding a shared_ptr
-void SocksTCP::terminate_flush_to_client()
-{
-    untrack();
-    boost::system::error_code ec;
-    if (client_socket_.is_open()) {
-        if (remote_socket_.is_open())
-            remote_socket_.cancel();
+    auto cso = client_socket_.is_open();
+    auto rso = remote_socket_.is_open();
+    if (cso)
         client_socket_.cancel();
+    if (rso)
+        remote_socket_.cancel();
+    if (cso)
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-        if (pToClient_len_ > 0) {
-            auto sfd = shared_from_this();
-            strand_.post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
-            return;
-        }
+    if (rso)
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+    if (cso && pToClient_len_ > 0) {
+        flushing_client_ = true;
+        auto sfd = shared_from_this();
+        strand_.post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
     }
-    terminate();
+    if (rso && pToRemote_len_ > 0) {
+        flushing_remote_ = true;
+        auto sfd = shared_from_this();
+        strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
+    }
+    if (!flushing_client_ && !flushing_remote_ )
+        terminate();
 }
 
 static void kickClientPipeTimer()
@@ -1361,7 +1348,7 @@ void SocksTCP::kickClientPipeBG()
                      std::cerr << "kickClientPipeBG error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate_flush_to_remote();
+                     flush_then_terminate();
                  }
                  return;
              }
@@ -1422,7 +1409,7 @@ void SocksTCP::kickRemotePipeBG()
                      std::cerr << "kickRemotePipeBG error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate_flush_to_client();
+                     flush_then_terminate();
                  }
                  return;
              }
@@ -1461,7 +1448,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                      std::cerr << "EC-C: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate_flush_to_remote();
+                     flush_then_terminate();
                  }
                  return;
              }
@@ -1477,7 +1464,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                  n = boost::optional<std::size_t>();
              }
              if (!n) {
-                 terminate_flush_to_remote();
+                 flush_then_terminate();
                  return;
              }
              pToRemote_len_ += *n;
@@ -1523,7 +1510,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      std::cerr << "EC-R: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     terminate_flush_to_client();
+                     flush_then_terminate();
                  }
                  return;
              }
@@ -1539,7 +1526,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  n = boost::optional<std::size_t>();
              }
              if (!n) {
-                 terminate_flush_to_client();
+                 flush_then_terminate();
                  return;
              }
              pToClient_len_ += *n;
@@ -1584,19 +1571,24 @@ void SocksTCP::doFlushPipeToRemote(FlushPipeAction action)
                      std::cerr << "doFlushPipeToRemote error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     if (action != FlushThenClose)
-                         terminate_flush_to_client();
-                     else terminate();
+                     if (action == FlushThenClose)
+                         flushing_remote_ = false;
+                     if (!flushing_remote_ && !flushing_client_)
+                         terminate();
                  }
                  return;
              }
-             if (!splicePipeToRemote(action == FlushThenClose))
+             if (!splicePipeToRemote())
                  return;
              if (pToRemote_len_ == 0) {
                  switch (action) {
                  case FlushThenSplice: tcp_client_socket_read_splice(); break;
                  case FlushThenRead: tcp_client_socket_read_stopsplice(); break;
-                 case FlushThenClose: terminate(); break;
+                 case FlushThenClose:
+                     flushing_remote_ = false;
+                     if (!flushing_remote_ && !flushing_client_)
+                         terminate();
+                     break;
                  }
                  return;
              }
@@ -1617,19 +1609,24 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
                      std::cerr << "doFlushPipeToClient error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     if (action != FlushThenClose)
-                         terminate_flush_to_remote();
-                     else terminate();
+                     if (action == FlushThenClose)
+                         flushing_client_ = false;
+                     if (!flushing_remote_ && !flushing_client_)
+                         terminate();
                  }
                  return;
              }
-             if (!splicePipeToClient(action == FlushThenClose))
+             if (!splicePipeToClient())
                  return;
              if (pToClient_len_ == 0) {
                  switch (action) {
                  case FlushThenSplice: tcp_remote_socket_read_splice(); break;
                  case FlushThenRead: tcp_remote_socket_read_stopsplice(); break;
-                 case FlushThenClose: terminate(); break;
+                 case FlushThenClose:
+                     flushing_client_ = false;
+                     if (!flushing_remote_ && !flushing_client_)
+                         terminate();
+                     break;
                  }
                  return;
              }
@@ -1657,7 +1654,7 @@ void SocksTCP::tcp_client_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     terminate_flush_to_remote();
+                     flush_then_terminate();
                  return;
              }
              client_buf_.commit(bytes_xferred);
@@ -1673,7 +1670,7 @@ void SocksTCP::tcp_client_socket_read()
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
-                     terminate_flush_to_client();
+                     flush_then_terminate();
                  return;
              }
              ba::async_write
@@ -1683,7 +1680,7 @@ void SocksTCP::tcp_client_socket_read()
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
-                              terminate_flush_to_client();
+                              flush_then_terminate();
                           return;
                       }
                       client_buf_.consume(bytes_xferred);
@@ -1706,7 +1703,7 @@ void SocksTCP::tcp_remote_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     terminate_flush_to_client();
+                     flush_then_terminate();
                  return;
              }
              remote_buf_.commit(bytes_xferred);
@@ -1722,7 +1719,7 @@ void SocksTCP::tcp_remote_socket_read()
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
-                     terminate_flush_to_remote();
+                     flush_then_terminate();
                  return;
              }
              ba::async_write
@@ -1732,7 +1729,7 @@ void SocksTCP::tcp_remote_socket_read()
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
-                              terminate_flush_to_remote();
+                              flush_then_terminate();
                           return;
                       }
                       remote_buf_.consume(bytes_xferred);
