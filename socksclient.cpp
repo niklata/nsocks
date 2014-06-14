@@ -150,22 +150,6 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
         (io_service, bindlisten_secs);
 }
 
-static inline void tcp_socket_close(ba::ip::tcp::socket &s)
-{
-    boost::system::error_code ec;
-    s.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-    s.close(ec);
-}
-
-static inline void close_cr_socket(ba::ip::tcp::socket &s)
-{
-    if (!s.is_open())
-        return;
-    boost::system::error_code ec;
-    s.cancel(ec);
-    tcp_socket_close(s);
-}
-
 #ifdef USE_SPLICE
 void pipe_close_raw(std::size_t p_len,
                     ba::posix::stream_descriptor &sa,
@@ -210,20 +194,6 @@ void pipe_close_raw(std::size_t p_len,
     if (sbo)
         sb.close(ec);
     p_len = 0;
-}
-
-void pipe_close(ba::posix::stream_descriptor &sa,
-                ba::posix::stream_descriptor &sb,
-                std::size_t p_len,
-                ba::ip::tcp::socket &s_reader,
-                ba::ip::tcp::socket &s_writer)
-{
-    boost::system::error_code ec;
-    if (s_reader.is_open())
-        tcp_socket_close(s_reader);
-    if (s_writer.is_open())
-        tcp_socket_close(s_writer);
-    pipe_close_raw(p_len, sa, sb);
 }
 #endif
 
@@ -446,18 +416,30 @@ void SocksInit::untrack()
                                       get_tracker_idx());
 }
 
-void SocksInit::cancel()
+void SocksInit::close_sockets()
 {
     boost::system::error_code ec;
     if (bound_)
         bound_->acceptor_.cancel(ec);
-    close_cr_socket(client_socket_);
-    close_cr_socket(remote_socket_);
+    auto cso = client_socket_.is_open();
+    auto rso = remote_socket_.is_open();
+    if (cso)
+        client_socket_.cancel(ec);
+    if (rso)
+        remote_socket_.cancel(ec);
+    if (cso)
+        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+    if (rso)
+        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
+    if (cso)
+        client_socket_.close(ec);
+    if (rso)
+        remote_socket_.close(ec);
 }
 
 void SocksInit::terminate()
 {
-    cancel();
+    close_sockets();
     untrack();
 }
 
@@ -1173,14 +1155,16 @@ void SocksTCP::untrack()
         conntracker_tcp.erase(get_tracker_iterator());
 }
 
+#ifdef USE_SPLICE
 void SocksTCP::terminate()
 {
+    boost::system::error_code ec;
     untrack();
-    close_remote_socket();
-    close_client_socket();
+    close_sockets();
+    pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
+    pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
 }
 
-#ifdef USE_SPLICE
 bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
                          boost::asio::posix::stream_descriptor &pwriter)
 {
@@ -1635,13 +1619,10 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
          }));
 }
 #else
-void SocksTCP::close_client_socket()
+void SocksTCP::terminate()
 {
-    close_cr_socket(client_socket_);
-}
-void SocksTCP::close_remote_socket()
-{
-    close_cr_socket(remote_socket_);
+    untrack();
+    close_sockets();
 }
 #endif
 

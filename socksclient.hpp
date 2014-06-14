@@ -45,11 +45,6 @@
 extern void pipe_close_raw(std::size_t p_len,
                            boost::asio::posix::stream_descriptor &sa,
                            boost::asio::posix::stream_descriptor &sb);
-extern void pipe_close(boost::asio::posix::stream_descriptor &sa,
-                       boost::asio::posix::stream_descriptor &sb,
-                       std::size_t p_len,
-                       boost::asio::ip::tcp::socket &s_reader,
-                       boost::asio::ip::tcp::socket &s_writer);
 #endif
 
 class SocksInit
@@ -60,7 +55,7 @@ public:
               boost::asio::ip::tcp::socket socket);
     ~SocksInit();
     void terminate();
-    void cancel();
+    void close_sockets();
     inline void set_untracked() { tracked_ = false; }
     inline void start() { read_greet(); }
     inline bool is_bind_listen() const { return bind_listen_; }
@@ -222,6 +217,25 @@ public:
 private:
     void untrack();
 
+    inline void close_sockets()
+    {
+        boost::system::error_code ec;
+        auto cso = client_socket_.is_open();
+        auto rso = remote_socket_.is_open();
+        if (cso)
+            client_socket_.cancel();
+        if (rso)
+            remote_socket_.cancel();
+        if (cso)
+            client_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        if (rso)
+            remote_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        if (cso)
+            client_socket_.close(ec);
+        if (rso)
+            remote_socket_.close(ec);
+    }
+
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
     // Return of 0 implies EAGAIN
@@ -328,15 +342,6 @@ private:
         }
     }
 
-    inline void close_client_socket() {
-        pipe_close(pToClientR_, pToClientW_, pToClient_len_,
-                   client_socket_, remote_socket_);
-    }
-    inline void close_remote_socket() {
-        pipe_close(pToRemoteR_, pToRemoteW_, pToRemote_len_,
-                   remote_socket_, client_socket_);
-    }
-
     inline void tcp_client_socket_read_stopsplice() {
         assert(pToRemote_len_ == 0);
         pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
@@ -393,8 +398,6 @@ private:
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)
         { tcp_client_socket_read(); }
-    void close_client_socket();
-    void close_remote_socket();
 #endif
 
     static std::size_t send_buffer_chunk_size;
