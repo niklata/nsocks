@@ -1136,7 +1136,7 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           ,
           kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
           flushing_client_(false), flushing_remote_(false),
-          pToRemote_len_(0), pToClient_len_(0),
+          flush_invoked_(false), pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
           pToRemoteW_(io_service), pToClientW_(io_service)
 #endif
@@ -1224,6 +1224,12 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 // Must be called while holding a shared_ptr
 void SocksTCP::flush_then_terminate()
 {
+    if (flush_invoked_) {
+        if (!flushing_client_ && !flushing_remote_)
+            terminate();
+        return;
+    }
+    flush_invoked_ = true;
     untrack();
     boost::system::error_code ec;
     auto cso = client_socket_.is_open();

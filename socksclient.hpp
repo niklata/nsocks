@@ -260,6 +260,7 @@ private:
     bool kicking_remote_pipe_bg_:1;
     bool flushing_client_:1;
     bool flushing_remote_:1;
+    bool flush_invoked_:1;
     std::size_t pToRemote_len_;
     std::size_t pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;
