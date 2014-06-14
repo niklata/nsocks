@@ -217,25 +217,6 @@ public:
 private:
     void untrack();
 
-    inline void close_sockets()
-    {
-        boost::system::error_code ec;
-        auto cso = client_socket_.is_open();
-        auto rso = remote_socket_.is_open();
-        if (cso)
-            client_socket_.cancel();
-        if (rso)
-            remote_socket_.cancel();
-        if (cso)
-            client_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        if (rso)
-            remote_socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-        if (cso)
-            client_socket_.close(ec);
-        if (rso)
-            remote_socket_.close(ec);
-    }
-
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
     // Return of 0 implies EAGAIN

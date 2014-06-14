@@ -197,6 +197,26 @@ void pipe_close_raw(std::size_t p_len,
 }
 #endif
 
+static inline void close_paired_sockets(boost::asio::ip::tcp::socket &a,
+                                        boost::asio::ip::tcp::socket &b)
+{
+    boost::system::error_code ec;
+    auto ao = a.is_open();
+    auto bo = b.is_open();
+    if (ao)
+        a.cancel(ec);
+    if (bo)
+        b.cancel(ec);
+    if (ao)
+        a.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    if (bo)
+        b.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    if (ao)
+        a.close(ec);
+    if (bo)
+        b.close(ec);
+}
+
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
 g_dst_deny_masks;
 std::vector<std::pair<boost::asio::ip::address, unsigned int>>
@@ -421,20 +441,7 @@ void SocksInit::close_sockets()
     boost::system::error_code ec;
     if (bound_)
         bound_->acceptor_.cancel(ec);
-    auto cso = client_socket_.is_open();
-    auto rso = remote_socket_.is_open();
-    if (cso)
-        client_socket_.cancel(ec);
-    if (rso)
-        remote_socket_.cancel(ec);
-    if (cso)
-        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-    if (rso)
-        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_both, ec);
-    if (cso)
-        client_socket_.close(ec);
-    if (rso)
-        remote_socket_.close(ec);
+    close_paired_sockets(remote_socket_, client_socket_);
 }
 
 void SocksInit::terminate()
@@ -1160,7 +1167,7 @@ void SocksTCP::terminate()
 {
     boost::system::error_code ec;
     untrack();
-    close_sockets();
+    close_paired_sockets(client_socket_, remote_socket_);
     pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
     pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
 }
@@ -1622,7 +1629,7 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
 void SocksTCP::terminate()
 {
     untrack();
-    close_sockets();
+    close_paired_sockets(client_socket_, remote_socket_);
 }
 #endif
 
