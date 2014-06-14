@@ -1225,8 +1225,7 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 void SocksTCP::flush_then_terminate()
 {
     if (flush_invoked_) {
-        if (!flushing_client_ && !flushing_remote_)
-            terminate();
+        terminate_if_flushed();
         return;
     }
     flush_invoked_ = true;
@@ -1252,8 +1251,7 @@ void SocksTCP::flush_then_terminate()
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
     }
-    if (!flushing_client_ && !flushing_remote_ )
-        terminate();
+    terminate_if_flushed();
 }
 
 static void kickClientPipeTimer()
@@ -1579,8 +1577,7 @@ void SocksTCP::doFlushPipeToRemote(FlushPipeAction action)
                                << "\n";
                      if (action == FlushThenClose)
                          flushing_remote_ = false;
-                     if (!flushing_remote_ && !flushing_client_)
-                         terminate();
+                     terminate_if_flushed();
                  }
                  return;
              }
@@ -1592,8 +1589,7 @@ void SocksTCP::doFlushPipeToRemote(FlushPipeAction action)
                  case FlushThenRead: tcp_client_socket_read_stopsplice(); break;
                  case FlushThenClose:
                      flushing_remote_ = false;
-                     if (!flushing_remote_ && !flushing_client_)
-                         terminate();
+                     terminate_if_flushed();
                      break;
                  }
                  return;
@@ -1617,8 +1613,7 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
                                << "\n";
                      if (action == FlushThenClose)
                          flushing_client_ = false;
-                     if (!flushing_remote_ && !flushing_client_)
-                         terminate();
+                     terminate_if_flushed();
                  }
                  return;
              }
@@ -1630,8 +1625,7 @@ void SocksTCP::doFlushPipeToClient(FlushPipeAction action)
                  case FlushThenRead: tcp_remote_socket_read_stopsplice(); break;
                  case FlushThenClose:
                      flushing_client_ = false;
-                     if (!flushing_remote_ && !flushing_client_)
-                         terminate();
+                     terminate_if_flushed();
                      break;
                  }
                  return;

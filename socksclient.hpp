@@ -292,6 +292,11 @@ private:
     void kickClientPipeBG();
     void kickRemotePipeBG();
 
+    inline void terminate_if_flushed() {
+        if (!flushing_remote_ && !flushing_client_)
+            terminate();
+    }
+
     inline boost::optional<std::size_t> splicePipeToClient()
     {
         try {
@@ -303,9 +308,11 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToClient: TERMINATE/"
                       << e.what() <<"/\n";
-            flushing_client_ = false;
-            if (!flushing_remote_ && !flushing_client_) terminate();
-            else flush_then_terminate();
+            if (flush_invoked_) {
+                flushing_client_ = false;
+                terminate_if_flushed();
+            } else
+                flush_then_terminate();
             return boost::optional<std::size_t>();
         }
     }
@@ -320,9 +327,11 @@ private:
         } catch (const std::runtime_error &e) {
             std::cerr << "splicePipeToRemote: TERMINATE/"
                       << e.what() <<"/\n";
-            flushing_remote_ = false;
-            if (!flushing_remote_ && !flushing_client_) terminate();
-            else flush_then_terminate();
+            if (flush_invoked_) {
+                flushing_remote_ = false;
+                terminate_if_flushed();
+            } else
+                flush_then_terminate();
             return boost::optional<std::size_t>();
         }
     }
