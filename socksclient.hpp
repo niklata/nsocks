@@ -216,6 +216,7 @@ public:
 
 private:
     void untrack();
+    void flush_then_terminate();
 
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
@@ -281,7 +282,6 @@ private:
     void doFlushPipeToRemote(FlushPipeAction action);
     void doFlushPipeToClient(FlushPipeAction action);
 public:
-    void flush_then_terminate();
     inline bool is_remote_splicing() { return pToClientW_.is_open(); }
     inline bool is_client_splicing() { return pToRemoteW_.is_open(); }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
