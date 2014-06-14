@@ -1220,12 +1220,20 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
     return true;
 }
 
+// XXX: Think about the case where both terminate_flush_to_(remote|client)
+//      are running concurrently with FlushThenClose.  In that case,
+//      we need to check for completion of the other half, and close
+//      only when that has happened.
+
 // Must be called while holding a shared_ptr
 void SocksTCP::terminate_flush_to_remote()
 {
     untrack();
     boost::system::error_code ec;
     if (remote_socket_.is_open()) {
+        if (client_socket_.is_open())
+            client_socket_.cancel();
+        remote_socket_.cancel();
         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
         if (pToRemote_len_ > 0) {
             auto sfd = shared_from_this();
@@ -1242,6 +1250,9 @@ void SocksTCP::terminate_flush_to_client()
     untrack();
     boost::system::error_code ec;
     if (client_socket_.is_open()) {
+        if (remote_socket_.is_open())
+            remote_socket_.cancel();
+        client_socket_.cancel();
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
         if (pToClient_len_ > 0) {
             auto sfd = shared_from_this();
