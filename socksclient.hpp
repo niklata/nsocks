@@ -216,7 +216,8 @@ public:
 
 private:
     void untrack();
-    void flush_then_terminate();
+    enum class FlushDirection { Both, Client, Remote };
+    void flush_then_terminate(FlushDirection dir);
 
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
@@ -306,13 +307,16 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToClient: TERMINATE/"
-                      << e.what() <<"/\n";
+            std::cerr << "splicePipeToClient: TERMINATE/" << e.what() <<"/\n";
             if (flush_invoked_) {
                 flushing_client_ = false;
                 terminate_if_flushed();
-            } else
-                flush_then_terminate();
+            } else {
+                // If we get an error, the socket fd is already closed.
+                // In this case, we do not want to flush this half
+                // of the connection.
+                flush_then_terminate(FlushDirection::Remote);
+            }
             return boost::optional<std::size_t>();
         }
     }
@@ -325,13 +329,16 @@ private:
             else throw std::runtime_error("EOF");
             return n;
         } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToRemote: TERMINATE/"
-                      << e.what() <<"/\n";
+            std::cerr << "splicePipeToRemote: TERMINATE/" << e.what() <<"/\n";
             if (flush_invoked_) {
                 flushing_remote_ = false;
                 terminate_if_flushed();
-            } else
-                flush_then_terminate();
+            } else {
+                // If we get an error, the socket fd is already closed.
+                // In this case, we do not want to flush this half
+                // of the connection.
+                flush_then_terminate(FlushDirection::Client);
+            }
             return boost::optional<std::size_t>();
         }
     }
@@ -382,7 +389,7 @@ private:
         tcp_remote_socket_read();
     }
 #else
-    inline void flush_then_terminate() { terminate(); }
+    inline void flush_then_terminate(FlushDirection dir) { terminate(); }
     inline void tcp_remote_socket_read_again
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)

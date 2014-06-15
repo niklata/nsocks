@@ -1222,7 +1222,7 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 }
 
 // Must be called while holding a shared_ptr
-void SocksTCP::flush_then_terminate()
+void SocksTCP::flush_then_terminate(FlushDirection dir)
 {
     if (flush_invoked_) {
         terminate_if_flushed();
@@ -1241,12 +1241,12 @@ void SocksTCP::flush_then_terminate()
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
     if (rso)
         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    if (cso && pToClient_len_ > 0) {
+    if (dir != FlushDirection::Remote && cso && pToClient_len_ > 0) {
         flushing_client_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToClient(FlushThenClose); });
     }
-    if (rso && pToRemote_len_ > 0) {
+    if (dir != FlushDirection::Client && rso && pToRemote_len_ > 0) {
         flushing_remote_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToRemote(FlushThenClose); });
@@ -1352,7 +1352,7 @@ void SocksTCP::kickClientPipeBG()
                      std::cerr << "kickClientPipeBG error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
              }
@@ -1413,7 +1413,7 @@ void SocksTCP::kickRemotePipeBG()
                      std::cerr << "kickRemotePipeBG error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Client);
                  }
                  return;
              }
@@ -1452,7 +1452,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                      std::cerr << "EC-C: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Client);
                  }
                  return;
              }
@@ -1465,10 +1465,11 @@ void SocksTCP::tcp_client_socket_read_splice()
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
-                 n = boost::optional<std::size_t>();
+                 flush_then_terminate(FlushDirection::Remote);
+                 return;
              }
              if (!n) {
-                 flush_then_terminate();
+                 flush_then_terminate(FlushDirection::Remote);
                  return;
              }
              pToRemote_len_ += *n;
@@ -1514,7 +1515,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      std::cerr << "EC-R: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Client);
                  }
                  return;
              }
@@ -1527,10 +1528,11 @@ void SocksTCP::tcp_remote_socket_read_splice()
              } catch (const std::runtime_error &e) {
                  std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
                            << e.what() << "\n";
-                 n = boost::optional<std::size_t>();
+                 flush_then_terminate(FlushDirection::Client);
+                 return;
              }
              if (!n) {
-                 flush_then_terminate();
+                 flush_then_terminate(FlushDirection::Client);
                  return;
              }
              pToClient_len_ += *n;
@@ -1639,7 +1641,7 @@ void SocksTCP::terminate()
     untrack();
     close_paired_sockets(client_socket_, remote_socket_);
 }
-void SocksTCP::flush_then_terminate()
+void SocksTCP::flush_then_terminate(FlushDirection dir)
 {
     untrack();
     close_paired_sockets(client_socket_, remote_socket_);
@@ -1659,7 +1661,7 @@ void SocksTCP::tcp_client_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Remote);
                  return;
              }
              client_buf_.commit(bytes_xferred);
@@ -1675,7 +1677,7 @@ void SocksTCP::tcp_client_socket_read()
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Client);
                  return;
              }
              ba::async_write
@@ -1685,7 +1687,7 @@ void SocksTCP::tcp_client_socket_read()
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
-                              flush_then_terminate();
+                              flush_then_terminate(FlushDirection::Client);
                           return;
                       }
                       client_buf_.consume(bytes_xferred);
@@ -1708,7 +1710,7 @@ void SocksTCP::tcp_remote_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Client);
                  return;
              }
              remote_buf_.commit(bytes_xferred);
@@ -1724,7 +1726,7 @@ void SocksTCP::tcp_remote_socket_read()
                  return;
              } else if (r == 0 && ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
-                     flush_then_terminate();
+                     flush_then_terminate(FlushDirection::Remote);
                  return;
              }
              ba::async_write
@@ -1734,7 +1736,7 @@ void SocksTCP::tcp_remote_socket_read()
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
-                              flush_then_terminate();
+                              flush_then_terminate(FlushDirection::Remote);
                           return;
                       }
                       remote_buf_.consume(bytes_xferred);
