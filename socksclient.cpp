@@ -1649,11 +1649,6 @@ void SocksTCP::terminate()
     untrack();
     close_paired_sockets(client_socket_, remote_socket_);
 }
-void SocksTCP::flush_then_terminate(FlushDirection dir)
-{
-    untrack();
-    close_paired_sockets(client_socket_, remote_socket_);
-}
 #endif
 
 // Write data read from the client socket to the connect socket.

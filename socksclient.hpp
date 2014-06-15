@@ -217,7 +217,6 @@ public:
 private:
     void untrack();
     enum class FlushDirection { Both, Client, Remote };
-    void flush_then_terminate(FlushDirection dir);
 
     // Can throw std::runtime_error
     // Return of boost::optional<std::size_t>() implies EOF
@@ -272,6 +271,7 @@ private:
     boost::asio::posix::stream_descriptor pToRemoteW_;
     boost::asio::posix::stream_descriptor pToClientW_;
     enum class FlushThen { Splice, Read, Close, };
+    void flush_then_terminate(FlushDirection dir);
     bool init_pipe(boost::asio::posix::stream_descriptor &preader,
                    boost::asio::posix::stream_descriptor &pwriter);
     void tcp_client_socket_read_splice();
