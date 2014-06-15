@@ -271,17 +271,13 @@ private:
     boost::asio::posix::stream_descriptor pToClientR_;
     boost::asio::posix::stream_descriptor pToRemoteW_;
     boost::asio::posix::stream_descriptor pToClientW_;
-    enum FlushPipeAction {
-        FlushThenSplice,
-        FlushThenRead,
-        FlushThenClose,
-    };
+    enum class FlushThen { Splice, Read, Close, };
     bool init_pipe(boost::asio::posix::stream_descriptor &preader,
                    boost::asio::posix::stream_descriptor &pwriter);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void doFlushPipeToRemote(FlushPipeAction action);
-    void doFlushPipeToClient(FlushPipeAction action);
+    void doFlushPipeToRemote(FlushThen action);
+    void doFlushPipeToClient(FlushThen action);
 public:
     inline bool is_remote_splicing() { return pToClientW_.is_open(); }
     inline bool is_client_splicing() { return pToRemoteW_.is_open(); }
