@@ -277,15 +277,6 @@ private:
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote();
     void doFlushPipeToClient();
-public:
-    inline bool is_remote_splicing() {
-        return remote_socket_.is_open() &&
-               pToClientW_.is_open() && pToClientR_.is_open();
-    }
-    inline bool is_client_splicing() {
-        return client_socket_.is_open() &&
-               pToRemoteW_.is_open() && pToRemoteR_.is_open();
-    }
 private:
 
     inline void terminate_if_flushed() {
