@@ -257,8 +257,6 @@ private:
     bool is_bind_:1;
 
 #ifdef USE_SPLICE
-    bool kicking_client_pipe_bg_:1;
-    bool kicking_remote_pipe_bg_:1;
     bool flushing_client_:1;
     bool flushing_remote_:1;
     bool flush_invoked_:1;
@@ -274,6 +272,8 @@ private:
     void flush_then_terminate(FlushDirection dir);
     bool init_pipe(boost::asio::posix::stream_descriptor &preader,
                    boost::asio::posix::stream_descriptor &pwriter);
+    void tcp_client_socket_write_splice(int tries);
+    void tcp_remote_socket_write_splice(int tries);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
     void doFlushPipeToRemote(FlushThen action);
@@ -287,13 +287,7 @@ public:
         return client_socket_.is_open() &&
                pToRemoteW_.is_open() && pToRemoteR_.is_open();
     }
-    bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
-    bool kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now);
 private:
-    void addToSpliceClientList(const std::shared_ptr<SocksTCP> &sfd);
-    void addToSpliceRemoteList(const std::shared_ptr<SocksTCP> &sfd);
-    void kickClientPipeBG();
-    void kickRemotePipeBG();
 
     inline void terminate_if_flushed() {
         if (!flushing_remote_ && !flushing_client_)
@@ -365,7 +359,6 @@ private:
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
             if (init_pipe(pToRemoteR_, pToRemoteW_)) {
                 // std::cerr << "client->remote switched to splice\n";
-                addToSpliceRemoteList(sfd);
                 tcp_client_socket_read_splice();
                 return;
             } else
@@ -382,7 +375,6 @@ private:
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
             if (init_pipe(pToClientR_, pToClientW_)) {
                 // std::cerr << "remote->client switched to splice\n";
-                addToSpliceClientList(sfd);
                 tcp_remote_socket_read_splice();
                 return;
             } else

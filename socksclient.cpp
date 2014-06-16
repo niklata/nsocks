@@ -127,23 +127,10 @@ static std::mutex free_pipe_lock;
 static std::size_t max_free_pipes = SPLICE_CACHE_SIZE;
 static std::vector<std::pair<int, int>> free_pipes;
 #endif
-
-static std::atomic<bool> cPipeTimerSet;
-static std::unique_ptr<boost::asio::deadline_timer> cPipeTimer;
-static std::atomic<std::size_t> cSpliceListIdx;
-static std::forward_list<std::weak_ptr<SocksTCP>> cSpliceList[2];
-static std::forward_list<std::weak_ptr<SocksTCP>> rSpliceList[2];
-static std::atomic<std::size_t> rSpliceListIdx;
-static std::unique_ptr<boost::asio::deadline_timer> rPipeTimer;
-static std::atomic<bool> rPipeTimerSet;
 #endif
 
 void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {
-#ifdef USE_SPLICE
-    cPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
-    rPipeTimer = nk::make_unique<boost::asio::deadline_timer>(io_service);
-#endif
     conntracker_hs = nk::make_unique<ephTrackerVec<SocksInit>>
         (io_service, hs_secs);
     conntracker_bindlisten = nk::make_unique<ephTrackerList<SocksInit>>
@@ -1134,7 +1121,6 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind)
 #ifdef USE_SPLICE
           ,
-          kicking_client_pipe_bg_(false), kicking_remote_pipe_bg_(false),
           flushing_client_(false), flushing_remote_(false),
           flush_invoked_(false), pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
@@ -1147,6 +1133,10 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
 
 SocksTCP::~SocksTCP()
 {
+#ifdef USE_SPLICE
+    pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
+    pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
+#endif
     untrack();
     if (g_verbose_logs) {
         --socks_alive_count;
@@ -1163,15 +1153,13 @@ void SocksTCP::untrack()
         conntracker_tcp.erase(get_tracker_iterator());
 }
 
-#ifdef USE_SPLICE
 void SocksTCP::terminate()
 {
     untrack();
     close_paired_sockets(client_socket_, remote_socket_);
-    pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
-    pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
 }
 
+#ifdef USE_SPLICE
 bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
                          boost::asio::posix::stream_descriptor &pwriter)
 {
@@ -1254,190 +1242,66 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
     terminate_if_flushed();
 }
 
-static void kickClientPipeTimer()
+void SocksTCP::tcp_client_socket_write_splice(int tries)
 {
-    bool cmpbool(false);
-    if (cPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
-        cPipeTimer->expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms / 2U));
-        cPipeTimer->async_wait(
-            [](const boost::system::error_code& error)
-                {
-                    cPipeTimerSet = false;
-                    if (error)
-                        return;
-                    auto now = std::chrono::high_resolution_clock::now();
-                    auto &csl = cSpliceList[cSpliceListIdx];
-                    cSpliceListIdx ^= 1;
-                    while (!csl.empty()) {
-                        auto k = csl.front().lock();
-                        if (k)
-                            k->kickClientPipe(now);
-                        csl.pop_front();
-                    }
-                });
-    }
-}
-
-static void kickRemotePipeTimer()
-{
-    bool cmpbool(false);
-    if (rPipeTimerSet.compare_exchange_strong(cmpbool, true)) {
-        rPipeTimer->expires_from_now
-            (boost::posix_time::milliseconds(max_buffer_ms / 2U));
-        rPipeTimer->async_wait(
-            [](const boost::system::error_code& error)
-                {
-                    rPipeTimerSet = false;
-                    if (error)
-                        return;
-                    auto now = std::chrono::high_resolution_clock::now();
-                    auto &rsl = rSpliceList[rSpliceListIdx];
-                    rSpliceListIdx ^= 1;
-                    while (!rsl.empty()) {
-                        auto k = rsl.front().lock();
-                        if (k)
-                            k->kickRemotePipe(now);
-                        rsl.pop_front();
-                    }
-                });
-    }
-}
-
-bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_point &now)
-{
-    auto sfd = shared_from_this();
-    strand_.post([this, sfd, now] {
-            if (!client_socket_.is_open() || !is_remote_splicing())
-                return;
-            if (std::chrono::duration_cast<std::chrono::milliseconds>
-                (now - remote_read_ts_).count() < max_buffer_ms / 2U) {
-                addToSpliceClientList(sfd);
-                return;
-            }
-            std::cerr << "Kicking the client pipe." << std::endl;
-            boost::system::error_code ec;
-            remote_socket_.cancel(ec);
-            size_t l = pToClient_len_;
-            if (l == 0) {
-                tcp_remote_socket_read_stopsplice();
-                return;
-            }
-            auto n = splicePipeToClient();
-            if (!n)
-                return;
-            if (l - *n > 0) {
-                kickClientPipeBG();
-                return;
-            }
-            tcp_remote_socket_read_stopsplice();
-            return;
-        });
-    return false;
-}
-
-void SocksTCP::kickClientPipeBG()
-{
-    if (kicking_client_pipe_bg_)
-        return;
-    kicking_client_pipe_bg_ = true;
+    tries += 1;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd, tries](const boost::system::error_code &ec,
+                            std::size_t bytes_xferred)
          {
-             kicking_client_pipe_bg_ = false;
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "kickClientPipeBG error: "
+                     std::cerr << "error writing to client socket: "
                                << boost::system::system_error(ec).what()
                                << "\n";
                      flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
              }
-             if (!splicePipeToClient())
+             if (!splicePipeToRemote())
                  return;
-             if (pToClient_len_ > 0)
-                 kickClientPipeBG();
+             if (pToRemote_len_ > 0) {
+                 tcp_client_socket_write_splice(tries);
+                 return;
+             }
+             if (tries < 3)
+                 tcp_client_socket_read_splice();
              else
-                 tcp_remote_socket_read_stopsplice();
+                 tcp_client_socket_read_stopsplice();
          }));
 }
 
-bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now)
+void SocksTCP::tcp_remote_socket_write_splice(int tries)
 {
-    auto sfd = shared_from_this();
-    strand_.post([this, sfd, now] {
-            if (!remote_socket_.is_open() || !is_client_splicing())
-                return;
-            if (std::chrono::duration_cast<std::chrono::milliseconds>
-                (now - client_read_ts_).count() < max_buffer_ms / 2U) {
-                addToSpliceRemoteList(sfd);
-                return;
-            }
-            std::cerr << "Kicking the remote pipe." << std::endl;
-            boost::system::error_code ec;
-            client_socket_.cancel(ec);
-            size_t l = pToRemote_len_;
-            if (l == 0) {
-                tcp_client_socket_read_stopsplice();
-                return;
-            }
-            auto n = splicePipeToRemote();
-            if (!n)
-                return;
-            if (l - *n > 0) {
-                kickRemotePipeBG();
-                return;
-            }
-            tcp_client_socket_read_stopsplice();
-            return;
-        });
-    return false;
-}
-
-void SocksTCP::kickRemotePipeBG()
-{
-    if (kicking_remote_pipe_bg_)
-        return;
-    kicking_remote_pipe_bg_ = true;
+    tries += 1;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd, tries](const boost::system::error_code &ec,
+                            std::size_t bytes_xferred)
          {
-             kicking_remote_pipe_bg_ = false;
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "kickRemotePipeBG error: "
+                     std::cerr << "error writing to remote socket: "
                                << boost::system::system_error(ec).what()
                                << "\n";
                      flush_then_terminate(FlushDirection::Client);
                  }
                  return;
              }
-             if (!splicePipeToRemote())
+             if (!splicePipeToClient())
                  return;
-             if (pToRemote_len_ > 0)
-                 kickRemotePipeBG();
+             if (pToClient_len_ > 0) {
+                 tcp_remote_socket_write_splice(tries);
+                 return;
+             }
+             if (tries < 3)
+                 tcp_remote_socket_read_splice();
              else
-                 tcp_client_socket_read_stopsplice();
+                 tcp_remote_socket_read_stopsplice();
          }));
-}
-
-void SocksTCP::addToSpliceClientList(const std::shared_ptr<SocksTCP> &sfd)
-{
-    cSpliceList[cSpliceListIdx].emplace_front(sfd);
-    kickClientPipeTimer();
-}
-
-void SocksTCP::addToSpliceRemoteList(const std::shared_ptr<SocksTCP> &sfd)
-{
-    rSpliceList[rSpliceListIdx].emplace_front(sfd);
-    kickRemotePipeTimer();
 }
 
 // Write data read from the client socket to the connect socket.
@@ -1458,8 +1322,6 @@ void SocksTCP::tcp_client_socket_read_splice()
                  }
                  return;
              }
-             if (pToRemote_len_ > 0 && !splicePipeToRemote())
-                 return;
              boost::optional<std::size_t> n;
              try {
                  n = spliceit(client_socket_.native_handle(),
@@ -1485,21 +1347,10 @@ void SocksTCP::tcp_client_socket_read_splice()
              }
              if (!splicePipeToRemote())
                  return;
-             size_t ptrl = pToRemote_len_;
-             if (ptrl > 0)
-                 client_read_ts_ = std::chrono::high_resolution_clock::now();
-             if (*n < send_minsplice_size) {
-                 // We aren't splicing enough to be worthwhile or we
-                 // are nearly full.
-                 if (ptrl == 0)
-                     tcp_client_socket_read_stopsplice();
-                 else if (ptrl < send_minsplice_size * 2)
-                     doFlushPipeToRemote(FlushThen::Read);
-                 else
-                     doFlushPipeToRemote(FlushThen::Splice);
-                 return;
-             }
-             tcp_client_socket_read_splice();
+             if (pToRemote_len_ > 0)
+                 tcp_client_socket_write_splice(0);
+             else
+                 tcp_client_socket_read_splice();
          }));
 }
 
@@ -1521,8 +1372,6 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  }
                  return;
              }
-             if (pToClient_len_ > 0 && !splicePipeToClient())
-                 return;
              boost::optional<std::size_t> n;
              try {
                  n = spliceit(remote_socket_.native_handle(),
@@ -1548,21 +1397,10 @@ void SocksTCP::tcp_remote_socket_read_splice()
              }
              if (!splicePipeToClient())
                  return;
-             size_t ptcl = pToClient_len_;
-             if (ptcl > 0)
-                 remote_read_ts_ = std::chrono::high_resolution_clock::now();
-             if (*n < receive_minsplice_size) {
-                 // We aren't splicing enough to be worthwhile or we
-                 // are nearly full.
-                 if (ptcl == 0)
-                     tcp_remote_socket_read_stopsplice();
-                 else if (ptcl < receive_minsplice_size * 2)
-                     doFlushPipeToClient(FlushThen::Read);
-                 else
-                     doFlushPipeToClient(FlushThen::Splice);
-                 return;
-             }
-             tcp_remote_socket_read_splice();
+             if (pToClient_len_ > 0)
+                 tcp_remote_socket_write_splice(0);
+             else
+                 tcp_remote_socket_read_splice();
          }));
 }
 
@@ -1644,12 +1482,6 @@ void SocksTCP::doFlushPipeToClient(FlushThen action)
              }
              doFlushPipeToClient(action);
          }));
-}
-#else
-void SocksTCP::terminate()
-{
-    untrack();
-    close_paired_sockets(client_socket_, remote_socket_);
 }
 #endif
 
