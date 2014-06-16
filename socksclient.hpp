@@ -268,7 +268,6 @@ private:
     boost::asio::posix::stream_descriptor pToClientR_;
     boost::asio::posix::stream_descriptor pToRemoteW_;
     boost::asio::posix::stream_descriptor pToClientW_;
-    enum class FlushThen { Splice, Read, Close, };
     void flush_then_terminate(FlushDirection dir);
     bool init_pipe(boost::asio::posix::stream_descriptor &preader,
                    boost::asio::posix::stream_descriptor &pwriter);
@@ -276,8 +275,8 @@ private:
     void tcp_remote_socket_write_splice(int tries);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void doFlushPipeToRemote(FlushThen action);
-    void doFlushPipeToClient(FlushThen action);
+    void doFlushPipeToRemote();
+    void doFlushPipeToClient();
 public:
     inline bool is_remote_splicing() {
         return remote_socket_.is_open() &&

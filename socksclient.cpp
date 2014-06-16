@@ -1231,13 +1231,13 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         && cso && pToClient_len_ > 0) {
         flushing_client_ = true;
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToClient(FlushThen::Close); });
+        strand_.post([this, sfd] { doFlushPipeToClient(); });
     }
     if (!flushing_remote_ && dir != FlushDirection::Client
         && rso && pToRemote_len_ > 0) {
         flushing_remote_ = true;
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToRemote(FlushThen::Close); });
+        strand_.post([this, sfd] { doFlushPipeToRemote(); });
     }
     terminate_if_flushed();
 }
@@ -1394,12 +1394,12 @@ void SocksTCP::tcp_remote_socket_read_splice()
          }));
 }
 
-void SocksTCP::doFlushPipeToRemote(FlushThen action)
+void SocksTCP::doFlushPipeToRemote()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, action](const boost::system::error_code &ec,
+         [this, sfd](const boost::system::error_code &ec,
                              std::size_t bytes_xferred)
          {
              if (ec) {
@@ -1407,8 +1407,7 @@ void SocksTCP::doFlushPipeToRemote(FlushThen action)
                      std::cerr << "doFlushPipeToRemote error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     if (action == FlushThen::Close)
-                         flushing_remote_ = false;
+                     flushing_remote_ = false;
                      terminate_if_flushed();
                  }
                  return;
@@ -1416,30 +1415,20 @@ void SocksTCP::doFlushPipeToRemote(FlushThen action)
              if (!splicePipeToRemote())
                  return;
              if (pToRemote_len_ == 0) {
-                 switch (action) {
-                 case FlushThen::Splice:
-                     tcp_client_socket_read_splice();
-                     break;
-                 case FlushThen::Read:
-                     tcp_client_socket_read_stopsplice();
-                     break;
-                 case FlushThen::Close:
-                     flushing_remote_ = false;
-                     terminate_if_flushed();
-                     break;
-                 }
+                 flushing_remote_ = false;
+                 terminate_if_flushed();
                  return;
              }
-             doFlushPipeToRemote(action);
+             doFlushPipeToRemote();
          }));
 }
 
-void SocksTCP::doFlushPipeToClient(FlushThen action)
+void SocksTCP::doFlushPipeToClient()
 {
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, action](const boost::system::error_code &ec,
+         [this, sfd](const boost::system::error_code &ec,
                              std::size_t bytes_xferred)
          {
              if (ec) {
@@ -1447,8 +1436,7 @@ void SocksTCP::doFlushPipeToClient(FlushThen action)
                      std::cerr << "doFlushPipeToClient error: "
                                << boost::system::system_error(ec).what()
                                << "\n";
-                     if (action == FlushThen::Close)
-                         flushing_client_ = false;
+                     flushing_client_ = false;
                      terminate_if_flushed();
                  }
                  return;
@@ -1456,21 +1444,11 @@ void SocksTCP::doFlushPipeToClient(FlushThen action)
              if (!splicePipeToClient())
                  return;
              if (pToClient_len_ == 0) {
-                 switch (action) {
-                 case FlushThen::Splice:
-                     tcp_remote_socket_read_splice();
-                     break;
-                 case FlushThen::Read:
-                     tcp_remote_socket_read_stopsplice();
-                     break;
-                 case FlushThen::Close:
-                     flushing_client_ = false;
-                     terminate_if_flushed();
-                     break;
-                 }
+                 flushing_client_ = false;
+                 terminate_if_flushed();
                  return;
              }
-             doFlushPipeToClient(action);
+             doFlushPipeToClient();
          }));
 }
 #endif
