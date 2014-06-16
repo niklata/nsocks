@@ -1337,14 +1337,9 @@ void SocksTCP::tcp_client_socket_read_splice()
                  return;
              }
              pToRemote_len_ += *n;
-             if (*n == 0) {
-                 // pToRemote_ is full.  Empty it and resume splicing.
-                 if (pToRemote_len_ > 0)
-                     doFlushPipeToRemote(FlushThen::Splice);
-                 else
-                     tcp_client_socket_read_splice();
-                 return;
-             }
+             // XXX: Could keep track of the average splice size of the
+             //      last n reads and revert to normal reads if below
+             //      a threshold.
              if (!splicePipeToRemote())
                  return;
              if (pToRemote_len_ > 0)
@@ -1387,14 +1382,9 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  return;
              }
              pToClient_len_ += *n;
-             if (*n == 0) {
-                 // pToClient_ is full.  Empty it and resume splicing.
-                 if (pToClient_len_ > 0)
-                     doFlushPipeToClient(FlushThen::Splice);
-                 else
-                     tcp_remote_socket_read_splice();
-                 return;
-             }
+             // XXX: Could keep track of the average splice size of the
+             //      last n reads and revert to normal reads if below
+             //      a threshold.
              if (!splicePipeToClient())
                  return;
              if (pToClient_len_ > 0)
