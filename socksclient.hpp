@@ -279,8 +279,14 @@ private:
     void doFlushPipeToRemote(FlushThen action);
     void doFlushPipeToClient(FlushThen action);
 public:
-    inline bool is_remote_splicing() { return pToClientW_.is_open(); }
-    inline bool is_client_splicing() { return pToRemoteW_.is_open(); }
+    inline bool is_remote_splicing() {
+        return remote_socket_.is_open() &&
+               pToClientW_.is_open() && pToClientR_.is_open();
+    }
+    inline bool is_client_splicing() {
+        return client_socket_.is_open() &&
+               pToRemoteW_.is_open() && pToRemoteR_.is_open();
+    }
     bool kickClientPipe(const std::chrono::high_resolution_clock::time_point &now);
     bool kickRemotePipe(const std::chrono::high_resolution_clock::time_point &now);
 private:

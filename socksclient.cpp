@@ -1166,7 +1166,6 @@ void SocksTCP::untrack()
 #ifdef USE_SPLICE
 void SocksTCP::terminate()
 {
-    boost::system::error_code ec;
     untrack();
     close_paired_sockets(client_socket_, remote_socket_);
     pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
@@ -1229,7 +1228,6 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         return;
     }
     flush_invoked_ = true;
-    untrack();
     boost::system::error_code ec;
     auto cso = client_socket_.is_open();
     auto rso = remote_socket_.is_open();
@@ -1241,12 +1239,14 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
     if (rso)
         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    if (dir != FlushDirection::Remote && cso && pToClient_len_ > 0) {
+    if (!flushing_client_ && dir != FlushDirection::Remote
+        && cso && pToClient_len_ > 0) {
         flushing_client_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToClient(FlushThen::Close); });
     }
-    if (dir != FlushDirection::Client && rso && pToRemote_len_ > 0) {
+    if (!flushing_remote_ && dir != FlushDirection::Client
+        && rso && pToRemote_len_ > 0) {
         flushing_remote_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToRemote(FlushThen::Close); });
@@ -1308,13 +1308,14 @@ bool SocksTCP::kickClientPipe(const std::chrono::high_resolution_clock::time_poi
 {
     auto sfd = shared_from_this();
     strand_.post([this, sfd, now] {
-            if (!is_remote_splicing())
+            if (!client_socket_.is_open() || !is_remote_splicing())
                 return;
             if (std::chrono::duration_cast<std::chrono::milliseconds>
                 (now - remote_read_ts_).count() < max_buffer_ms / 2U) {
                 addToSpliceClientList(sfd);
                 return;
             }
+            std::cerr << "Kicking the client pipe." << std::endl;
             boost::system::error_code ec;
             remote_socket_.cancel(ec);
             size_t l = pToClient_len_;
@@ -1369,13 +1370,14 @@ bool SocksTCP::kickRemotePipe(const std::chrono::high_resolution_clock::time_poi
 {
     auto sfd = shared_from_this();
     strand_.post([this, sfd, now] {
-            if (!is_client_splicing())
+            if (!remote_socket_.is_open() || !is_client_splicing())
                 return;
             if (std::chrono::duration_cast<std::chrono::milliseconds>
                 (now - client_read_ts_).count() < max_buffer_ms / 2U) {
                 addToSpliceRemoteList(sfd);
                 return;
             }
+            std::cerr << "Kicking the remote pipe." << std::endl;
             boost::system::error_code ec;
             client_socket_.cancel(ec);
             size_t l = pToRemote_len_;
@@ -1674,11 +1676,13 @@ void SocksTCP::tcp_client_socket_read()
              auto cbs = client_buf_.size();
              auto r = remote_socket_.send
                  (ba::buffer(client_buf_.data(), cbs), 0, ecx);
-             client_buf_.consume(r);
-             if (r == cbs) {
-                 tcp_client_socket_read_again(sfd, r, client_buf_.size() == 0);
-                 return;
-             } else if (r == 0 && ecx != ba::error::would_block) {
+             if (r) {
+                 client_buf_.consume(r);
+                 if (r == cbs) {
+                     tcp_client_socket_read_again(sfd, r, !client_buf_.size());
+                     return;
+                 }
+             } else if (ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Client);
                  return;
@@ -1724,10 +1728,12 @@ void SocksTCP::tcp_remote_socket_read()
              auto r = client_socket_.send
                  (ba::buffer(remote_buf_.data(), rbs), 0, ecx);
              remote_buf_.consume(r);
-             if (r == rbs) {
-                 tcp_remote_socket_read_again(sfd, r, remote_buf_.size() == 0);
-                 return;
-             } else if (r == 0 && ecx != ba::error::would_block) {
+             if (r) {
+                 if (r == rbs) {
+                     tcp_remote_socket_read_again(sfd, r, !remote_buf_.size());
+                     return;
+                 }
+             } else if (ecx != ba::error::would_block) {
                  if (ecx != ba::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Remote);
                  return;
