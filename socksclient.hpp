@@ -218,29 +218,6 @@ private:
     void untrack();
     enum class FlushDirection { Both, Client, Remote };
 
-    // Can throw std::runtime_error
-    // Return of boost::optional<std::size_t>() implies EOF
-    // Return of 0 implies EAGAIN
-    //
-    // If we get EAGAIN here when writing a pipe, then it means that the
-    // pipe is full.
-    static inline boost::optional<std::size_t> spliceit(int infd, int outfd)
-    {
-      retry:
-        auto spliced = splice(infd, NULL, outfd, NULL, splice_pipe_size,
-                              SPLICE_F_NONBLOCK | SPLICE_F_MOVE);
-        if (spliced <= 0) {
-            if (spliced == 0)
-                return boost::optional<std::size_t>();
-            switch (errno) {
-                case EAGAIN: return std::size_t(0);
-                case EINTR: goto retry;
-                default: throw std::runtime_error(strerror(errno));
-            }
-        }
-        return spliced;
-    }
-
     std::atomic<bool> tracked_;
     std::list<std::weak_ptr<SocksTCP>>::iterator tracker_iterator_;
     boost::asio::streambuf client_buf_;
@@ -286,47 +263,63 @@ private:
 
     inline boost::optional<std::size_t> splicePipeToClient()
     {
-        try {
-            auto n = spliceit(pToClientR_.native_handle(),
-                              client_socket_.native_handle());
-            if (n) pToClient_len_ -= *n;
-            else throw std::runtime_error("EOF");
-            return n;
-        } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToClient: TERMINATE/" << e.what() <<"/\n";
-            if (flush_invoked_) {
-                flushing_client_ = false;
-                terminate_if_flushed();
-            } else {
-                // If we get an error, the socket fd is already closed.
-                // In this case, we do not want to flush this half
-                // of the connection.
-                flush_then_terminate(FlushDirection::Remote);
-            }
-            return boost::optional<std::size_t>();
+        // XXX: I'd rather not need to check this explicitly.
+        if (pToClient_len_ <= 0) {
+            std::cerr << "splicePipeToClient called when pToClient_len_ <= 0"
+                      << std::endl;
+            return 0ul;
         }
+        auto n = splice(pToClientR_.native_handle(), NULL,
+                        client_socket_.native_handle(), NULL,
+                        splice_pipe_size, SPLICE_F_NONBLOCK);
+        if (n > 0) {
+            pToClient_len_ -= n;
+            return n;
+        }
+        if (n < 0 && (errno == EINTR || errno == EAGAIN))
+            return 0ul;
+        std::cerr << "splicePipeToClient: TERMINATE/"
+                  << strerror(errno) << "/\n";
+        if (flush_invoked_) {
+            flushing_client_ = false;
+            terminate_if_flushed();
+        } else {
+            // If we get an error, the socket fd is already closed.
+            // In this case, we do not want to flush this half
+            // of the connection.
+            flush_then_terminate(FlushDirection::Remote);
+        }
+        return boost::optional<std::size_t>();
     }
     inline boost::optional<std::size_t> splicePipeToRemote()
     {
-        try {
-            auto n = spliceit(pToRemoteR_.native_handle(),
-                              remote_socket_.native_handle());
-            if (n) pToRemote_len_ -= *n;
-            else throw std::runtime_error("EOF");
-            return n;
-        } catch (const std::runtime_error &e) {
-            std::cerr << "splicePipeToRemote: TERMINATE/" << e.what() <<"/\n";
-            if (flush_invoked_) {
-                flushing_remote_ = false;
-                terminate_if_flushed();
-            } else {
-                // If we get an error, the socket fd is already closed.
-                // In this case, we do not want to flush this half
-                // of the connection.
-                flush_then_terminate(FlushDirection::Client);
-            }
-            return boost::optional<std::size_t>();
+        // XXX: I'd rather not need to check this explicitly.
+        if (pToRemote_len_ <= 0) {
+            std::cerr << "splicePipeToRemote called when pToRemote_len_ <= 0"
+                      << std::endl;
+            return 0ul;
         }
+        auto n = splice(pToRemoteR_.native_handle(), NULL,
+                        remote_socket_.native_handle(), NULL,
+                        splice_pipe_size, SPLICE_F_NONBLOCK);
+        if (n > 0) {
+            pToRemote_len_ -= n;
+            return n;
+        }
+        if (n < 0 && (errno == EINTR || errno == EAGAIN))
+            return 0ul;
+        std::cerr << "splicePipeToRemote: TERMINATE/"
+                  << strerror(errno) << "/\n";
+        if (flush_invoked_) {
+            flushing_remote_ = false;
+            terminate_if_flushed();
+        } else {
+            // If we get an error, the socket fd is already closed.
+            // In this case, we do not want to flush this half
+            // of the connection.
+            flush_then_terminate(FlushDirection::Client);
+        }
+        return boost::optional<std::size_t>();
     }
 
     inline void tcp_client_socket_read_stopsplice() {

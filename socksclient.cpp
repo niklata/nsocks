@@ -1322,21 +1322,23 @@ void SocksTCP::tcp_client_socket_read_splice()
                  }
                  return;
              }
-             boost::optional<std::size_t> n;
-             try {
-                 n = spliceit(client_socket_.native_handle(),
-                              pToRemoteW_.native_handle());
-             } catch (const std::runtime_error &e) {
-                 std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
-                           << e.what() << "\n";
-                 flush_then_terminate(FlushDirection::Remote);
+             auto spliced = splice(client_socket_.native_handle(), NULL,
+                                   pToRemoteW_.native_handle(), NULL,
+                                   splice_pipe_size, SPLICE_F_NONBLOCK);
+             if (spliced <= 0) { // 0 is EOF
+                 // EAGAIN means the pipe is full, but that is an error
+                 // because we always fully drain the pipe before reading.
+                 if (spliced < 0 && errno == EINTR)
+                     tcp_client_socket_read_splice();
+                 else {
+                     if (spliced < 0)
+                         std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
+                             << strerror(errno) << std::endl;
+                     flush_then_terminate(FlushDirection::Remote);
+                 }
                  return;
              }
-             if (!n) {
-                 flush_then_terminate(FlushDirection::Remote);
-                 return;
-             }
-             pToRemote_len_ += *n;
+             pToRemote_len_ += spliced;
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
@@ -1367,21 +1369,23 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  }
                  return;
              }
-             boost::optional<std::size_t> n;
-             try {
-                 n = spliceit(remote_socket_.native_handle(),
-                              pToClientW_.native_handle());
-             } catch (const std::runtime_error &e) {
-                 std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
-                           << e.what() << "\n";
-                 flush_then_terminate(FlushDirection::Client);
+             auto spliced = splice(remote_socket_.native_handle(), NULL,
+                                   pToClientW_.native_handle(), NULL,
+                                   splice_pipe_size, SPLICE_F_NONBLOCK);
+             if (spliced <= 0) { // 0 is EOF
+                 // EAGAIN means the pipe is full, but that is an error
+                 // because we always fully drain the pipe before reading.
+                 if (spliced < 0 && errno == EINTR)
+                     tcp_remote_socket_read_splice();
+                 else {
+                     if (spliced < 0)
+                         std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
+                                   << strerror(errno) << std::endl;
+                     flush_then_terminate(FlushDirection::Client);
+                 }
                  return;
              }
-             if (!n) {
-                 flush_then_terminate(FlushDirection::Client);
-                 return;
-             }
-             pToClient_len_ += *n;
+             pToClient_len_ += spliced;
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
