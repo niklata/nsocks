@@ -1326,10 +1326,12 @@ void SocksTCP::tcp_client_socket_read_splice()
                                    pToRemoteW_.native_handle(), NULL,
                                    splice_pipe_size, SPLICE_F_NONBLOCK);
              if (spliced <= 0) { // 0 is EOF
-                 // EAGAIN means the pipe is full, but that is an error
-                 // because we always fully drain the pipe before reading.
                  if (spliced < 0 && errno == EINTR)
                      tcp_client_socket_read_splice();
+                 // EAGAIN can mean the pipe is full, or it can mean that
+                 // the pipe write would block for another reason.
+                 else if (spliced < 0 && errno == EAGAIN)
+                     tcp_client_socket_write_splice(0);
                  else {
                      if (spliced < 0)
                          std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
@@ -1373,10 +1375,12 @@ void SocksTCP::tcp_remote_socket_read_splice()
                                    pToClientW_.native_handle(), NULL,
                                    splice_pipe_size, SPLICE_F_NONBLOCK);
              if (spliced <= 0) { // 0 is EOF
-                 // EAGAIN means the pipe is full, but that is an error
-                 // because we always fully drain the pipe before reading.
                  if (spliced < 0 && errno == EINTR)
                      tcp_remote_socket_read_splice();
+                 // EAGAIN can mean the pipe is full, or it can mean that
+                 // the pipe write would block for another reason.
+                 else if (spliced < 0 && errno == EAGAIN)
+                     tcp_remote_socket_write_splice(0);
                  else {
                      if (spliced < 0)
                          std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
