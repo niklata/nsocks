@@ -71,9 +71,6 @@ bool g_disable_udp = false;
 static std::size_t listen_queuelen = 256;
 void set_listen_queuelen(std::size_t len) { listen_queuelen = len; }
 
-static unsigned int max_buffer_ms = 250;
-void set_max_buffer_ms(unsigned int n) { max_buffer_ms = n; }
-
 std::size_t SocksTCP::send_buffer_chunk_size = 1024;
 std::size_t SocksTCP::receive_buffer_chunk_size = 2048;
 std::size_t SocksTCP::send_minsplice_size = 768;
