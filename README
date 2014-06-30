@@ -1,0 +1,106 @@
+REQUIREMENTS
+------------
+
+Linux kernel (tested: 3.15)
+C99 C compiler (tested: gcc 4.8.3)
+C++11 compiler (tested: gcc 4.8.3)
+CMake (tested: 2.8.12.2)
+Boost (tested: 1.55.0)
+
+INTRODUCTION
+------------
+
+nsocks is a SOCKS5 or SOCKS4 proxying daemon that is designed for
+high performance.  It uses zero-copy I/O whenever possible, and is
+aggressively multithreaded so that it will fully take advantage of
+multicore machines.  nsocks uses lock-free algorithms whenever
+possible in order to aid scalability.
+
+SOCKS proxies are useful when routing decisions are to be made by
+clients rather than by the router.  In particular, nsocks was written
+so as to allow applications running on a client network to choose
+network egress routes without a significant performance burden on
+the router compared to NAT or simple packet forwarding.
+
+nsocks has been designed to be secure and function with minimal privilege.
+
+REQUIREMENTS FOR ZEROCOPY I/O
+-----------------------------
+
+nsocks uses Linux's splice() system call for zerocopy I/O between
+sockets and pipes.  nsocks will function on other platforms, but it
+will perform normal I/O that involves copying the data through
+userspace memory buffers.
+
+Additionally, zerocopy I/O is only possible for TCP connections.
+The SOCKS protocol is designed in such a way that zerocopy would
+not make any significant difference in performance for UDP.
+
+STANDARD USAGE
+--------------
+
+1) Compile and install nsocks.
+    a) mkdir build
+    b) cd build
+    c) cmake ..
+    d) make
+    e) Install the nsocks executable in a normal place.
+    f) Set up a user and chroot path (optional, but recommended).
+
+2) Run nsocks.  Use nsocks --help to see all possible options.
+
+  Example configuration file (/etc/nsocks.conf):
+
+      threads = 2
+      address = 192.168.1.1:1080
+      user = nsocks
+      chroot = /var/empty
+      disable-ipv6 = true
+      deny-dst = 192.168.1.0/24
+      deny-dst = 3133:7::/48
+      bind-allow-src = 192.168.1.0/24
+      bind-allow-src = 3133:7::/48
+      bind-lowest-port = 64000
+      bind-highest-port = 65000
+      splice-size = 1048576
+      handshake-gc-interval = 1
+
+    Command-line use:
+
+        nsocks -c /etc/nsocks-raw.conf
+
+PORTABILITY
+-----------
+
+nsocks could be ported to non-Linux systems, but will require new code
+to replace the splice mechanism used in Linux.  Some security hardening
+features (seccomp-bpf syscall filtering, SO_LOCK_FILTER) would need to
+be disabled, too.
+
+LICENSE
+-------
+ (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
+ All rights reserved.
+
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+
+ - Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+ - Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ POSSIBILITY OF SUCH DAMAGE.
+
