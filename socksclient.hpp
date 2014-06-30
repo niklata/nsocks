@@ -263,12 +263,8 @@ private:
 
     inline boost::optional<std::size_t> splicePipeToClient()
     {
-        // XXX: I'd rather not need to check this explicitly.
-        if (pToClient_len_ <= 0) {
-            std::cerr << "splicePipeToClient called when pToClient_len_ <= 0"
-                      << std::endl;
+        if (pToClient_len_ <= 0)
             return 0ul;
-        }
         auto n = splice(pToClientR_.native_handle(), NULL,
                         client_socket_.native_handle(), NULL,
                         splice_pipe_size, SPLICE_F_NONBLOCK);
@@ -293,12 +289,8 @@ private:
     }
     inline boost::optional<std::size_t> splicePipeToRemote()
     {
-        // XXX: I'd rather not need to check this explicitly.
-        if (pToRemote_len_ <= 0) {
-            std::cerr << "splicePipeToRemote called when pToRemote_len_ <= 0"
-                      << std::endl;
+        if (pToRemote_len_ <= 0)
             return 0ul;
-        }
         auto n = splice(pToRemoteR_.native_handle(), NULL,
                         remote_socket_.native_handle(), NULL,
                         splice_pipe_size, SPLICE_F_NONBLOCK);
