@@ -192,7 +192,7 @@ public:
              uint16_t dst_port, bool is_bind, bool is_socks_v4,
              std::string dst_hostname = "");
     ~SocksTCP();
-    void start();
+    void start(boost::asio::ip::tcp::endpoint ep);
     void terminate();
 
     inline void set_untracked() { tracked_ = false; }
@@ -205,9 +205,10 @@ public:
     }
     bool matches_dst(const boost::asio::ip::address &addr,
                      uint16_t port) const;
-    inline boost::asio::ip::tcp::endpoint remote_socket_local_endpoint() const
+    inline boost::asio::ip::tcp::endpoint
+        remote_socket_local_endpoint(boost::system::error_code &ec) const
     {
-        return remote_socket_.local_endpoint();
+        return remote_socket_.local_endpoint(ec);
     }
 
     static void set_send_buffer_chunk_size(std::size_t size);

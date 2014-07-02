@@ -876,17 +876,32 @@ void SocksInit::dispatch_tcp_connect()
                  return;
              }
              if (g_verbose_logs) {
-                 std::cout << "TCP Connect @"
-                           << client_socket_.remote_endpoint().address()
-                           << " " << remote_socket_.local_endpoint().address()
-                           << " -> "
+                 boost::system::error_code ecc, ecr;
+                 auto cep = client_socket_.remote_endpoint(ecc);
+                 auto rep = remote_socket_.local_endpoint(ecr);
+                 std::cout << "TCP Connect @";
+                 if (!ecc) std::cout << cep.address() << " ";
+                 else std::cout << "NONE ";
+                 if (!ecr) std::cout << rep.address();
+                 else std::cout << "NONE";
+                 std::cout << " -> "
                            << (addr_type_ != AddrDNS
                                ? dst_address_.to_string() : dst_hostname_)
                            << ":" << dst_port_ << std::endl;
              }
              set_remote_socket_options();
              bool is_socks_v4(is_socks_v4_);
-             conntracker_tcp.emplace(io_service,
+
+             boost::system::error_code eec;
+             auto ep = remote_socket_.local_endpoint(eec);
+             if (eec) {
+                 std::cerr << "TCP Connect: bad remote endpoint: "
+                           << eec.message() << "\n";
+                 send_reply(RplFail);
+                 return;
+             }
+
+             conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false, is_socks_v4,
                    std::move(dst_hostname_));
@@ -916,7 +931,14 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 
 bool SocksInit::is_bind_client_allowed() const
 {
-    auto laddr = client_socket_.remote_endpoint().address();
+    boost::system::error_code ec;
+    auto cep = client_socket_.remote_endpoint(ec);
+    if (ec) {
+        std::cerr << "DENIED bind request; client has bad remote_endpoint"
+                  << ec.message() << "\n";
+        return false;
+    }
+    auto laddr = cep.address();
     for (const auto &i: g_client_bind_allow_masks) {
         auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
         if (r)
@@ -963,8 +985,13 @@ void SocksInit::dispatch_tcp_bind()
         if (rcnct) {
             // Bind to the local IP that is associated with the
             // client-specified dst_address_ and dst_port_.
-            auto laddr((*rcnct)->remote_socket_local_endpoint().address());
-            bind_ep = ba::ip::tcp::endpoint(laddr, BPA->get_port());
+            boost::system::error_code ec;
+            auto rlep = (*rcnct)->remote_socket_local_endpoint(ec);
+            if (ec) {
+                send_reply(RplDeny);
+                return;
+            }
+            bind_ep = ba::ip::tcp::endpoint(rlep.address(), BPA->get_port());
         } else {
             if (!is_bind_client_allowed()) {
                 send_reply(RplDeny);
@@ -997,9 +1024,18 @@ void SocksInit::dispatch_tcp_bind()
              std::cout << "Accepted a connection to a BIND socket." << std::endl;
              set_remote_socket_options();
              bool is_socks_v4(is_socks_v4_);
-             conntracker_tcp.emplace(io_service,
-                   std::move(client_socket_),
-                   std::move(remote_socket_),
+
+             boost::system::error_code eec;
+             auto ep = remote_socket_.remote_endpoint(eec);
+             if (eec) {
+                 std::cerr << "BIND socket: bad remote endpoint: "
+                           << eec.message() << "\n";
+                 send_reply(RplFail);
+                 return;
+             }
+
+             conntracker_tcp.emplace(ep, io_service,
+                   std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, true, is_socks_v4,
                    std::move(dst_hostname_));
          }));
@@ -1025,14 +1061,20 @@ void SocksInit::dispatch_udp()
         return;
     }
     assert(UPA);
-    auto client_ep = client_socket_.remote_endpoint();
-    if (!is_udp_client_allowed(client_ep.address())) {
+    boost::system::error_code ec;
+    auto client_rep = client_socket_.remote_endpoint(ec);
+    if (ec || !is_udp_client_allowed(client_rep.address())) {
         send_reply(RplDeny);
         return;
     }
     ba::ip::udp::endpoint udp_client_ep, udp_remote_ep;
     uint16_t udp_local_port, udp_remote_port;
-    auto laddr(client_socket_.local_endpoint().address());
+    auto client_lep = client_socket_.local_endpoint(ec);
+    if (ec) {
+        send_reply(RplFail);
+        return;
+    }
+    auto laddr(client_lep.address());
     try {
         udp_local_port = UPA->get_port();
         udp_client_ep = ba::ip::udp::endpoint(laddr, udp_local_port);
@@ -1056,7 +1098,7 @@ void SocksInit::dispatch_udp()
     auto ct = std::make_shared<SocksUDP>
         (io_service, std::move(client_socket_),
          udp_client_ep, udp_remote_ep,
-         ba::ip::udp::endpoint(client_ep.address(), client_ep.port()));
+         ba::ip::udp::endpoint(client_rep.address(), client_rep.port()));
     ct->start();
 }
 
@@ -1092,14 +1134,17 @@ void SocksInit::send_reply(ReplyCode replycode)
                                 std::size_t bytes_xferred)
          {
              if (ec || replycode != RplSuccess) {
-                 std::cout << "REJECT @"
-                     << client_socket_.remote_endpoint().address()
-                     << " (none) -> "
-                     << (addr_type_ != AddrDNS
-                         ? dst_address_.to_string() : dst_hostname_)
-                     << ":" << dst_port_
-                     << " [" << replyCodeString[replycode]
-                     << "]" << std::endl;
+                 boost::system::error_code ecc;
+                 auto cep = client_socket_.remote_endpoint(ecc);
+                 std::cout << "REJECT @";
+                 if (!ecc) std::cout << cep.address();
+                 else std::cout << "NONE";
+                 std::cout << " (none) -> "
+                           << (addr_type_ != AddrDNS
+                               ? dst_address_.to_string() : dst_hostname_)
+                           << ":" << dst_port_
+                           << " [" << replyCodeString[replycode]
+                           << "]" << std::endl;
                  terminate();
              }
          }));
@@ -1572,33 +1617,25 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
     return true;
 }
 
-void SocksTCP::start()
+void SocksTCP::start(ba::ip::tcp::endpoint ep)
 {
     std::array<char, 24> sbuf;
     std::size_t ssiz;
 
     if (!is_socks_v4_) {
         ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
-        if (!is_bind_)
-            ssiz = send_reply_binds_v5(sbuf, ssiz,
-                                       remote_socket_.local_endpoint());
-        else
-            ssiz = send_reply_binds_v5(sbuf, ssiz,
-                                       remote_socket_.remote_endpoint());
+        ssiz = send_reply_binds_v5(sbuf, ssiz, ep);
     } else {
         ssiz = send_reply_code_v4(sbuf, SocksInit::ReplyCode::RplSuccess);
-        if (!is_bind_)
-            ssiz = send_reply_binds_v4(sbuf, ssiz,
-                                       remote_socket_.local_endpoint());
-        else
-            ssiz = send_reply_binds_v4(sbuf, ssiz,
-                                       remote_socket_.remote_endpoint());
+        ssiz = send_reply_binds_v4(sbuf, ssiz, ep);
     }
-    auto sfd = shared_from_this();
+
     auto ibm = client_buf_.prepare(ssiz);
     auto siz = std::min(ssiz, boost::asio::buffer_size(ibm));
     memcpy(boost::asio::buffer_cast<char *>(ibm), sbuf.data(), siz);
     client_buf_.commit(siz);
+
+    auto sfd = shared_from_this();
     ba::async_write
         (client_socket_, client_buf_, strand_.wrap(
          [this, sfd](const boost::system::error_code &ec,
@@ -1606,13 +1643,16 @@ void SocksTCP::start()
          {
              client_buf_.consume(bytes_xferred);
              if (ec) {
-                 std::cout << "ERROR @"
-                     << client_socket_.remote_endpoint().address()
-                     << " (tcp:none) -> "
-                     << (!dst_hostname_.size() ? dst_address_.to_string()
-                                               : dst_hostname_)
-                     << ":" << dst_port_
-                     << " [sending success reply]" << std::endl;
+                 boost::system::error_code ecc;
+                 auto cep = client_socket_.remote_endpoint(ecc);
+                 std::cout << "ERROR @";
+                 if (!ecc) std::cout << cep.address();
+                 else std::cout << "NONE";
+                 std::cout << " (tcp:none) -> "
+                           << (!dst_hostname_.size() ? dst_address_.to_string()
+                                                     : dst_hostname_)
+                           << ":" << dst_port_
+                           << " [sending success reply]" << std::endl;
                  terminate();
                  return;
              }
@@ -1659,7 +1699,14 @@ void SocksUDP::start()
     std::size_t ssiz;
 
     ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
-    auto ep = client_socket_.local_endpoint();
+    boost::system::error_code ecc;
+    auto ep = client_socket_.local_endpoint(ecc);
+    if (ecc) {
+        std::cerr << "SocksUDP::start(): client socket has bad endpoint: "
+                  << ecc.message() << "\n";
+        terminate();
+        return;
+    }
     ssiz = send_reply_binds_v5
         (sbuf, ssiz, ba::ip::tcp::endpoint(ep.address(), ep.port()));
     memcpy(out_header_.data(), sbuf.data(), ssiz);
@@ -1670,10 +1717,13 @@ void SocksUDP::start()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 std::cout << "ERROR @"
-                     << tcp_client_socket_.remote_endpoint().address()
-                     << " (udp:none) -> (udp:none) [sending success reply]"
-                     << std::endl;
+                 boost::system::error_code ecr;
+                 auto rep = tcp_client_socket_.remote_endpoint(ecr);
+                 std::cout << "ERROR @";
+                 if (!ecr) std::cout << rep.address();
+                 else std::cout << "NONE";
+                 std::cout << " (udp:none) -> (udp:none) [sending success reply]"
+                           << std::endl;
                  terminate();
                  return;
              }
@@ -1686,8 +1736,13 @@ void SocksUDP::start()
 void SocksUDP::close_udp_sockets()
 {
     assert(UPA);
-    UPA->release_port(client_socket_.local_endpoint().port());
-    UPA->release_port(remote_socket_.local_endpoint().port());
+    boost::system::error_code ec;
+    auto clep = client_socket_.local_endpoint(ec);
+    if (!ec)
+        UPA->release_port(clep.port());
+    auto rlep = remote_socket_.local_endpoint(ec);
+    if (!ec)
+        UPA->release_port(rlep.port());
 }
 
 // Listen for data on client_socket_.  If we get EOF, then terminate the
