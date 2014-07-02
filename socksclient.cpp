@@ -1243,7 +1243,7 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
 {
     tries += 1;
     auto sfd = shared_from_this();
-    client_socket_.async_write_some
+    remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
@@ -1274,7 +1274,7 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
 {
     tries += 1;
     auto sfd = shared_from_this();
-    remote_socket_.async_write_some
+    client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
