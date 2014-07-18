@@ -477,9 +477,10 @@ private:
 void set_listen_queuelen(std::size_t len);
 void set_max_buffer_ms(unsigned int n);
 
-extern void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
-extern void init_bind_port_assigner(uint16_t lowport, uint16_t highport);
-extern void init_udp_associate_assigner(uint16_t lowport, uint16_t highport);
+void init_prng();
+void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs);
+void init_bind_port_assigner(uint16_t lowport, uint16_t highport);
+void init_udp_associate_assigner(uint16_t lowport, uint16_t highport);
 extern bool g_verbose_logs;
 extern bool g_prefer_ipv4;
 extern bool g_disable_ipv6;

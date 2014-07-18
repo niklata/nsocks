@@ -40,10 +40,8 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/dynamic_bitset.hpp>
 
-#include <boost/random/random_device.hpp>
-#include <boost/random/mersenne_twister.hpp>
-#include <boost/random/uniform_int.hpp>
-#include <boost/random/variate_generator.hpp>
+#include <random>
+#include "xorshift.hpp"
 
 #ifdef HAS_64BIT
 #include <boost/lockfree/stack.hpp>
@@ -88,8 +86,8 @@ void SocksTCP::set_splice_pipe_size(int size) {
     splice_pipe_size = std::max(PIPE_BUF, size);
 }
 
-static boost::random::random_device g_random_secure;
-static boost::random::mt19937 g_random_prng(g_random_secure());
+static std::random_device g_random_secure;
+static nk::rng::xorshift64m g_random_prng(0);
 
 static int resolver_prunetimer_sec = 60;
 
@@ -125,6 +123,15 @@ static std::size_t max_free_pipes = SPLICE_CACHE_SIZE;
 static std::vector<std::pair<int, int>> free_pipes;
 #endif
 #endif
+
+void init_prng()
+{
+    std::array<uint32_t, nk::rng::xorshift64m::state_size> seed_data;
+    std::generate_n(seed_data.data(), seed_data.size(),
+                    std::ref(g_random_secure));
+    std::seed_seq seed_seq(std::begin(seed_data), std::end(seed_data));
+    g_random_prng.seed(seed_seq);
+}
 
 void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {

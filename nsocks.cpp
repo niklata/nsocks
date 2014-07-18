@@ -368,6 +368,7 @@ static void process_options(int ac, char *av[])
     if (vm.count("bind-highest-port"))
         bind_highest_port = vm["bind-lowest-port"].as<uint16_t>();
 
+    init_prng();
     init_conntrackers(hs_secs, bindlisten_secs);
     init_bind_port_assigner(bind_lowest_port, bind_highest_port);
 

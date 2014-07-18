@@ -34,7 +34,6 @@ class BindPortAssigner : boost::noncopyable
 public:
     BindPortAssigner(uint16_t start, uint16_t end)
             : ports_used_(end - start + 1), random_portrange_(start, end),
-              random_port_(g_random_prng, random_portrange_),
               start_port_(start), end_port_(end)
     {
         assert(start <= end);
@@ -42,7 +41,7 @@ public:
     uint16_t get_port()
     {
         std::lock_guard<std::mutex> wl(lock_);
-        auto rp = random_port_();
+        auto rp = random_portrange_(g_random_prng);
         for (int i = rp; i <= end_port_; ++i) {
             auto p = i - start_port_;
             if (ports_used_[p])
@@ -72,9 +71,7 @@ public:
 private:
     std::mutex lock_;
     boost::dynamic_bitset<> ports_used_;
-    boost::uniform_int<uint16_t> random_portrange_;
-    boost::variate_generator<boost::mt19937&, boost::uniform_int<uint16_t>>
-        random_port_;
+    std::uniform_int_distribution<uint16_t> random_portrange_;
     uint16_t start_port_;
     uint16_t end_port_;
 };
