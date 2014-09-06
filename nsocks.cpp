@@ -421,13 +421,6 @@ static void process_options(int ac, char *av[])
     umask(077);
     process_signals();
 
-    // bool v4only = false;
-    // nlink = std::unique_ptr<Netlink>(new Netlink(v4only));
-    // if (!nlink->open(NETLINK_INET_DIAG)) {
-    //     fmt::print(stderr, "failed to create netlink socket\n");
-    //     exit(EXIT_FAILURE);
-    // }
-
     /* This is tricky -- we *must* use a name that will not be in hosts,
      * otherwise, at least with eglibc, the resolve and NSS libraries will not
      * be properly loaded.  The '.invalid' label is RFC-guaranteed to never
