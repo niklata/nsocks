@@ -116,8 +116,11 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DHAS_64BIT")
 endif()
 
-include_directories("${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/ncmlib")
+include_directories("${PROJECT_SOURCE_DIR}"
+                    "${PROJECT_SOURCE_DIR}/ncmlib"
+                    "${PROJECT_SOURCE_DIR}/cppformat")
 add_subdirectory(ncmlib)
+add_subdirectory(cppformat)
 
 find_package( Boost COMPONENTS system program_options )
 link_directories ( ${Boost_LIBRARY_DIRS} )
@@ -131,5 +134,5 @@ set(NSOCKS_SRCS
 
 add_executable(nsocks ${NSOCKS_SRCS})
 target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ${Boost_LIBRARIES}
-                             ncmlib)
+                             ncmlib cppformat)
 

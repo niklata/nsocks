@@ -28,7 +28,6 @@
 
 #define SPLICE_CACHE_SIZE 20
 
-#include <iostream>
 #include <forward_list>
 #include <vector>
 #include <mutex>
@@ -158,7 +157,8 @@ void pipe_close_raw(std::size_t p_len,
         if (free_pipes.bounded_push(sp)) {
             if (g_verbose_logs) {
                 ++num_free_pipes;
-                std::cerr << "cached a pipe (total: " << num_free_pipes << ")\n";
+                fmt::print(stderr, "cached a pipe (total: {})\n",
+                           num_free_pipes);
             }
         } else {
             close(s0);
@@ -172,7 +172,8 @@ void pipe_close_raw(std::size_t p_len,
         if (free_pipes.size() < max_free_pipes) {
             free_pipes.push_back(std::move(fp));
             if (g_verbose_logs)
-                std::cerr << "cached a pipe (total: " << free_pipes.size() << ")\n";
+                fmt::print(stderr, "cached a pipe (total: {})\n",
+                           free_pipes.size());
         } else {
             close(fp.first);
             close(fp.second);
@@ -220,19 +221,17 @@ static std::atomic<std::size_t> udp_alive_count;
 
 static void print_trackers_logentry(const std::string &host, uint16_t port)
 {
-    std::cout << "Connection to " << host << ":" << port
-              << " DESTRUCTED (total: HS";
+    fmt::print("Connection to {}:{} DESTRUCTED (total: HS", host, port);
     if (conntracker_hs)
-        std::cout << conntracker_hs->size() << ", BL";
+        fmt::print("{}, BL", conntracker_hs->size());
     else
-        std::cout << "X, BL";
+        fmt::print("X, BL");
     if (conntracker_bindlisten)
-        std::cout << conntracker_bindlisten->size() << " || T";
+        fmt::print("{} || T", conntracker_bindlisten->size());
     else
-        std::cout << "X || T";
-    std::cout << conntracker_tcp.size() << ", U"
-              << udp_alive_count
-              << " / " << socks_alive_count << ")" << std::endl;
+        fmt::print("X || T");
+    fmt::print("{}, U{} / {})\n", conntracker_tcp.size(), udp_alive_count,
+               socks_alive_count);
 }
 
 static std::unique_ptr<BindPortAssigner> BPA;
@@ -243,9 +242,9 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
     if (g_disable_bind)
         return;
     if (lowport < 1024 || highport < 1024) {
-        std::cout << "For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
-                  << "must both be set to non-equal values >= 1024.  BIND requests will be\n"
-                  << "disabled until this configuration problem is corrected." << std::endl;
+        fmt::print("For BIND requests to be satisfied, bind-lowest-port and bind-highest-port\n"
+                   "must both be set to non-equal values >= 1024.  BIND requests will be\n"
+                   "disabled until this configuration problem is corrected.\n");
         g_disable_bind = true;
         return;
     }
@@ -259,10 +258,10 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     if (g_disable_udp)
         return;
     if (lowport < 1024 || highport < 1024) {
-        std::cout << "For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
-                  << "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
-                  << "ASSOCIATE requests will be disabled until this configuration problem\n"
-                  << "is corrected." << std::endl;
+        fmt::print("For UDP ASSOCIATE requests to be satisfied, udp-lowest-port and\n"
+                   "udp-highest-port must both be set to non-equal values >= 1024.  UDP\n"
+                   "ASSOCIATE requests will be disabled until this configuration problem\n"
+                   "is corrected.\n");
         g_disable_udp = true;
         return;
     }
@@ -452,9 +451,8 @@ void SocksInit::read_greet()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "read_greet() error: "
-                               << boost::system::system_error(ec).what()
-                               << std::endl;
+                     fmt::print(stderr, "read_greet() error: {}\n",
+                                boost::system::system_error(ec).what());
                      terminate();
                  }
                  return;
@@ -540,9 +538,8 @@ SocksInit::parse_greet(std::size_t &consumed)
                             std::size_t bytes_xferred)
                 {
                     if (ec && ec != ba::error::operation_aborted) {
-                        std::cerr << "failed writing reply_greetz: "
-                                  << boost::system::system_error(ec).what()
-                                  << std::endl;
+                        fmt::print(stderr, "failed writing reply_greetz: {}\n",
+                                   boost::system::system_error(ec).what());
                         terminate();
                     }
                 }));
@@ -679,8 +676,8 @@ p4g_version:
             dst_hostname_.reserve(ptmp_);
             goto parsed5cr_dnslen;
         } else {
-            std::cerr << "parse_greet(): unknown address type: "
-                      << addr_type_ << "\n";
+            fmt::print(stderr, "parse_greet(): unknown address type: {}\n",
+                       addr_type_);
             return RplAddrNotSupp;
         }
     }
@@ -708,8 +705,8 @@ parsed5cr_dnslen:
         if (csiz > 0) {
             // Guard against overflow.  Should never trigger.
             if (poff_ > static_cast<uint8_t>(UCHAR_MAX - csiz)) {
-                std::cerr << "parse_greet(): dnslen guard poff_="
-                          <<poff_<<" csiz="<<csiz<<"\n";
+                fmt::print(stderr, "parse_greet(): dnslen guard poff_={} csiz={}\n",
+                           poff_, csiz);
                 return RplFail;
             }
             consumed += csiz;
@@ -856,7 +853,7 @@ static bool is_dst_denied(const ba::ip::address &addr)
     for (const auto &i: g_dst_deny_masks) {
         auto r = nk::asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
         if (r) {
-            std::cerr << "DENIED connection to " << addr.to_string() << "\n";
+            fmt::print(stderr, "DENIED connection to {}\n", addr.to_string());
             return true;
         }
     }
@@ -886,15 +883,15 @@ void SocksInit::dispatch_tcp_connect()
                  boost::system::error_code ecc, ecr;
                  auto cep = client_socket_.remote_endpoint(ecc);
                  auto rep = remote_socket_.local_endpoint(ecr);
-                 std::cout << "TCP Connect @";
-                 if (!ecc) std::cout << cep.address() << " ";
-                 else std::cout << "NONE ";
-                 if (!ecr) std::cout << rep.address();
-                 else std::cout << "NONE";
-                 std::cout << " -> "
-                           << (addr_type_ != AddrDNS
-                               ? dst_address_.to_string() : dst_hostname_)
-                           << ":" << dst_port_ << std::endl;
+                 fmt::print("TCP Connect @");
+                 if (!ecc) fmt::print("{} ", cep.address());
+                 else fmt::print("NONE ");
+                 if (!ecr) fmt::print("{}", rep.address());
+                 else fmt::print("NONE");
+                 fmt::print(" -> {}:{}\n",
+                           addr_type_ != AddrDNS
+                               ? dst_address_.to_string() : dst_hostname_,
+                           dst_port_);
              }
              set_remote_socket_options();
              bool is_socks_v4(is_socks_v4_);
@@ -902,8 +899,8 @@ void SocksInit::dispatch_tcp_connect()
              boost::system::error_code eec;
              auto ep = remote_socket_.local_endpoint(eec);
              if (eec) {
-                 std::cerr << "TCP Connect: bad remote endpoint: "
-                           << eec.message() << "\n";
+                 fmt::print(stderr, "TCP Connect: bad remote endpoint: {}\n",
+                            eec.message());
                  send_reply(RplFail);
                  return;
              }
@@ -941,8 +938,8 @@ bool SocksInit::is_bind_client_allowed() const
     boost::system::error_code ec;
     auto cep = client_socket_.remote_endpoint(ec);
     if (ec) {
-        std::cerr << "DENIED bind request; client has bad remote_endpoint"
-                  << ec.message() << "\n";
+        fmt::print(stderr, "DENIED bind request; client has bad remote_endpoint: {}\n",
+                   ec.message());
         return false;
     }
     auto laddr = cep.address();
@@ -951,7 +948,7 @@ bool SocksInit::is_bind_client_allowed() const
         if (r)
             return true;
     }
-    std::cerr << "DENIED bind request from " << laddr.to_string() << "\n";
+    fmt::print(stderr, "DENIED bind request from {}\n", laddr.to_string());
     return false;
 }
 
@@ -961,13 +958,14 @@ bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
     while (true) {
         ++tries;
         if (tries > MAX_BIND_TRIES) {
-            std::cerr << "fatal error creating BIND socket: can't find unused port\n";
+            fmt::print(stderr, "fatal error creating BIND socket: can't find unused port\n");
             break;
         }
         try {
             bound_ = nk::make_unique<BoundSocket>(io_service, ep);
         } catch (const std::runtime_error &e) {
-            std::cerr << "fatal error creating BIND socket: " << e.what() << "\n";
+            fmt::print(stderr, "fatal error creating BIND socket: {}\n",
+                       e.what());
             break;
         } catch (const std::domain_error &e) {
             continue;
@@ -1028,15 +1026,15 @@ void SocksInit::dispatch_tcp_bind()
                  send_reply(RplFail);
                  return;
              }
-             std::cout << "Accepted a connection to a BIND socket." << std::endl;
+             fmt::print("Accepted a connection to a BIND socket.\n");
              set_remote_socket_options();
              bool is_socks_v4(is_socks_v4_);
 
              boost::system::error_code eec;
              auto ep = remote_socket_.remote_endpoint(eec);
              if (eec) {
-                 std::cerr << "BIND socket: bad remote endpoint: "
-                           << eec.message() << "\n";
+                 fmt::print(stderr, "BIND socket: bad remote endpoint: {}\n",
+                            eec.message());
                  send_reply(RplFail);
                  return;
              }
@@ -1056,7 +1054,8 @@ bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
         if (r)
             return true;
     }
-    std::cerr << "DENIED udp associate request from " << laddr.to_string() << "\n";
+    fmt::print(stderr, "DENIED udp associate request from {}\n",
+               laddr.to_string());
     return false;
 }
 
@@ -1143,15 +1142,13 @@ void SocksInit::send_reply(ReplyCode replycode)
              if (ec || replycode != RplSuccess) {
                  boost::system::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);
-                 std::cout << "REJECT @";
-                 if (!ecc) std::cout << cep.address();
-                 else std::cout << "NONE";
-                 std::cout << " (none) -> "
-                           << (addr_type_ != AddrDNS
-                               ? dst_address_.to_string() : dst_hostname_)
-                           << ":" << dst_port_
-                           << " [" << replyCodeString[replycode]
-                           << "]" << std::endl;
+                 fmt::print("REJECT @");
+                 if (!ecc) fmt::print("{}", cep.address());
+                 else fmt::print("NONE");
+                 fmt::print(" (none) -> {}:{} [{}]\n",
+                           addr_type_ != AddrDNS
+                               ? dst_address_.to_string() : dst_hostname_,
+                           dst_port_, replyCodeString[replycode]);
                  terminate();
              }
          }));
@@ -1221,7 +1218,8 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
         pipes[1] = static_cast<uint32_t>(sp >> 32U);
         if (g_verbose_logs) {
             --num_free_pipes;
-            std::cerr << "init_pipe: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+            fmt::print(stderr, "init_pipe: Got cached pipe=[{},{}]\n",
+                       pipes[0], pipes[1]);
         }
     }
 #else
@@ -1235,7 +1233,8 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
             pipes[1] = fp.second;
             free_pipes.pop_back();
             if (g_verbose_logs)
-                std::cerr << "init_pipe: Got cached pipe=[" << pipes[0] << "," << pipes[1] << "]\n";
+                fmt::print(stderr, "init_pipe: Got cached pipe=[{},{}]\n",
+                           pipes[0], pipes[1]);
         }
     }
 #endif
@@ -1244,11 +1243,11 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
             return false;
         auto r = fcntl(pipes[0], F_SETPIPE_SZ, splice_pipe_size);
         if (r < splice_pipe_size)
-            std::cerr << "init_pipe: Pipe size could only be set to " << r << ".\n";
+            fmt::print(stderr, "init_pipe: Pipe size could only be set to {}.\n", r);
         else if (r == -1) {
             switch (errno) {
-                case EPERM: std::cerr << "init_pipe: EPERM when trying to set splice pipe size to " << splice_pipe_size << ".\n";
-                default: std::cerr << "init_pipe: fcntl(F_SETPIPE_SZ) returned errno=" << errno << ".\n";
+                case EPERM: fmt::print(stderr, "init_pipe: EPERM when trying to set splice pipe size to {}.\n", splice_pipe_size);
+                default: fmt::print(stderr, "init_pipe: fcntl(F_SETPIPE_SZ) returned errno={}.\n", errno);
             }
         }
     }
@@ -1302,9 +1301,8 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "error writing to client socket: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "error writing to client socket: {}\n",
+                                boost::system::system_error(ec).what());
                      flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
@@ -1333,9 +1331,8 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "error writing to remote socket: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "error writing to remote socket: {}\n",
+                                boost::system::system_error(ec).what());
                      flush_then_terminate(FlushDirection::Client);
                  }
                  return;
@@ -1364,9 +1361,8 @@ void SocksTCP::tcp_client_socket_read_splice()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "EC-C: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "EC-C: {}\n",
+                                boost::system::system_error(ec).what());
                      flush_then_terminate(FlushDirection::Client);
                  }
                  return;
@@ -1383,8 +1379,8 @@ void SocksTCP::tcp_client_socket_read_splice()
                      tcp_client_socket_write_splice(0);
                  else {
                      if (spliced < 0)
-                         std::cerr << "tcp_client_socket_read_splice() TERMINATE: "
-                             << strerror(errno) << std::endl;
+                         fmt::print(stderr, "tcp_client_socket_read_splice() TERMINATE: {}\n",
+                                    strerror(errno));
                      flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
@@ -1413,9 +1409,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "EC-R: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "EC-R: {}\n",
+                                boost::system::system_error(ec).what());
                      flush_then_terminate(FlushDirection::Client);
                  }
                  return;
@@ -1432,8 +1427,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      tcp_remote_socket_write_splice(0);
                  else {
                      if (spliced < 0)
-                         std::cerr << "tcp_remote_socket_read_splice() TERMINATE: "
-                                   << strerror(errno) << std::endl;
+                         fmt::print(stderr, "tcp_remote_socket_read_splice() TERMINATE: {}\n",
+                                    strerror(errno));
                      flush_then_terminate(FlushDirection::Client);
                  }
                  return;
@@ -1461,9 +1456,8 @@ void SocksTCP::doFlushPipeToRemote()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "doFlushPipeToRemote error: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "doFlushPipeToRemote error: {}\n",
+                                boost::system::system_error(ec).what());
                      flushing_remote_ = false;
                      terminate_if_flushed();
                  }
@@ -1490,9 +1484,8 @@ void SocksTCP::doFlushPipeToClient()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "doFlushPipeToClient error: "
-                               << boost::system::system_error(ec).what()
-                               << "\n";
+                     fmt::print(stderr, "doFlushPipeToClient error: {}\n",
+                                boost::system::system_error(ec).what());
                      flushing_client_ = false;
                      terminate_if_flushed();
                  }
@@ -1652,14 +1645,12 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
              if (ec) {
                  boost::system::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);
-                 std::cout << "ERROR @";
-                 if (!ecc) std::cout << cep.address();
-                 else std::cout << "NONE";
-                 std::cout << " (tcp:none) -> "
-                           << (!dst_hostname_.size() ? dst_address_.to_string()
-                                                     : dst_hostname_)
-                           << ":" << dst_port_
-                           << " [sending success reply]" << std::endl;
+                 fmt::print("ERROR @");
+                 if (!ecc) fmt::print("{}", cep.address());
+                 else fmt::print("NONE");
+                 fmt::print(" (tcp:none) -> {}:{} [sending success reply]\n",
+                           !dst_hostname_.size() ? dst_address_.to_string()
+                                                 : dst_hostname_, dst_port_);
                  terminate();
                  return;
              }
@@ -1709,8 +1700,8 @@ void SocksUDP::start()
     boost::system::error_code ecc;
     auto ep = client_socket_.local_endpoint(ecc);
     if (ecc) {
-        std::cerr << "SocksUDP::start(): client socket has bad endpoint: "
-                  << ecc.message() << "\n";
+        fmt::print(stderr, "SocksUDP::start(): client socket has bad endpoint: {}\n",
+                   ecc.message());
         terminate();
         return;
     }
@@ -1726,11 +1717,10 @@ void SocksUDP::start()
              if (ec) {
                  boost::system::error_code ecr;
                  auto rep = tcp_client_socket_.remote_endpoint(ecr);
-                 std::cout << "ERROR @";
-                 if (!ecr) std::cout << rep.address();
-                 else std::cout << "NONE";
-                 std::cout << " (udp:none) -> (udp:none) [sending success reply]"
-                           << std::endl;
+                 fmt::print("ERROR @");
+                 if (!ecr) fmt::print("{}", rep.address());
+                 else fmt::print("NONE");
+                 fmt::print(" (udp:none) -> (udp:none) [sending success reply]\n");
                  terminate();
                  return;
              }
@@ -1765,9 +1755,8 @@ void SocksUDP::udp_tcp_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "Client closed TCP socket for UDP associate: "
-                               << boost::system::system_error(ec).what()
-                               << std::endl;
+                     fmt::print(stderr, "Client closed TCP socket for UDP associate: {}\n",
+                                boost::system::system_error(ec).what());
                      terminate();
                  }
                  return;
@@ -1789,9 +1778,8 @@ void SocksUDP::udp_client_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "Error on client UDP socket: "
-                               << boost::system::system_error(ec).what()
-                               << std::endl;
+                     fmt::print(stderr, "Error on client UDP socket: {}\n",
+                                boost::system::system_error(ec).what());
                      terminate();
                  }
                  return;
@@ -2026,9 +2014,8 @@ void SocksUDP::udp_remote_socket_read()
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     std::cerr << "Error on remote UDP socket: "
-                               << boost::system::system_error(ec).what()
-                               << std::endl;
+                     fmt::print(stderr, "Error on remote UDP socket: {}\n",
+                                boost::system::system_error(ec).what());
                      terminate();
                  }
                  return;

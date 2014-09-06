@@ -38,6 +38,7 @@
 #include <boost/asio.hpp>
 #include <boost/utility.hpp>
 #include <boost/optional.hpp>
+#include <nk/format.hpp>
 
 #include "make_unique.hpp"
 
@@ -275,8 +276,8 @@ private:
         }
         if (n < 0 && (errno == EINTR || errno == EAGAIN))
             return 0ul;
-        std::cerr << "splicePipeToClient: TERMINATE/"
-                  << strerror(errno) << "/\n";
+        fmt::print(stderr, "splicePipeToClient: TERMINATE/{}/\n",
+                   strerror(errno));
         if (flush_invoked_) {
             flushing_client_ = false;
             terminate_if_flushed();
@@ -301,8 +302,8 @@ private:
         }
         if (n < 0 && (errno == EINTR || errno == EAGAIN))
             return 0ul;
-        std::cerr << "splicePipeToRemote: TERMINATE/"
-                  << strerror(errno) << "/\n";
+        fmt::print(stderr, "splicePipeToRemote: TERMINATE/{}/\n",
+                   strerror(errno));
         if (flush_invoked_) {
             flushing_remote_ = false;
             terminate_if_flushed();
@@ -330,15 +331,15 @@ private:
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)
     {
-        // std::cerr << "sbx=" << bytes_xferred << " sms="
-        //           << send_minsplice_size << "\n";
+        // fmt::print(stderr, "sbx={} sms={}\n", bytes_xferred,
+        //            send_minsplice_size);
         if (splice_ok && bytes_xferred >= send_minsplice_size) {
             if (init_pipe(pToRemoteR_, pToRemoteW_)) {
-                // std::cerr << "client->remote switched to splice\n";
+                // fmt::print(stderr, "client->remote switched to splice\n");
                 tcp_client_socket_read_splice();
                 return;
             } else
-                std::cerr << "init_pipe_client failed\n";
+                fmt::print(stderr, "init_pipe_client failed\n");
         }
         tcp_client_socket_read();
     }
@@ -346,15 +347,15 @@ private:
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)
     {
-        // std::cerr << "rbx=" << bytes_xferred << " rms="
-        //           << receive_minsplice_size << "\n";
+        // fmt::print(stderr, "rbx={} rms={}\n", bytes_xferred,
+        //            receive_minsplice_size);
         if (splice_ok && bytes_xferred >= receive_minsplice_size) {
             if (init_pipe(pToClientR_, pToClientW_)) {
-                // std::cerr << "remote->client switched to splice\n";
+                // fmt::print(stderr, "remote->client switched to splice\n");
                 tcp_remote_socket_read_splice();
                 return;
             } else
-                std::cerr << "init_pipe_remote failed\n";
+                fmt::print(stderr, "init_pipe_remote failed\n");
         }
         tcp_remote_socket_read();
     }

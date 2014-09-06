@@ -53,6 +53,7 @@
 #include <errno.h>
 #include <getopt.h>
 
+#include <nk/format.hpp>
 #include <boost/asio.hpp>
 #include <boost/program_options.hpp>
 
@@ -60,7 +61,6 @@
 #include "socksclient.hpp"
 
 extern "C" {
-#include "nk/log.h"
 #include "nk/privilege.h"
 #include "nk/pidfile.h"
 #include "nk/seccomp-bpf.h"
@@ -74,6 +74,7 @@ static std::vector<std::unique_ptr<ClientListener>> listeners;
 static uid_t nsocks_uid;
 static gid_t nsocks_gid;
 static std::size_t num_worker_threads = 1;
+static int gflags_detach;
 
 static void process_signals()
 {
@@ -86,8 +87,10 @@ static void process_signals()
     sigaddset(&mask, SIGTSTP);
     sigaddset(&mask, SIGTTIN);
     sigaddset(&mask, SIGHUP);
-    if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0)
-        suicide("sigprocmask failed");
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+        fmt::print(stderr, "sigprocmask failed\n");
+        std::quick_exit(EXIT_FAILURE);
+    }
     asio_signal_set.add(SIGINT);
     asio_signal_set.add(SIGTERM);
     asio_signal_set.async_wait(
@@ -220,14 +223,14 @@ static po::variables_map fetch_options(int ac, char *av[])
         po::store(po::command_line_parser(ac, av).
                   options(cmdline_options).positional(p).run(), vm);
     } catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
+        fmt::print(stderr, "{}\n", e.what());
     }
     po::notify(vm);
 
     if (config_file.size()) {
         std::ifstream ifs(config_file.c_str());
         if (!ifs) {
-            std::cerr << "Could not open config file: " << config_file << "\n";
+            fmt::print(stderr, "Could not open config file: {}\n", config_file);
             std::exit(EXIT_FAILURE);
         }
         po::store(po::parse_config_file(ifs, cfgfile_options), vm);
@@ -235,14 +238,13 @@ static po::variables_map fetch_options(int ac, char *av[])
     }
 
     if (vm.count("help")) {
-        std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n"
-                  << "Copyright (c) 2013-2014 Nicholas J. Kain\n"
-                  << av[0] << " [options] addresses...\n"
-                  << cmdline_options << std::endl;
+        fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
+                  "Copyright (c) 2013-2014 Nicholas J. Kain\n"
+                  "{} [options] addresses...\n{}\n", av[0], cmdline_options);
         std::exit(EXIT_FAILURE);
     }
     if (vm.count("version")) {
-        std::cout << "nsocks " << NSOCKS_VERSION << ", socks5 server.\n" <<
+        fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
             "Copyright (c) 2013-2014 Nicholas J. Kain\n"
             "All rights reserved.\n\n"
             "Redistribution and use in source and binary forms, with or without\n"
@@ -262,7 +264,7 @@ static po::variables_map fetch_options(int ac, char *av[])
             "INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n"
             "CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n"
             "ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n"
-            "POSSIBILITY OF SUCH DAMAGE.\n";
+            "POSSIBILITY OF SUCH DAMAGE.\n");
         std::exit(EXIT_FAILURE);
     }
     return vm;
@@ -282,7 +284,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
             try {
                 mask = boost::lexical_cast<int>(mstr);
             } catch (const boost::bad_lexical_cast&) {
-                std::cerr << "bad mask in " << sname << ": '" << addr << "'\n";
+                fmt::print(stderr, "bad mask in {}: '{}'\n", sname, addr);
                 std::exit(EXIT_FAILURE);
             }
             addr.erase(loc);
@@ -297,7 +299,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
                 mask = std::min(mask, 128);
             dvec.emplace_back(addy, mask);
         } catch (const boost::system::error_code&) {
-            std::cerr << "bad address in " << sname << ": '" << addr << "'\n";
+            fmt::print(stderr, "bad address in {}: '{}'\n", sname, addr);
             std::exit(EXIT_FAILURE);
         }
     }
@@ -332,8 +334,10 @@ static void process_options(int ac, char *av[])
         udpallowsrclist = vm["udp-allow-src"].as<std::vector<std::string>>();
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
-        if (nk_uidgidbyname(t.c_str(), &nsocks_uid, &nsocks_gid))
-            suicide("invalid user '%s' specified", t.c_str());
+        if (nk_uidgidbyname(t.c_str(), &nsocks_uid, &nsocks_gid)) {
+            fmt::print(stderr, "invalid user '{}' specified\n", t.c_str());
+            std::exit(EXIT_FAILURE);
+        }
     }
     if (vm.count("threads"))
         num_worker_threads = vm["threads"].as<std::size_t>();
@@ -385,8 +389,7 @@ static void process_options(int ac, char *av[])
                 try {
                     port = boost::lexical_cast<unsigned short>(pstr);
                 } catch (const boost::bad_lexical_cast&) {
-                    std::cout << "bad port in address '" << addr
-                              << "', defaulting to 1080" << std::endl;
+                    fmt::print("bad port in address '{}', defaulting to 1080\n", addr);
                 }
                 addr.erase(loc);
             }
@@ -395,7 +398,7 @@ static void process_options(int ac, char *av[])
                 auto ep = boost::asio::ip::tcp::endpoint(addy, port);
                 listeners.emplace_back(nk::make_unique<ClientListener>(ep));
             } catch (const boost::system::error_code&) {
-                std::cout << "bad address: " << addr << std::endl;
+                fmt::print("bad address: {}\n", addr);
             }
         }
 
@@ -405,9 +408,12 @@ static void process_options(int ac, char *av[])
     hostmask_vec_add(udpallowsrclist, g_client_udp_allow_masks,
                      "udp-allow-src");
 
-    if (gflags_detach)
-        if (daemon(0,0))
-            suicide("detaching fork failed");
+    if (gflags_detach) {
+        if (daemon(0,0)) {
+            fmt::print(stderr, "detaching fork failed\n");
+            std::exit(EXIT_FAILURE);
+        }
+    }
 
     if (pidfile.size() && file_exists(pidfile.c_str(), "w"))
         write_pid(pidfile.c_str());
@@ -418,7 +424,7 @@ static void process_options(int ac, char *av[])
     // bool v4only = false;
     // nlink = std::unique_ptr<Netlink>(new Netlink(v4only));
     // if (!nlink->open(NETLINK_INET_DIAG)) {
-    //     std::cerr << "failed to create netlink socket" << std::endl;
+    //     fmt::print(stderr, "failed to create netlink socket\n");
     //     exit(EXIT_FAILURE);
     // }
 
@@ -436,25 +442,12 @@ static void process_options(int ac, char *av[])
         nk_set_uidgid(nsocks_uid, nsocks_gid, NULL, 0);
 
     // if (enforce_seccomp())
-    //     log_line("seccomp filter cannot be installed");
+    //     fmt::print("seccomp filter cannot be installed\n");
 
-}
-
-static void set_iostream_async()
-{
-    // Don't sync with C stdio, and don't sync cin and cout since we're not
-    // interactive and are just streaming messages.
-    std::ios_base::sync_with_stdio(false);
-    std::cin.tie(nullptr);
-    std::cout.tie(nullptr);
 }
 
 int main(int ac, char *av[])
 {
-    set_iostream_async();
-
-    gflags_log_name = const_cast<char *>("nsocks");
-
     process_options(ac, av);
 
     if (num_worker_threads > 1) {

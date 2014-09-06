@@ -29,6 +29,8 @@
 #ifndef NJK_BIND_PORT_ASSIGNER_HPP_
 #define NJK_BIND_PORT_ASSIGNER_HPP_
 
+#include <nk/format.hpp>
+
 class BindPortAssigner : boost::noncopyable
 {
 public:
@@ -62,8 +64,7 @@ public:
     {
         std::lock_guard<std::mutex> wl(lock_);
         if (port < start_port_ || port > end_port_) {
-            std::cerr << "BindPortAssigner::release_port: port="
-                      << port << " out of range\n";
+            fmt::print(stderr, "BindPortAssigner::release_port: port={} out of range\n", port);
             return;
         }
         ports_used_[port - start_port_] = 0;
