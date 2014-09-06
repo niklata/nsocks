@@ -46,7 +46,7 @@ public:
     void seed(uint64_t s) { s_ = s; }
     template <class Sseq> void seed(Sseq &seq)
     {
-        std::vector<std::uint32_t> s(2);
+        std::array<std::uint32_t, 2> s;
         seq.generate(s.begin(), s.end());
         s_ = static_cast<std::uint64_t>(s[0]) << 32
             | static_cast<std::uint64_t>(s[1]);
@@ -97,7 +97,7 @@ public:
     }
     template <class Sseq> void seed(Sseq &seq)
     {
-        std::vector<std::uint32_t> s(32);
+        std::array<std::uint32_t, 32> s;
         seq.generate(s.begin(), s.end());
         for (size_t i = 0; i < 16; ++i)
             s_[i] = static_cast<std::uint64_t>(s[2 * i]) << 32
@@ -153,7 +153,7 @@ public:
     }
     template <class Sseq> void seed(Sseq &seq)
     {
-        std::vector<std::uint32_t> s(128);
+        std::array<std::uint32_t, 128> s;
         seq.generate(s.begin(), s.end());
         for (size_t i = 0; i < 64; ++i)
             s_[i] = static_cast<std::uint64_t>(s[2 * i]) << 32
@@ -209,7 +209,7 @@ public:
     }
     template <class Sseq> void seed(Sseq &seq)
     {
-        std::vector<std::uint32_t> s(4);
+        std::array<std::uint32_t, 4> s;
         seq.generate(s.begin(), s.end());
         for (size_t i = 0; i < 2; ++i)
             s_[i] = static_cast<std::uint64_t>(s[2 * i]) << 32
