@@ -725,6 +725,9 @@ parsed5cr_dnslen:
 
 void SocksInit::kick_tcp_resolver_timer()
 {
+    if (!tcp_resolver_timer)
+        tcp_resolver_timer =
+            nk::make_unique<boost::asio::deadline_timer>(io_service);
     tcp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = tcp_resolver_timer_seq;
@@ -1924,6 +1927,9 @@ void SocksUDP::udp_proxy_packet()
 
 void SocksUDP::kick_udp_resolver_timer()
 {
+    if (!udp_resolver_timer)
+        udp_resolver_timer =
+            nk::make_unique<boost::asio::deadline_timer>(io_service);
     udp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = udp_resolver_timer_seq;
