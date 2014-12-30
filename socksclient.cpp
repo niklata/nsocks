@@ -786,7 +786,10 @@ void SocksInit::dispatch_connrq()
                      } else {
                          if (!g_disable_ipv6 && cv6) dt = DNSType::V6;
                          else if (cv4) dt = DNSType::V4;
-                         else send_reply(RplHostUnreach);
+                         else {
+                             send_reply(RplHostUnreach);
+                             return;
+                         }
                      }
                      size_t i(0);
                      switch (dt) {
@@ -820,7 +823,7 @@ void SocksInit::dispatch_connrq()
                          }
                          case DNSType::None:
                              send_reply(RplHostUnreach);
-                             break;
+                             return;
                      }
                      // Shouldn't trigger, but be safe.
                      if (g_disable_ipv6 && dst_address_.is_v6()) {
