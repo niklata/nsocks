@@ -888,7 +888,7 @@ void SocksInit::dispatch_tcp_connect()
              if (g_verbose_logs) {
                  boost::system::error_code ecc, ecr;
                  auto cep = client_socket_.remote_endpoint(ecc);
-                 auto rep = remote_socket_.local_endpoint(ecr);
+                 auto rep = remote_socket_.remote_endpoint(ecr);
                  fmt::print("TCP Connect @");
                  if (!ecc) fmt::print("{} ", cep.address());
                  else fmt::print("NONE ");
@@ -903,7 +903,7 @@ void SocksInit::dispatch_tcp_connect()
              bool is_socks_v4(is_socks_v4_);
 
              boost::system::error_code eec;
-             auto ep = remote_socket_.local_endpoint(eec);
+             auto ep = remote_socket_.remote_endpoint(eec);
              if (eec) {
                  fmt::print(stderr, "TCP Connect: bad remote endpoint: {}\n",
                             eec.message());
