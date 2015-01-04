@@ -1649,15 +1649,18 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
          {
              client_buf_.consume(bytes_xferred);
              if (ec) {
-                 boost::system::error_code ecc;
-                 auto cep = client_socket_.remote_endpoint(ecc);
-                 fmt::print("ERROR @");
-                 if (!ecc) fmt::print("{}", cep.address());
-                 else fmt::print("NONE");
-                 fmt::print(" (tcp:none) -> {}:{} [sending success reply]\n",
-                           !dst_hostname_.size() ? dst_address_.to_string()
-                                                 : dst_hostname_, dst_port_);
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     boost::system::error_code ecc;
+                     auto cep = client_socket_.remote_endpoint(ecc);
+                     fmt::print("ERROR @");
+                     if (!ecc) fmt::print("{}", cep.address());
+                     else fmt::print("NONE");
+                     fmt::print(" (tcp:none) -> {}:{} [sending success reply]\n",
+                                !dst_hostname_.size() ? dst_address_.to_string()
+                                                      : dst_hostname_,
+                                dst_port_);
+                     terminate();
+                 }
                  return;
              }
              tcp_client_socket_read();
