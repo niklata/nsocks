@@ -753,8 +753,6 @@ void SocksInit::dispatch_connrq()
     if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
         ba::ip::tcp::resolver::query query
             (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
-        dst_hostname_.clear();
-        dst_hostname_.shrink_to_fit();
         auto sfd = shared_from_this();
         try {
             std::lock_guard<std::mutex> wl(tcp_resolver_lock);
