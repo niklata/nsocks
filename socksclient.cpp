@@ -1653,10 +1653,11 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
                      fmt::print("ERROR @");
                      if (!ecc) fmt::print("{}", cep.address());
                      else fmt::print("NONE");
-                     fmt::print(" (tcp:none) -> {}:{} [sending success reply]\n",
+                     fmt::print(" (SocksTCP::start) -> {}:{} [{}]\n",
                                 !dst_hostname_.size() ? dst_address_.to_string()
                                                       : dst_hostname_,
-                                dst_port_);
+                                dst_port_,
+                                ec.message());
                      terminate();
                  }
                  return;
@@ -1722,13 +1723,15 @@ void SocksUDP::start()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 boost::system::error_code ecr;
-                 auto rep = tcp_client_socket_.remote_endpoint(ecr);
-                 fmt::print("ERROR @");
-                 if (!ecr) fmt::print("{}", rep.address());
-                 else fmt::print("NONE");
-                 fmt::print(" (udp:none) -> (udp:none) [sending success reply]\n");
-                 terminate();
+                 if (ec != ba::error::operation_aborted) {
+                     boost::system::error_code ecr;
+                     auto rep = tcp_client_socket_.remote_endpoint(ecr);
+                     fmt::print("ERROR @");
+                     if (!ecr) fmt::print("{}", rep.address());
+                     else fmt::print("NONE");
+                     fmt::print(" (SocksUDP::start) [{}]\n", ec.message());
+                     terminate();
+                 }
                  return;
              }
              udp_tcp_socket_read();
