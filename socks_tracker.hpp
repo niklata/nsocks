@@ -88,11 +88,13 @@ private:
             (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
-                                  timer_set_ = false;
-                                  if (error)
+                                  if (error) {
+                                      timer_set_ = false;
                                       return;
+                                  }
                                   //print_trackers_logentry("[DOSWAP-]", hidx_);
                                   auto is_empty = doSwap();
+                                  timer_set_ = false;
                                   //print_trackers_logentry("[DOSWAP+]", hidx_);
                                   if (!is_empty)
                                       setTimer();
@@ -183,10 +185,12 @@ private:
             (boost::posix_time::seconds(cyclefreq_));
         swapTimer_.async_wait([this](const boost::system::error_code& error)
                               {
-                                  timer_set_ = false;
-                                  if (error)
+                                  if (error) {
+                                      timer_set_ = false;
                                       return;
+                                  }
                                   auto is_empty = doSwap();
+                                  timer_set_ = false;
                                   if (!is_empty)
                                       setTimer();
                               });
