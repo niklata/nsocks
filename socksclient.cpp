@@ -189,6 +189,18 @@ void pipe_close_raw(std::size_t p_len,
 }
 #endif
 
+static inline void cancel_paired_sockets(boost::asio::ip::tcp::socket &a,
+                                         boost::asio::ip::tcp::socket &b)
+{
+    boost::system::error_code ec;
+    auto ao = a.is_open();
+    auto bo = b.is_open();
+    if (ao)
+        a.cancel(ec);
+    if (bo)
+        b.cancel(ec);
+}
+
 static inline void close_paired_sockets(boost::asio::ip::tcp::socket &a,
                                         boost::asio::ip::tcp::socket &b)
 {
@@ -421,22 +433,23 @@ void SocksInit::untrack()
     if (!bind_listen_)
         return;
     bool cxr(true);
-    if (tracked_.compare_exchange_strong(cxr, false))
+    if (tracked_.compare_exchange_strong(cxr, false)) {
+        boost::system::error_code ec;
+        if (bound_)
+            bound_->acceptor_.cancel(ec);
         conntracker_bindlisten->erase(get_tracker_iterator(),
                                       get_tracker_idx());
+    }
 }
 
-void SocksInit::close_sockets()
+void SocksInit::cancel_sockets()
 {
-    boost::system::error_code ec;
-    if (bound_)
-        bound_->acceptor_.cancel(ec);
-    close_paired_sockets(remote_socket_, client_socket_);
+    cancel_paired_sockets(remote_socket_, client_socket_);
 }
 
 void SocksInit::terminate()
 {
-    close_sockets();
+    close_paired_sockets(remote_socket_, client_socket_);
     untrack();
 }
 
@@ -450,11 +463,9 @@ void SocksInit::read_greet()
                      std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     fmt::print(stderr, "read_greet() error: {}\n",
-                                boost::system::system_error(ec).what());
-                     terminate();
-                 }
+                 fmt::print(stderr, "read_greet() error: {}\n",
+                            boost::system::system_error(ec).what());
+                 terminate();
                  return;
              }
              if (!bytes_xferred)
@@ -537,7 +548,7 @@ SocksInit::parse_greet(std::size_t &consumed)
                 [this, sfd](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
                 {
-                    if (ec && ec != ba::error::operation_aborted) {
+                    if (ec) {
                         fmt::print(stderr, "failed writing reply_greetz: {}\n",
                                    boost::system::system_error(ec).what());
                         terminate();
@@ -767,8 +778,7 @@ void SocksInit::dispatch_connrq()
                              ba::ip::tcp::resolver::iterator it)
                  {
                      if (ec) {
-                         if (ec != ba::error::operation_aborted)
-                             send_reply(RplHostUnreach);
+                         send_reply(RplHostUnreach);
                          return;
                      }
                      std::size_t cv6(0), cv4(0);
@@ -879,8 +889,7 @@ void SocksInit::dispatch_tcp_connect()
          [this, sfd](const boost::system::error_code &ec)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted)
-                     send_reply(errorToReplyCode(ec));
+                 send_reply(errorToReplyCode(ec));
                  return;
              }
              if (g_verbose_logs) {
@@ -1143,8 +1152,6 @@ void SocksInit::send_reply(ReplyCode replycode)
          [this, sfd, replycode](const boost::system::error_code &ec,
                                 std::size_t bytes_xferred)
          {
-             if (ec == ba::error::operation_aborted)
-                 return;
              if (ec || replycode != RplSuccess) {
                  boost::system::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);

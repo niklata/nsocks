@@ -56,7 +56,7 @@ public:
               boost::asio::ip::tcp::socket socket);
     ~SocksInit();
     void terminate();
-    void close_sockets();
+    void cancel_sockets();
     inline void set_untracked() { tracked_ = false; }
     inline void start() { read_greet(); }
     inline bool is_bind_listen() const { return bind_listen_; }

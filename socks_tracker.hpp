@@ -65,7 +65,7 @@ private:
         for (auto &i: vec_[x]) {
             auto j = i.lock();
             if (j && !j->is_bind_listen())
-                j->close_sockets();
+                j->cancel_sockets();
         }
     }
     bool doSwap() {
@@ -163,7 +163,7 @@ private:
             auto j = i->lock();
             if (j) {
                 j->set_untracked();
-                j->close_sockets();
+                j->cancel_sockets();
             }
             ip = i++;
             list_[x].erase(ip);
