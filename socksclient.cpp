@@ -1143,6 +1143,8 @@ void SocksInit::send_reply(ReplyCode replycode)
          [this, sfd, replycode](const boost::system::error_code &ec,
                                 std::size_t bytes_xferred)
          {
+             if (ec == ba::error::operation_aborted)
+                 return;
              if (ec || replycode != RplSuccess) {
                  boost::system::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);
@@ -1150,9 +1152,9 @@ void SocksInit::send_reply(ReplyCode replycode)
                  if (!ecc) fmt::print("{}", cep.address());
                  else fmt::print("NONE");
                  fmt::print(" (none) -> {}:{} [{}]\n",
-                           addr_type_ != AddrDNS
-                               ? dst_address_.to_string() : dst_hostname_,
-                           dst_port_, replyCodeString[replycode]);
+                            addr_type_ != AddrDNS
+                            ? dst_address_.to_string() : dst_hostname_,
+                            dst_port_, replyCodeString[replycode]);
                  terminate();
              }
          }));
