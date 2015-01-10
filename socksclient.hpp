@@ -263,59 +263,8 @@ private:
             terminate();
     }
 
-    inline boost::optional<std::size_t> splicePipeToClient()
-    {
-        if (pToClient_len_ <= 0)
-            return 0ul;
-        auto n = splice(pToClientR_.native_handle(), NULL,
-                        client_socket_.native_handle(), NULL,
-                        splice_pipe_size, SPLICE_F_NONBLOCK);
-        if (n > 0) {
-            pToClient_len_ -= n;
-            return n;
-        }
-        if (n < 0 && (errno == EINTR || errno == EAGAIN))
-            return 0ul;
-        fmt::print(stderr, "splicePipeToClient: TERMINATE/{}/\n",
-                   strerror(errno));
-        if (flush_invoked_) {
-            flushing_client_ = false;
-            terminate_if_flushed();
-        } else {
-            // If we get an error, the socket fd is already closed.
-            // In this case, we do not want to flush this half
-            // of the connection.
-            flush_then_terminate(FlushDirection::Remote);
-        }
-        return boost::optional<std::size_t>();
-    }
-    inline boost::optional<std::size_t> splicePipeToRemote()
-    {
-        if (pToRemote_len_ <= 0)
-            return 0ul;
-        auto n = splice(pToRemoteR_.native_handle(), NULL,
-                        remote_socket_.native_handle(), NULL,
-                        splice_pipe_size, SPLICE_F_NONBLOCK);
-        if (n > 0) {
-            pToRemote_len_ -= n;
-            return n;
-        }
-        if (n < 0 && (errno == EINTR || errno == EAGAIN))
-            return 0ul;
-        fmt::print(stderr, "splicePipeToRemote: TERMINATE/{}/\n",
-                   strerror(errno));
-        if (flush_invoked_) {
-            flushing_remote_ = false;
-            terminate_if_flushed();
-        } else {
-            // If we get an error, the socket fd is already closed.
-            // In this case, we do not want to flush this half
-            // of the connection.
-            flush_then_terminate(FlushDirection::Client);
-        }
-        return boost::optional<std::size_t>();
-    }
-
+    inline boost::optional<std::size_t> splicePipeToClient();
+    inline boost::optional<std::size_t> splicePipeToRemote();
     inline void tcp_client_socket_read_stopsplice() {
         assert(pToRemote_len_ == 0);
         pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
@@ -329,36 +278,10 @@ private:
 
     inline void tcp_client_socket_read_again
     (const std::shared_ptr<SocksTCP> &sfd,
-     size_t bytes_xferred, bool splice_ok)
-    {
-        // fmt::print(stderr, "sbx={} sms={}\n", bytes_xferred,
-        //            send_minsplice_size);
-        if (splice_ok && bytes_xferred >= send_minsplice_size) {
-            if (init_pipe(pToRemoteR_, pToRemoteW_)) {
-                // fmt::print(stderr, "client->remote switched to splice\n");
-                tcp_client_socket_read_splice();
-                return;
-            } else
-                fmt::print(stderr, "init_pipe_client failed\n");
-        }
-        tcp_client_socket_read();
-    }
+     size_t bytes_xferred, bool splice_ok);
     inline void tcp_remote_socket_read_again
     (const std::shared_ptr<SocksTCP> &sfd,
-     size_t bytes_xferred, bool splice_ok)
-    {
-        // fmt::print(stderr, "rbx={} rms={}\n", bytes_xferred,
-        //            receive_minsplice_size);
-        if (splice_ok && bytes_xferred >= receive_minsplice_size) {
-            if (init_pipe(pToClientR_, pToClientW_)) {
-                // fmt::print(stderr, "remote->client switched to splice\n");
-                tcp_remote_socket_read_splice();
-                return;
-            } else
-                fmt::print(stderr, "init_pipe_remote failed\n");
-        }
-        tcp_remote_socket_read();
-    }
+     size_t bytes_xferred, bool splice_ok);
 #else
     inline void flush_then_terminate(FlushDirection dir) { terminate(); }
     inline void tcp_remote_socket_read_again
