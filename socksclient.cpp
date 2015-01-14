@@ -252,6 +252,7 @@ static void print_trackers_logentry(const std::string &host, uint16_t port)
         fmt::print("X || T");
     fmt::print("{}, U{} / {})\n", conntracker_tcp.size(), udp_alive_count,
                socks_alive_count);
+    fflush(stdout);
 }
 
 static std::unique_ptr<BindPortAssigner> BPA;
@@ -913,6 +914,7 @@ void SocksInit::dispatch_tcp_connect()
                  fmt::print(" -> {}:{}\n", addr_type_ != AddrDNS ?
                             dst_address_.to_string() : dst_hostname_,
                             dst_port_);
+                 fflush(stdout);
              }
              set_remote_socket_options();
              bool is_socks_v4(is_socks_v4_);
@@ -1171,6 +1173,7 @@ void SocksInit::send_reply(ReplyCode replycode)
                                 addr_type_ != AddrDNS ?
                                 dst_address_.to_string() : dst_hostname_,
                                 dst_port_, replyCodeString[replycode]);
+                     fflush(stdout);
                  }
                  terminate();
              }
@@ -1765,6 +1768,7 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
                                     dst_address_.to_string() : dst_hostname_,
                                     dst_port_,
                                     ec.message());
+                         fflush(stdout);
                      }
                      terminate();
                  }
@@ -1840,6 +1844,7 @@ void SocksUDP::start()
                          if (!ecr) fmt::print("{}", rep.address());
                          else fmt::print("NONE");
                          fmt::print(" (SocksUDP::start) [{}]\n", ec.message());
+                         fflush(stdout);
                      }
                      terminate();
                  }
