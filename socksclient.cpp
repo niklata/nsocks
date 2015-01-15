@@ -1363,11 +1363,16 @@ inline boost::optional<std::size_t> SocksTCP::splicePipeToClient()
     }
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
         return 0ul;
-    logfmt(stderr, "splicePipeToClient: TERMINATE/{}/\n", strerror(errno));
     if (flush_invoked_) {
         flushing_client_ = false;
         terminate_if_flushed();
     } else {
+        boost::system::error_code ecc;
+        auto cep = client_socket_.remote_endpoint(ecc);
+        logfmt(stderr, "splicePipeToClient: {} -> {}:{} [{}] => TERMINATE\n",
+               !ecc? cep.address().to_string() : "NONE",
+               dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
+               dst_port_, strerror(errno));
         // If we get an error, the socket fd is already closed.
         // In this case, we do not want to flush this half
         // of the connection.
@@ -1389,11 +1394,16 @@ inline boost::optional<std::size_t> SocksTCP::splicePipeToRemote()
     }
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
         return 0ul;
-    logfmt(stderr, "splicePipeToRemote: TERMINATE/{}/\n", strerror(errno));
     if (flush_invoked_) {
         flushing_remote_ = false;
         terminate_if_flushed();
     } else {
+        boost::system::error_code ecc;
+        auto cep = client_socket_.remote_endpoint(ecc);
+        logfmt(stderr, "splicePipeToRemote: {} -> {}:{} [{}] => TERMINATE\n",
+               !ecc? cep.address().to_string() : "NONE",
+               dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
+               dst_port_, strerror(errno));
         // If we get an error, the socket fd is already closed.
         // In this case, we do not want to flush this half
         // of the connection.
