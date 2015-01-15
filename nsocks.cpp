@@ -88,7 +88,7 @@ static void process_signals()
     sigaddset(&mask, SIGTTIN);
     sigaddset(&mask, SIGHUP);
     if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
-        fmt::print(stderr, "sigprocmask failed\n");
+        fmt::print("sigprocmask failed\n");
         std::quick_exit(EXIT_FAILURE);
     }
     asio_signal_set.add(SIGINT);
@@ -223,14 +223,14 @@ static po::variables_map fetch_options(int ac, char *av[])
         po::store(po::command_line_parser(ac, av).
                   options(cmdline_options).positional(p).run(), vm);
     } catch (const std::exception& e) {
-        fmt::print(stderr, "{}\n", e.what());
+        fmt::print("{}\n", e.what());
     }
     po::notify(vm);
 
     if (config_file.size()) {
         std::ifstream ifs(config_file.c_str());
         if (!ifs) {
-            fmt::print(stderr, "Could not open config file: {}\n", config_file);
+            fmt::print("Could not open config file: {}\n", config_file);
             std::exit(EXIT_FAILURE);
         }
         po::store(po::parse_config_file(ifs, cfgfile_options), vm);
@@ -284,7 +284,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
             try {
                 mask = boost::lexical_cast<int>(mstr);
             } catch (const boost::bad_lexical_cast&) {
-                fmt::print(stderr, "bad mask in {}: '{}'\n", sname, addr);
+                fmt::print("bad mask in {}: '{}'\n", sname, addr);
                 std::exit(EXIT_FAILURE);
             }
             addr.erase(loc);
@@ -299,7 +299,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
                 mask = std::min(mask, 128);
             dvec.emplace_back(addy, mask);
         } catch (const boost::system::error_code&) {
-            fmt::print(stderr, "bad address in {}: '{}'\n", sname, addr);
+            fmt::print("bad address in {}: '{}'\n", sname, addr);
             std::exit(EXIT_FAILURE);
         }
     }
@@ -335,7 +335,7 @@ static void process_options(int ac, char *av[])
     if (vm.count("user")) {
         auto t = vm["user"].as<std::string>();
         if (nk_uidgidbyname(t.c_str(), &nsocks_uid, &nsocks_gid)) {
-            fmt::print(stderr, "invalid user '{}' specified\n", t.c_str());
+            fmt::print("invalid user '{}' specified\n", t.c_str());
             std::exit(EXIT_FAILURE);
         }
     }
@@ -410,7 +410,7 @@ static void process_options(int ac, char *av[])
 
     if (gflags_detach) {
         if (daemon(0,0)) {
-            fmt::print(stderr, "detaching fork failed\n");
+            fmt::print("detaching fork failed\n");
             std::exit(EXIT_FAILURE);
         }
     }

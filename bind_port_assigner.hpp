@@ -64,7 +64,7 @@ public:
     {
         std::lock_guard<std::mutex> wl(lock_);
         if (port < start_port_ || port > end_port_) {
-            fmt::print(stderr, "BindPortAssigner::release_port: port={} out of range\n", port);
+            fmt::print("BindPortAssigner::release_port: port={} out of range\n", port);
             return;
         }
         ports_used_[port - start_port_] = 0;
