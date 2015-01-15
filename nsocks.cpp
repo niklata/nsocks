@@ -1,6 +1,6 @@
 /* nsocks.c - socks5 server
  *
- * (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2015 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -239,13 +239,13 @@ static po::variables_map fetch_options(int ac, char *av[])
 
     if (vm.count("help")) {
         fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
-                  "Copyright (c) 2013-2014 Nicholas J. Kain\n"
+                  "Copyright (c) 2013-2015 Nicholas J. Kain\n"
                   "{} [options] addresses...\n{}\n", av[0], cmdline_options);
         std::exit(EXIT_FAILURE);
     }
     if (vm.count("version")) {
         fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
-            "Copyright (c) 2013-2014 Nicholas J. Kain\n"
+            "Copyright (c) 2013-2015 Nicholas J. Kain\n"
             "All rights reserved.\n\n"
             "Redistribution and use in source and binary forms, with or without\n"
             "modification, are permitted provided that the following conditions are met:\n\n"

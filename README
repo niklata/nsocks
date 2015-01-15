@@ -1,11 +1,11 @@
 REQUIREMENTS
 ------------
 
-Linux kernel (tested: 3.15)
-C99 C compiler (tested: gcc 4.8.3)
-C++11 compiler (tested: gcc 4.8.3)
-CMake (tested: 2.8.12.2)
-Boost (tested: 1.55.0)
+Linux kernel (tested: 3.15+)
+C99 C compiler (tested: gcc 4.8.3+, clang 3.4+)
+C++11 compiler (tested: gcc 4.8.3+, clang 3.4+)
+CMake (tested: 2.8.12.2+)
+Boost (tested: 1.55.0+)
 
 INTRODUCTION
 ------------
@@ -79,7 +79,7 @@ be disabled, too.
 
 LICENSE
 -------
- (c) 2013-2014 Nicholas J. Kain <njkain at gmail dot com>
+ (c) 2013-2015 Nicholas J. Kain <njkain at gmail dot com>
  All rights reserved.
 
  Redistribution and use in source and binary forms, with or without
