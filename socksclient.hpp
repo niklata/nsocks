@@ -146,7 +146,8 @@ private:
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     void kick_tcp_resolver_timer();
-    void dispatch_connrq();
+    void dns_lookup();
+    void dispatch_connrq(bool did_dns = false);
 
     void dispatch_tcp_connect();
 

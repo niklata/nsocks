@@ -761,91 +761,102 @@ void SocksInit::kick_tcp_resolver_timer()
 }
 
 enum class DNSType { None, V4, V6 };
-void SocksInit::dispatch_connrq()
+void SocksInit::dns_lookup()
 {
-    if (dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
-        ba::ip::tcp::resolver::query query
-            (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
-        auto sfd = shared_from_this();
-        try {
-            std::lock_guard<std::mutex> wl(tcp_resolver_lock);
-            if (!tcp_resolver) {
-                tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
-                    (io_service);
-                kick_tcp_resolver_timer();
-            }
-            tcp_resolver->async_resolve
-                (query, strand_.wrap(
-                 [this, sfd](const boost::system::error_code &ec,
-                             ba::ip::tcp::resolver::iterator it)
-                 {
-                     if (ec) {
-                         send_reply(RplHostUnreach);
-                         return;
-                     }
-                     std::size_t cv6(0), cv4(0);
-                     ba::ip::tcp::resolver::iterator rie, oit(it);
-                     DNSType dt(DNSType::None);
-                     for (; it != rie; ++it) {
-                         if (it->endpoint().address().is_v4()) ++cv4;
-                         else ++cv6;
-                     }
-                     if (cv4 && cv6) {
-                         if (g_prefer_ipv4 || g_disable_ipv6) dt = DNSType::V4;
-                         else dt = DNSType::V6;
-                     } else {
-                         if (!g_disable_ipv6 && cv6) dt = DNSType::V6;
-                         else if (cv4) dt = DNSType::V4;
-                         else {
-                             send_reply(RplHostUnreach);
-                             return;
-                         }
-                     }
-                     size_t i(0);
-                     switch (dt) {
-                         case DNSType::V4: {
-                             size_t c = g_random_prng() % cv4;
-                             for (it = oit; it != rie; ++it) {
-                                 if (it->endpoint().address().is_v4()) {
-                                     if (i == c) {
-                                         dst_address_ =
-                                             it->endpoint().address();
-                                         break;
-                                     }
-                                     ++i;
-                                 }
-                             }
-                             break;
-                         }
-                         case DNSType::V6: {
-                             size_t c = g_random_prng() % cv6;
-                             for (it = oit; it != rie; ++it) {
-                                 if (!it->endpoint().address().is_v4()) {
-                                     if (i == c) {
-                                         dst_address_ =
-                                             it->endpoint().address();
-                                         break;
-                                     }
-                                     ++i;
-                                 }
-                             }
-                             break;
-                         }
-                         case DNSType::None:
-                             send_reply(RplHostUnreach);
-                             return;
-                     }
-                     // Shouldn't trigger, but be safe.
-                     if (g_disable_ipv6 && dst_address_.is_v6()) {
-                         send_reply(RplHostUnreach);
-                         return;
-                     }
-                     dispatch_connrq();
-                 }));
-            ++tcp_resolver_timer_seq;
-        } catch (const std::exception &) {
-            send_reply(RplHostUnreach);
+    ba::ip::tcp::resolver::query query
+        (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
+    auto sfd = shared_from_this();
+    try {
+        std::lock_guard<std::mutex> wl(tcp_resolver_lock);
+        if (!tcp_resolver) {
+            tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
+                (io_service);
+            kick_tcp_resolver_timer();
         }
+        tcp_resolver->async_resolve
+            (query, strand_.wrap(
+             [this, sfd](const boost::system::error_code &ec,
+                         ba::ip::tcp::resolver::iterator it)
+             {
+                 if (ec) {
+                     send_reply(RplHostUnreach);
+                     return;
+                 }
+                 std::size_t cv6(0), cv4(0);
+                 ba::ip::tcp::resolver::iterator rie, oit(it);
+                 DNSType dt(DNSType::None);
+                 for (; it != rie; ++it) {
+                     if (it->endpoint().address().is_v4()) ++cv4;
+                     else ++cv6;
+                 }
+                 if (cv4 && cv6) {
+                     if (g_prefer_ipv4 || g_disable_ipv6) dt = DNSType::V4;
+                     else dt = DNSType::V6;
+                 } else {
+                     if (!g_disable_ipv6 && cv6) dt = DNSType::V6;
+                     else if (cv4) dt = DNSType::V4;
+                     else {
+                         send_reply(RplHostUnreach);
+                         return;
+                     }
+                 }
+                 size_t i(0);
+                 switch (dt) {
+                     case DNSType::V4: {
+                         size_t c = g_random_prng() % cv4;
+                         for (it = oit; it != rie; ++it) {
+                             if (it->endpoint().address().is_v4()) {
+                                 if (i == c) {
+                                     dst_address_ =
+                                         it->endpoint().address();
+                                     break;
+                                 }
+                                 ++i;
+                             }
+                         }
+                         break;
+                     }
+                     case DNSType::V6: {
+                         size_t c = g_random_prng() % cv6;
+                         for (it = oit; it != rie; ++it) {
+                             if (!it->endpoint().address().is_v4()) {
+                                 if (i == c) {
+                                     dst_address_ =
+                                         it->endpoint().address();
+                                     break;
+                                 }
+                                 ++i;
+                             }
+                         }
+                         break;
+                     }
+                     case DNSType::None:
+                         send_reply(RplHostUnreach);
+                         return;
+                 }
+                 // Shouldn't trigger, but be safe.
+                 if (g_disable_ipv6 && dst_address_.is_v6()) {
+                     send_reply(RplHostUnreach);
+                     return;
+                 }
+                 // It's possible for the resolver to return an address
+                 // that is unspecified after lookup, eg, host file blocking.
+                 if (dst_address_.is_unspecified()) {
+                     send_reply(RplHostUnreach);
+                     return;
+                 }
+                 dispatch_connrq(true);
+             }));
+        ++tcp_resolver_timer_seq;
+    } catch (const std::exception &) {
+        send_reply(RplHostUnreach);
+    }
+}
+
+void SocksInit::dispatch_connrq(bool did_dns)
+{
+    if (!did_dns && dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
+        dns_lookup();
         return;
     }
     // The name has been resolved to an address or we have an address.

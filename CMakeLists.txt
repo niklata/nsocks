@@ -134,5 +134,5 @@ set(NSOCKS_SRCS
 
 add_executable(nsocks ${NSOCKS_SRCS})
 target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ${Boost_LIBRARIES}
-                             ncmlib cppformat)
+                      ncmlib cppformat)
 
