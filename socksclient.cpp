@@ -760,7 +760,34 @@ void SocksInit::kick_tcp_resolver_timer()
         });
 }
 
-enum class DNSType { None, V4, V6 };
+bool SocksInit::dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resolver::iterator it,
+                                   const size_t cv4, const size_t cv6)
+{
+    static const ba::ip::tcp::resolver::iterator rie;
+    if (addrtype == DNSType::None)
+        return false;
+    size_t choicenum = g_random_prng();
+    switch (addrtype) {
+    case DNSType::V4: choicenum %= cv4; break;
+    case DNSType::V6: choicenum %= cv6; break;
+    case DNSType::Any: choicenum %= cv4 + cv6; break;
+    default: return false;
+    }
+    size_t i(0);
+    for (; it != rie; ++it) {
+        if (addrtype == DNSType::V4 && !it->endpoint().address().is_v4())
+            continue;
+        if (addrtype == DNSType::V6 && it->endpoint().address().is_v4())
+            continue;
+        if (i == choicenum) {
+            dst_address_ = it->endpoint().address();
+            return true;
+        }
+        ++i;
+    }
+    return false;
+}
+
 void SocksInit::dns_lookup()
 {
     ba::ip::tcp::resolver::query query
@@ -783,56 +810,23 @@ void SocksInit::dns_lookup()
                      return;
                  }
                  std::size_t cv6(0), cv4(0);
-                 ba::ip::tcp::resolver::iterator rie, oit(it);
-                 DNSType dt(DNSType::None);
+                 static const ba::ip::tcp::resolver::iterator rie;
+                 ba::ip::tcp::resolver::iterator oit(it);
                  for (; it != rie; ++it) {
                      if (it->endpoint().address().is_v4()) ++cv4;
                      else ++cv6;
                  }
-                 if (cv4 && cv6) {
-                     if (g_prefer_ipv4 || g_disable_ipv6) dt = DNSType::V4;
-                     else dt = DNSType::V6;
+                 bool got_addr;
+                 if (g_prefer_ipv4 || g_disable_ipv6) {
+                     got_addr = dns_choose_address(DNSType::V4, oit, cv4, cv6);
+                     if (!got_addr && !g_disable_ipv6)
+                         got_addr = dns_choose_address(DNSType::V6, oit, cv4, cv6);
                  } else {
-                     if (!g_disable_ipv6 && cv6) dt = DNSType::V6;
-                     else if (cv4) dt = DNSType::V4;
-                     else {
-                         send_reply(RplHostUnreach);
-                         return;
-                     }
+                     got_addr = dns_choose_address(DNSType::Any, oit, cv4, cv6);
                  }
-                 size_t i(0);
-                 switch (dt) {
-                     case DNSType::V4: {
-                         size_t c = g_random_prng() % cv4;
-                         for (it = oit; it != rie; ++it) {
-                             if (it->endpoint().address().is_v4()) {
-                                 if (i == c) {
-                                     dst_address_ =
-                                         it->endpoint().address();
-                                     break;
-                                 }
-                                 ++i;
-                             }
-                         }
-                         break;
-                     }
-                     case DNSType::V6: {
-                         size_t c = g_random_prng() % cv6;
-                         for (it = oit; it != rie; ++it) {
-                             if (!it->endpoint().address().is_v4()) {
-                                 if (i == c) {
-                                     dst_address_ =
-                                         it->endpoint().address();
-                                     break;
-                                 }
-                                 ++i;
-                             }
-                         }
-                         break;
-                     }
-                     case DNSType::None:
-                         send_reply(RplHostUnreach);
-                         return;
+                 if (!got_addr) {
+                     send_reply(RplHostUnreach);
+                     return;
                  }
                  // Shouldn't trigger, but be safe.
                  if (g_disable_ipv6 && dst_address_.is_v6()) {

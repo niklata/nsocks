@@ -146,6 +146,9 @@ private:
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     void kick_tcp_resolver_timer();
+    enum class DNSType { None, V4, V6, Any };
+    bool dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resolver::iterator it,
+                            const size_t cv4, const size_t cv6);
     void dns_lookup();
     void dispatch_connrq(bool did_dns = false);
 
