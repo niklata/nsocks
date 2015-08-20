@@ -766,13 +766,12 @@ bool SocksInit::dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resol
     static const ba::ip::tcp::resolver::iterator rie;
     if (addrtype == DNSType::None)
         return false;
-    size_t choicenum = g_random_prng();
-    switch (addrtype) {
-    case DNSType::V4: choicenum %= cv4; break;
-    case DNSType::V6: choicenum %= cv6; break;
-    case DNSType::Any: choicenum %= cv4 + cv6; break;
-    default: return false;
-    }
+    size_t total_choices(addrtype == DNSType::Any ? cv4 + cv6
+                                                  : (addrtype == DNSType::V6 ? cv6
+                                                                             : cv4));
+    if (total_choices == 0)
+        return false;
+    size_t choicenum = g_random_prng() % total_choices;
     size_t i(0);
     for (; it != rie; ++it) {
         if (addrtype == DNSType::V4 && !it->endpoint().address().is_v4())
