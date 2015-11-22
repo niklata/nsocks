@@ -388,6 +388,7 @@ SocksInit::SocksInit(ba::io_service &io_service,
     if (g_verbose_logs)
         ++socks_alive_count;
     client_socket_.non_blocking(true);
+    client_socket_.set_option(boost::asio::ip::tcp::no_delay(true));
     client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
 }
 

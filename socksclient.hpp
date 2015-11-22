@@ -139,6 +139,7 @@ private:
     inline void set_remote_socket_options()
     {
         remote_socket_.non_blocking(true);
+        remote_socket_.set_option(boost::asio::ip::tcp::no_delay(true));
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
     }
 
