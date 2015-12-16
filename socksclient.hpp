@@ -141,6 +141,10 @@ private:
         remote_socket_.non_blocking(true);
         remote_socket_.set_option(boost::asio::ip::tcp::no_delay(true));
         remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+#ifdef TCP_QUICKACK
+        const boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
+        remote_socket_.set_option(quickack);
+#endif
     }
 
     void untrack();
