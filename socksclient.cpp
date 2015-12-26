@@ -142,9 +142,9 @@ void init_prng()
 
 void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 {
-    conntracker_hs = nk::make_unique<ephTrackerVec<SocksInit>>
+    conntracker_hs = std::make_unique<ephTrackerVec<SocksInit>>
         (io_service, hs_secs);
-    conntracker_bindlisten = nk::make_unique<ephTrackerList<SocksInit>>
+    conntracker_bindlisten = std::make_unique<ephTrackerList<SocksInit>>
         (io_service, bindlisten_secs);
 }
 
@@ -264,7 +264,7 @@ void init_bind_port_assigner(uint16_t lowport, uint16_t highport)
     }
     if (lowport > highport)
         std::swap(lowport, highport);
-    BPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+    BPA = std::make_unique<BindPortAssigner>(lowport, highport);
 }
 
 void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
@@ -281,7 +281,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     }
     if (lowport > highport)
         std::swap(lowport, highport);
-    UPA = nk::make_unique<BindPortAssigner>(lowport, highport);
+    UPA = std::make_unique<BindPortAssigner>(lowport, highport);
 }
 
 static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
@@ -745,7 +745,7 @@ void SocksInit::kick_tcp_resolver_timer()
 {
     if (!tcp_resolver_timer)
         tcp_resolver_timer =
-            nk::make_unique<boost::asio::deadline_timer>(io_service);
+            std::make_unique<boost::asio::deadline_timer>(io_service);
     tcp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = tcp_resolver_timer_seq;
@@ -800,7 +800,7 @@ void SocksInit::dns_lookup()
     try {
         std::lock_guard<std::mutex> wl(tcp_resolver_lock);
         if (!tcp_resolver) {
-            tcp_resolver = nk::make_unique<boost::asio::ip::tcp::resolver>
+            tcp_resolver = std::make_unique<boost::asio::ip::tcp::resolver>
                 (io_service);
             kick_tcp_resolver_timer();
         }
@@ -980,7 +980,7 @@ bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
             break;
         }
         try {
-            bound_ = nk::make_unique<BoundSocket>(io_service, ep);
+            bound_ = std::make_unique<BoundSocket>(io_service, ep);
         } catch (const std::runtime_error &e) {
             logfmt("fatal error creating BIND socket: {}\n", e.what());
             break;
@@ -1908,7 +1908,7 @@ void SocksUDP::udp_client_socket_read()
                  auto fragn = inbuf_[2];
                  if (fragn != '\0') {
                      if (!frags_)
-                         frags_ = nk::make_unique<UDPFrags>(io_service);
+                         frags_ = std::make_unique<UDPFrags>(io_service);
                      if (fragn > 127 && !frags_->buf_.size())
                          fragn = '\0';
                  }
@@ -2039,7 +2039,7 @@ void SocksUDP::kick_udp_resolver_timer()
 {
     if (!udp_resolver_timer)
         udp_resolver_timer =
-            nk::make_unique<boost::asio::deadline_timer>(io_service);
+            std::make_unique<boost::asio::deadline_timer>(io_service);
     udp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = udp_resolver_timer_seq;
@@ -2067,7 +2067,7 @@ void SocksUDP::udp_dns_lookup(const std::string &dnsname)
     try {
         std::lock_guard<std::mutex> wl(udp_resolver_lock);
         if (!udp_resolver) {
-            udp_resolver = nk::make_unique<boost::asio::ip::udp::resolver>
+            udp_resolver = std::make_unique<boost::asio::ip::udp::resolver>
                 (io_service);
             kick_udp_resolver_timer();
         }

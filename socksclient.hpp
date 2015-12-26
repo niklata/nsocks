@@ -40,8 +40,6 @@
 #include <boost/optional.hpp>
 #include <nk/format.hpp>
 
-#include "make_unique.hpp"
-
 #ifdef USE_SPLICE
 extern void pipe_close_raw(std::size_t p_len,
                            boost::asio::posix::stream_descriptor &sa,
