@@ -1357,7 +1357,7 @@ inline void SocksTCP::splicePipeToClient_err()
 inline void SocksTCP::splicePipeToRemote_err()
 {
     boost::system::error_code ecc;
-    auto cep = client_socket_.remote_endpoint(ecc);
+    auto cep = remote_socket_.remote_endpoint(ecc);
     logfmt("splicePipeToRemote_err: {} -> {}:{} [{}] => TERMINATE\n",
            !ecc? cep.address().to_string() : "NONE",
            dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
