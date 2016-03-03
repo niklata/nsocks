@@ -51,6 +51,7 @@
 #include "asio_addrcmp.hpp"
 
 #define MAX_BIND_TRIES 10
+#define MAX_PIPE_FLUSH_TRIES 10
 #define UDP_BUFSIZE 1536
 
 namespace ba = boost::asio;
@@ -1278,7 +1279,7 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         terminate_if_flushed();
         return;
     }
-    flush_invoked_ = true;
+    flush_invoked_ = true; // If true, then all receives are shut down.
     boost::system::error_code ec;
     auto cso = client_socket_.is_open();
     auto rso = remote_socket_.is_open();
@@ -1294,13 +1295,13 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         && cso && pToClient_len_ > 0) {
         flushing_client_ = true;
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToClient(); });
+        strand_.post([this, sfd] { doFlushPipeToClient(0); });
     }
     if (!flushing_remote_ && dir != FlushDirection::Client
         && rso && pToRemote_len_ > 0) {
         flushing_remote_ = true;
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToRemote(); });
+        strand_.post([this, sfd] { doFlushPipeToRemote(0); });
     }
     terminate_if_flushed();
 }
@@ -1339,71 +1340,69 @@ inline void SocksTCP::tcp_remote_socket_read_again
     tcp_remote_socket_read();
 }
 
-inline boost::optional<std::size_t> SocksTCP::splicePipeToClient()
+inline void SocksTCP::splicePipeToClient_err()
+{
+    boost::system::error_code ecc;
+    auto cep = client_socket_.remote_endpoint(ecc);
+    logfmt("splicePipeToClient_err: {} -> {}:{} [{}] => TERMINATE\n",
+           !ecc? cep.address().to_string() : "NONE",
+           dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
+           dst_port_, strerror(errno));
+    // If we get an error, the socket fd is already closed.
+    // In this case, we do not want to flush this half
+    // of the connection.
+    flush_then_terminate(FlushDirection::Remote);
+}
+
+inline void SocksTCP::splicePipeToRemote_err()
+{
+    boost::system::error_code ecc;
+    auto cep = client_socket_.remote_endpoint(ecc);
+    logfmt("splicePipeToRemote_err: {} -> {}:{} [{}] => TERMINATE\n",
+           !ecc? cep.address().to_string() : "NONE",
+           dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
+           dst_port_, strerror(errno));
+    // If we get an error, the socket fd is already closed.
+    // In this case, we do not want to flush this half
+    // of the connection.
+    flush_then_terminate(FlushDirection::Client);
+}
+
+inline int SocksTCP::splicePipeToClient()
 {
     if (pToClient_len_ <= 0)
-        return 0ul;
+        return 0;
     auto n = splice(pToClientR_.native_handle(), NULL,
                     client_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
     if (n > 0) {
         pToClient_len_ -= n;
-        return n;
+        return 0;
     }
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
-        return 0ul;
-    if (flush_invoked_) {
-        flushing_client_ = false;
-        terminate_if_flushed();
-    } else {
-        boost::system::error_code ecc;
-        auto cep = client_socket_.remote_endpoint(ecc);
-        logfmt("splicePipeToClient: {} -> {}:{} [{}] => TERMINATE\n",
-               !ecc? cep.address().to_string() : "NONE",
-               dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
-               dst_port_, strerror(errno));
-        // If we get an error, the socket fd is already closed.
-        // In this case, we do not want to flush this half
-        // of the connection.
-        flush_then_terminate(FlushDirection::Remote);
-    }
-    return boost::optional<std::size_t>();
+        return -1;
+    return -2;
 }
 
-inline boost::optional<std::size_t> SocksTCP::splicePipeToRemote()
+inline int SocksTCP::splicePipeToRemote()
 {
     if (pToRemote_len_ <= 0)
-        return 0ul;
+        return 0;
     auto n = splice(pToRemoteR_.native_handle(), NULL,
                     remote_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
     if (n > 0) {
         pToRemote_len_ -= n;
-        return n;
+        return 0;
     }
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
-        return 0ul;
-    if (flush_invoked_) {
-        flushing_remote_ = false;
-        terminate_if_flushed();
-    } else {
-        boost::system::error_code ecc;
-        auto cep = client_socket_.remote_endpoint(ecc);
-        logfmt("splicePipeToRemote: {} -> {}:{} [{}] => TERMINATE\n",
-               !ecc? cep.address().to_string() : "NONE",
-               dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
-               dst_port_, strerror(errno));
-        // If we get an error, the socket fd is already closed.
-        // In this case, we do not want to flush this half
-        // of the connection.
-        flush_then_terminate(FlushDirection::Client);
-    }
-    return boost::optional<std::size_t>();
+        return -1;
+    return -2;
 }
 
 void SocksTCP::tcp_client_socket_write_splice(int tries)
 {
-    tries += 1;
+    ++tries;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
@@ -1418,8 +1417,10 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
                  }
                  return;
              }
-             if (!splicePipeToRemote())
+             if (splicePipeToRemote() < 0) {
+                 splicePipeToRemote_err();
                  return;
+             }
              if (pToRemote_len_ > 0) {
                  tcp_client_socket_write_splice(tries);
                  return;
@@ -1433,7 +1434,7 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
 
 void SocksTCP::tcp_remote_socket_write_splice(int tries)
 {
-    tries += 1;
+    ++tries;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
@@ -1448,8 +1449,10 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
                  }
                  return;
              }
-             if (!splicePipeToClient())
+             if (splicePipeToClient() < 0) {
+                 splicePipeToClient_err();
                  return;
+             }
              if (pToClient_len_ > 0) {
                  tcp_remote_socket_write_splice(tries);
                  return;
@@ -1500,8 +1503,10 @@ void SocksTCP::tcp_client_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (!splicePipeToRemote())
+             if (splicePipeToRemote() < 0) {
+                 splicePipeToRemote_err();
                  return;
+             }
              if (pToRemote_len_ > 0)
                  tcp_client_socket_write_splice(0);
              else
@@ -1548,8 +1553,10 @@ void SocksTCP::tcp_remote_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (!splicePipeToClient())
+             if (splicePipeToClient() < 0) {
+                 splicePipeToClient_err();
                  return;
+             }
              if (pToClient_len_ > 0)
                  tcp_remote_socket_write_splice(0);
              else
@@ -1557,59 +1564,71 @@ void SocksTCP::tcp_remote_socket_read_splice()
          }));
 }
 
-void SocksTCP::doFlushPipeToRemote()
+void SocksTCP::doFlushPipeToRemote(int tries)
 {
+    ++tries;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                             std::size_t bytes_xferred)
+         [this, sfd, tries](const boost::system::error_code &ec,
+                            std::size_t bytes_xferred)
          {
+             int spc;
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("doFlushPipeToRemote error: {}\n",
-                            boost::system::system_error(ec).what());
-                     flushing_remote_ = false;
-                     terminate_if_flushed();
+                 if (ec == ba::error::operation_aborted)
+                     return;
+                 logfmt("doFlushPipeToRemote error: {}\n",
+                        boost::system::system_error(ec).what());
+                 goto flush_done;
+             }
+             if ((spc = splicePipeToRemote()) < 0) {
+                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES) {
+                     doFlushPipeToRemote(tries);
+                     return;
                  }
-                 return;
+                 goto flush_done;
              }
-             if (!splicePipeToRemote())
-                 return;
-             if (pToRemote_len_ == 0) {
-                 flushing_remote_ = false;
-                 terminate_if_flushed();
-                 return;
-             }
-             doFlushPipeToRemote();
+             if (pToRemote_len_ == 0)
+                 goto flush_done;
+             doFlushPipeToRemote(tries);
+             return;
+flush_done:
+             flushing_remote_ = false;
+             terminate_if_flushed();
          }));
 }
 
-void SocksTCP::doFlushPipeToClient()
+void SocksTCP::doFlushPipeToClient(int tries)
 {
+    ++tries;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                             std::size_t bytes_xferred)
+         [this, sfd, tries](const boost::system::error_code &ec,
+                            std::size_t bytes_xferred)
          {
+             int spc;
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("doFlushPipeToClient error: {}\n",
-                            boost::system::system_error(ec).what());
-                     flushing_client_ = false;
-                     terminate_if_flushed();
+                 if (ec == ba::error::operation_aborted)
+                     return;
+                 logfmt("doFlushPipeToClient error: {}\n",
+                        boost::system::system_error(ec).what());
+                 goto flush_done;
+             }
+             if ((spc = splicePipeToClient()) < 0) {
+                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES) {
+                     doFlushPipeToClient(tries);
+                     return;
                  }
-                 return;
+                 goto flush_done;
              }
-             if (!splicePipeToClient())
-                 return;
-             if (pToClient_len_ == 0) {
-                 flushing_client_ = false;
-                 terminate_if_flushed();
-                 return;
-             }
-             doFlushPipeToClient();
+             if (pToClient_len_ == 0)
+                 goto flush_done;
+             doFlushPipeToClient(tries);
+             return;
+flush_done:
+             flushing_client_ = false;
+             terminate_if_flushed();
          }));
 }
 #endif

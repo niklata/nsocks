@@ -261,8 +261,8 @@ private:
     void tcp_remote_socket_write_splice(int tries);
     void tcp_client_socket_read_splice();
     void tcp_remote_socket_read_splice();
-    void doFlushPipeToRemote();
-    void doFlushPipeToClient();
+    void doFlushPipeToRemote(int tries);
+    void doFlushPipeToClient(int tries);
 private:
 
     inline void terminate_if_flushed() {
@@ -270,8 +270,10 @@ private:
             terminate();
     }
 
-    inline boost::optional<std::size_t> splicePipeToClient();
-    inline boost::optional<std::size_t> splicePipeToRemote();
+    inline int splicePipeToClient();
+    inline int splicePipeToRemote();
+    inline void splicePipeToClient_err();
+    inline void splicePipeToRemote_err();
     inline void tcp_client_socket_read_stopsplice() {
         assert(pToRemote_len_ == 0);
         pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
