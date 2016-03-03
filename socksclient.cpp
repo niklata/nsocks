@@ -1417,7 +1417,7 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
                  }
                  return;
              }
-             if (splicePipeToRemote() < 0) {
+             if (splicePipeToRemote() < -1) {
                  splicePipeToRemote_err();
                  return;
              }
@@ -1449,7 +1449,7 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
                  }
                  return;
              }
-             if (splicePipeToClient() < 0) {
+             if (splicePipeToClient() < -1) {
                  splicePipeToClient_err();
                  return;
              }
@@ -1503,7 +1503,7 @@ void SocksTCP::tcp_client_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (splicePipeToRemote() < 0) {
+             if (splicePipeToRemote() < -1) {
                  splicePipeToRemote_err();
                  return;
              }
@@ -1553,7 +1553,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (splicePipeToClient() < 0) {
+             if (splicePipeToClient() < -1) {
                  splicePipeToClient_err();
                  return;
              }
