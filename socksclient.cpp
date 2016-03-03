@@ -1411,9 +1411,9 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     logfmt("error writing to client socket: {}\n",
+                     logfmt("error writing to remote socket: {}\n",
                             boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Remote);
+                     flush_then_terminate(FlushDirection::Client);
                  }
                  return;
              }
@@ -1443,9 +1443,9 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
-                     logfmt("error writing to remote socket: {}\n",
+                     logfmt("error writing to client socket: {}\n",
                             boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Client);
+                     flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
              }
