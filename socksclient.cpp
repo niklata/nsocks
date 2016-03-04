@@ -101,10 +101,6 @@ static std::unique_ptr<boost::asio::ip::udp::resolver> udp_resolver;
 static std::unique_ptr<boost::asio::deadline_timer> udp_resolver_timer;
 static std::size_t udp_resolver_timer_seq;
 
-#include "bind_port_assigner.hpp"
-
-static void print_trackers_logentry(const std::string &host, uint16_t port);
-
 static std::mutex print_lock;
 template <typename... Args>
 static void logfmt(Args&&... args)
@@ -113,6 +109,10 @@ static void logfmt(Args&&... args)
     fmt::print(std::forward<Args>(args)...);
     std::fflush(stdout);
 }
+
+#include "bind_port_assigner.hpp"
+
+static void print_trackers_logentry(const std::string &host, uint16_t port);
 
 static std::unique_ptr<ephTrackerVec<SocksInit>> conntracker_hs;
 static std::unique_ptr<ephTrackerList<SocksInit>> conntracker_bindlisten;
