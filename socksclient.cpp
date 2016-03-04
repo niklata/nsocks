@@ -1292,14 +1292,12 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
     if (rso)
         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    if (!flushing_client_ && dir != FlushDirection::Remote
-        && cso && pToClient_len_ > 0) {
+    if (!flushing_client_ && dir == FlushDirection::Client && cso && pToClient_len_ > 0) {
         flushing_client_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToClient(0); });
     }
-    if (!flushing_remote_ && dir != FlushDirection::Client
-        && rso && pToRemote_len_ > 0) {
+    if (!flushing_remote_ && dir == FlushDirection::Remote && rso && pToRemote_len_ > 0) {
         flushing_remote_ = true;
         auto sfd = shared_from_this();
         strand_.post([this, sfd] { doFlushPipeToRemote(0); });
