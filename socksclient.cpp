@@ -1490,6 +1490,10 @@ void SocksTCP::tcp_client_socket_read_splice()
                  // the pipe write would block for another reason.
                  else if (spliced < 0 && errno == EAGAIN)
                      tcp_client_socket_write_splice(0);
+                 // Splicing from a client_socket_ that has been shutdown()'ed
+                 // will fail with EBADF.
+                 else if (spliced < 0 && errno  == EBADF && flush_invoked_)
+                     flush_then_terminate(FlushDirection::Remote);
                  else {
                      if (spliced < 0)
                          logfmt("tcp_client_socket_read_splice() TERMINATE: {}\n",
@@ -1540,6 +1544,10 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  // the pipe write would block for another reason.
                  else if (spliced < 0 && errno == EAGAIN)
                      tcp_remote_socket_write_splice(0);
+                 // Splicing from a remote_socket_ that has been shutdown()'ed
+                 // will fail with EBADF.
+                 else if (spliced < 0 && errno  == EBADF && flush_invoked_)
+                     flush_then_terminate(FlushDirection::Client);
                  else {
                      if (spliced < 0)
                          logfmt("tcp_remote_socket_read_splice() TERMINATE: {}\n",
