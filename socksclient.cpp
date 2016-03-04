@@ -1472,36 +1472,12 @@ void SocksTCP::tcp_client_socket_read_splice()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("EC-C: {}\n",
-                            boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Remote);
-                 }
-                 return;
-             }
-             auto spliced = splice(client_socket_.native_handle(), NULL,
+             ssize_t spliced;
+             if (ec) goto ec_err;
+             if ((spliced = splice(client_socket_.native_handle(), NULL,
                                    pToRemoteW_.native_handle(), NULL,
-                                   splice_pipe_size, SPLICE_F_NONBLOCK);
-             if (spliced <= 0) { // 0 is EOF
-                 if (spliced < 0 && errno == EINTR)
-                     tcp_client_socket_read_splice();
-                 // EAGAIN can mean the pipe is full, or it can mean that
-                 // the pipe write would block for another reason.
-                 else if (spliced < 0 && errno == EAGAIN)
-                     tcp_client_socket_write_splice(0);
-                 // Splicing from a client_socket_ that has been shutdown()'ed
-                 // will fail with EBADF.
-                 else if (spliced < 0 && errno  == EBADF && flush_invoked_)
-                     flush_then_terminate(FlushDirection::Remote);
-                 else {
-                     if (spliced < 0)
-                         logfmt("tcp_client_socket_read_splice() TERMINATE: {}\n",
-                                strerror(errno));
-                     flush_then_terminate(FlushDirection::Remote);
-                 }
-                 return;
-             }
+                                   splice_pipe_size, SPLICE_F_NONBLOCK)) <= 0) // 0 is EOF
+                 goto splice_err;
              pToRemote_len_ += spliced;
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
@@ -1514,6 +1490,36 @@ void SocksTCP::tcp_client_socket_read_splice()
                  tcp_client_socket_write_splice(0);
              else
                  tcp_client_socket_read_splice();
+             return;
+splice_err:
+             if (spliced == 0) {
+                 flush_then_terminate(FlushDirection::Remote);
+                 return;
+             }
+             switch (errno) {
+                 case EINTR: tcp_client_socket_read_splice(); return;
+                 // EAGAIN can mean the pipe is full, or it can mean that
+                 // the pipe write would block for another reason.
+                 case EAGAIN: tcp_client_socket_write_splice(0); return;
+                 case EBADF:
+                     // Splicing from a client_socket_ that has been shutdown()'ed
+                     // will fail with EBADF.
+                     if (flush_invoked_) {
+                         flush_then_terminate(FlushDirection::Remote);
+                         return;
+                     }
+                 default: break;
+             }
+             logfmt("tcp_client_socket_read_splice() TERMINATE: {}\n",
+                    strerror(errno));
+             flush_then_terminate(FlushDirection::Remote);
+             return;
+ec_err:
+             if (ec != ba::error::operation_aborted) {
+                 logfmt("EC-C: {}\n",
+                        boost::system::system_error(ec).what());
+                 flush_then_terminate(FlushDirection::Remote);
+             }
          }));
 }
 
@@ -1526,36 +1532,12 @@ void SocksTCP::tcp_remote_socket_read_splice()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("EC-R: {}\n",
-                            boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Client);
-                 }
-                 return;
-             }
-             auto spliced = splice(remote_socket_.native_handle(), NULL,
+             ssize_t spliced;
+             if (ec) goto ec_err;
+             if ((spliced = splice(remote_socket_.native_handle(), NULL,
                                    pToClientW_.native_handle(), NULL,
-                                   splice_pipe_size, SPLICE_F_NONBLOCK);
-             if (spliced <= 0) { // 0 is EOF
-                 if (spliced < 0 && errno == EINTR)
-                     tcp_remote_socket_read_splice();
-                 // EAGAIN can mean the pipe is full, or it can mean that
-                 // the pipe write would block for another reason.
-                 else if (spliced < 0 && errno == EAGAIN)
-                     tcp_remote_socket_write_splice(0);
-                 // Splicing from a remote_socket_ that has been shutdown()'ed
-                 // will fail with EBADF.
-                 else if (spliced < 0 && errno  == EBADF && flush_invoked_)
-                     flush_then_terminate(FlushDirection::Client);
-                 else {
-                     if (spliced < 0)
-                         logfmt("tcp_remote_socket_read_splice() TERMINATE: {}\n",
-                                strerror(errno));
-                     flush_then_terminate(FlushDirection::Client);
-                 }
-                 return;
-             }
+                                   splice_pipe_size, SPLICE_F_NONBLOCK)) <= 0) // 0 is EOF
+                 goto splice_err;
              pToClient_len_ += spliced;
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
@@ -1568,6 +1550,37 @@ void SocksTCP::tcp_remote_socket_read_splice()
                  tcp_remote_socket_write_splice(0);
              else
                  tcp_remote_socket_read_splice();
+             return;
+splice_err:
+             if (spliced == 0) {
+                 flush_then_terminate(FlushDirection::Client);
+                 return;
+             }
+             switch (errno) {
+                 case EINTR: tcp_remote_socket_read_splice(); return;
+                 // EAGAIN can mean the pipe is full, or it can mean that
+                 // the pipe write would block for another reason.
+                 case EAGAIN: tcp_remote_socket_write_splice(0); return;
+                 case EBADF:
+                     // Splicing from a remote_socket_ that has been shutdown()'ed
+                     // will fail with EBADF.
+                     if (flush_invoked_) {
+                         flush_then_terminate(FlushDirection::Client);
+                         return;
+                     }
+                 default: break;
+
+             }
+             logfmt("tcp_remote_socket_read_splice() TERMINATE: {}\n",
+                    strerror(errno));
+             flush_then_terminate(FlushDirection::Client);
+             return;
+ec_err:
+             if (ec != ba::error::operation_aborted) {
+                 logfmt("EC-R: {}\n",
+                        boost::system::system_error(ec).what());
+                 flush_then_terminate(FlushDirection::Client);
+             }
          }));
 }
 
