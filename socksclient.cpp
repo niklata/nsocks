@@ -111,6 +111,7 @@ static void logfmt(Args&&... args)
 {
     std::lock_guard<std::mutex> wl(print_lock);
     fmt::print(std::forward<Args>(args)...);
+    std::fflush(stdout);
 }
 
 static std::unique_ptr<ephTrackerVec<SocksInit>> conntracker_hs;
