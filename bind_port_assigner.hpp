@@ -1,6 +1,6 @@
 /* bind_port_assigner.hpp - allocates and tracks ports from a range
  *
- * (c) 2013-2015 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2016 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
