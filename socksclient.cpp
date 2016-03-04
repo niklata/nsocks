@@ -1476,7 +1476,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                  if (ec != ba::error::operation_aborted) {
                      logfmt("EC-C: {}\n",
                             boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Client);
+                     flush_then_terminate(FlushDirection::Remote);
                  }
                  return;
              }
