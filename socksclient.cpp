@@ -1415,14 +1415,7 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
-             if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("error writing to remote socket: {}\n",
-                            boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Client);
-                 }
-                 return;
-             }
+             if (ec) goto ec_err;
              if (splicePipeToRemote() < -1) {
                  splicePipeToRemote_err();
                  return;
@@ -1435,6 +1428,14 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
                  tcp_client_socket_read_splice();
              else
                  tcp_client_socket_read_stopsplice();
+             return;
+ec_err:
+             if (ec != ba::error::operation_aborted) {
+                 logfmt("{}: [{}] async_write_some: {}\n", __func__,
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        boost::system::system_error(ec).what());
+                 flush_then_terminate(FlushDirection::Client);
+             }
          }));
 }
 
@@ -1447,14 +1448,7 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
-             if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("error writing to client socket: {}\n",
-                            boost::system::system_error(ec).what());
-                     flush_then_terminate(FlushDirection::Remote);
-                 }
-                 return;
-             }
+             if (ec) goto ec_err;
              if (splicePipeToClient() < -1) {
                  splicePipeToClient_err();
                  return;
@@ -1467,6 +1461,14 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
                  tcp_remote_socket_read_splice();
              else
                  tcp_remote_socket_read_stopsplice();
+             return;
+ec_err:
+             if (ec != ba::error::operation_aborted) {
+                 logfmt("{}: [{}] async_write_some: {}\n", __func__,
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        boost::system::system_error(ec).what());
+                 flush_then_terminate(FlushDirection::Remote);
+             }
          }));
 }
 
@@ -1512,20 +1514,21 @@ splice_err:
                      // Splicing from a client_socket_ that has been shutdown()'ed
                      // will fail with EBADF.
                      if (flush_invoked_) {
-                         logfmt("tcp_client_socket_read_splice() noticed shutdown: {}\n",
-                                strerror(errno));
+                         logfmt("{}: [{}] noticed shutdown: {}\n", __func__, dst_hostname_.size()?
+                                dst_hostname_ : dst_address_.to_string(), strerror(errno));
                          flush_then_terminate(FlushDirection::Remote);
                          return;
                      }
                  default: break;
              }
-             logfmt("tcp_client_socket_read_splice() TERMINATE: {}\n",
-                    strerror(errno));
+             logfmt("{}: [{}] splice: {}\n", __func__, dst_hostname_.size()?
+                    dst_hostname_ : dst_address_.to_string(), strerror(errno));
              flush_then_terminate(FlushDirection::Remote);
              return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
-                 logfmt("EC-C: {}\n",
+                 logfmt("{}: [{}] async_read_some: {}\n", __func__, dst_hostname_.size()?
+                        dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Remote);
              }
@@ -1574,21 +1577,22 @@ splice_err:
                      // Splicing from a remote_socket_ that has been shutdown()'ed
                      // will fail with EBADF.
                      if (flush_invoked_) {
-                         logfmt("tcp_remote_socket_read_splice() noticed shutdown: {}\n",
-                                strerror(errno));
+                         logfmt("{}: [{}] noticed shutdown: {}\n", __func__, dst_hostname_.size()?
+                                dst_hostname_ : dst_address_.to_string(), strerror(errno));
                          flush_then_terminate(FlushDirection::Client);
                          return;
                      }
                  default: break;
 
              }
-             logfmt("tcp_remote_socket_read_splice() TERMINATE: {}\n",
-                    strerror(errno));
+             logfmt("{}: [{}] splice: {}\n", __func__, dst_hostname_.size()?
+                    dst_hostname_ : dst_address_.to_string(), strerror(errno));
              flush_then_terminate(FlushDirection::Client);
              return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
-                 logfmt("EC-R: {}\n",
+                 logfmt("{}: [{}] async_read_some: {}\n", __func__, dst_hostname_.size()?
+                        dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Client);
              }
@@ -1608,7 +1612,8 @@ void SocksTCP::doFlushPipeToRemote(int tries)
              if (ec) {
                  if (ec == ba::error::operation_aborted)
                      return;
-                 logfmt("doFlushPipeToRemote error: {}\n",
+                 logfmt("{}: [{}] async_write_some: {}\n", __func__,
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
                  goto flush_done;
              }
@@ -1642,7 +1647,8 @@ void SocksTCP::doFlushPipeToClient(int tries)
              if (ec) {
                  if (ec == ba::error::operation_aborted)
                      return;
-                 logfmt("doFlushPipeToClient error: {}\n",
+                 logfmt("{}: [{}] async_write_some: {}\n", __func__,
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
                  goto flush_done;
              }
