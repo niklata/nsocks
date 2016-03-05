@@ -243,6 +243,8 @@ private:
     bool is_bind_:1;
 
 #ifdef USE_SPLICE
+    bool shutdown_client_:1;
+    bool shutdown_remote_:1;
     bool flushing_client_:1;
     bool flushing_remote_:1;
     bool flush_invoked_:1;
