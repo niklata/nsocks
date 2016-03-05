@@ -1276,33 +1276,40 @@ bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
 // Must be called while holding a shared_ptr
 void SocksTCP::flush_then_terminate(FlushDirection dir)
 {
-    if (flush_invoked_) {
-        terminate_if_flushed();
+    if (flush_invoked_)
         return;
-    }
-    flush_invoked_ = true; // If true, then all receives are shut down.
-    boost::system::error_code ec;
+    flush_invoked_ = true; // Latch to make sure flushers run once and don't get cancelled.
     auto cso = client_socket_.is_open();
     auto rso = remote_socket_.is_open();
-    if (cso)
-        client_socket_.cancel();
-    if (rso)
-        remote_socket_.cancel();
-    if (cso)
-        client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    if (rso)
-        remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-    if (!flushing_client_ && dir == FlushDirection::Client && cso && pToClient_len_ > 0) {
-        flushing_client_ = true;
+    if (cso) client_socket_.cancel();
+    if (rso) remote_socket_.cancel();
+    if (!cso && !rso) {
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToClient(0); });
+        strand_.post([this, sfd] { terminate(); });
+        return;
     }
-    if (!flushing_remote_ && dir == FlushDirection::Remote && rso && pToRemote_len_ > 0) {
-        flushing_remote_ = true;
+    if (cso && dir != FlushDirection::Remote) {
         auto sfd = shared_from_this();
-        strand_.post([this, sfd] { doFlushPipeToRemote(0); });
+        strand_.post([this, sfd] {
+                     boost::system::error_code ec;
+                     client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                     if (!flushing_client_ && pToClient_len_ > 0) {
+                         flushing_client_ = true;
+                         doFlushPipeToClient(0);
+                     }
+                     });
     }
-    terminate_if_flushed();
+    if (rso && dir != FlushDirection::Client) {
+        auto sfd = shared_from_this();
+        strand_.post([this, sfd] {
+                     boost::system::error_code ec;
+                     remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                     if (!flushing_remote_ && pToRemote_len_ > 0) {
+                         flushing_remote_ = true;
+                         doFlushPipeToRemote(0);
+                     }
+                     });
+    }
 }
 
 inline void SocksTCP::tcp_client_socket_read_again
@@ -1505,6 +1512,8 @@ splice_err:
                      // Splicing from a client_socket_ that has been shutdown()'ed
                      // will fail with EBADF.
                      if (flush_invoked_) {
+                         logfmt("tcp_client_socket_read_splice() noticed shutdown: {}\n",
+                                strerror(errno));
                          flush_then_terminate(FlushDirection::Remote);
                          return;
                      }
@@ -1565,6 +1574,8 @@ splice_err:
                      // Splicing from a remote_socket_ that has been shutdown()'ed
                      // will fail with EBADF.
                      if (flush_invoked_) {
+                         logfmt("tcp_remote_socket_read_splice() noticed shutdown: {}\n",
+                                strerror(errno));
                          flush_then_terminate(FlushDirection::Client);
                          return;
                      }
