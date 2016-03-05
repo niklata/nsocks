@@ -471,18 +471,13 @@ void SocksInit::read_greet()
          [this, sfd](const boost::system::error_code &ec,
                      std::size_t bytes_xferred)
          {
-             if (ec) {
-                 logfmt("read_greet() error: {}\n",
-                        boost::system::system_error(ec).what());
-                 terminate();
-                 return;
-             }
+             size_t consumed;
+             boost::optional<SocksInit::ReplyCode> rc;
+             if (ec) goto ec_err;
              if (!bytes_xferred)
                  return;
              ibSiz_ += bytes_xferred;
-             size_t consumed;
-             auto rc = parse_greet(consumed);
-             if (rc) {
+             if ((rc = parse_greet(consumed))) {
                  if (*rc != RplSuccess)
                      send_reply(*rc);
                  return;
@@ -492,6 +487,13 @@ void SocksInit::read_greet()
                  memmove(sockbuf_.data(), sockbuf_.data() + consumed, ibSiz_);
              }
              read_greet();
+             return;
+ec_err:
+             if (ec != ba::error::eof && ec != ba::error::operation_aborted) {
+                 logfmt("read_greet() error: {}\n",
+                        boost::system::system_error(ec).what());
+             }
+             terminate();
          }));
 }
 
