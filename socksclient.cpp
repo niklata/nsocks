@@ -1186,7 +1186,6 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind)
 #ifdef USE_SPLICE
           ,
-          shutdown_client_(false), shutdown_remote_(false),
           flushing_client_(false), flushing_remote_(false),
           flush_invoked_(false), pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
@@ -1286,39 +1285,27 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
     auto rso = remote_socket_.is_open();
     if (cso) client_socket_.cancel();
     if (rso) remote_socket_.cancel();
-    if (!cso && !rso) {
-        auto sfd = shared_from_this();
+    auto sfd = shared_from_this();
+    if (!cso && !rso)
         strand_.post([this, sfd] { terminate(); });
-        return;
-    }
-    if (cso && dir != FlushDirection::Remote) {
-        auto sfd = shared_from_this();
-        if (dir != FlushDirection::Both) shutdown_remote_ = true;
-        strand_.post([this, sfd] {
+    else
+        strand_.post([this, sfd, cso, rso, dir] {
                      boost::system::error_code ec;
-                     client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-                     shutdown_client_ = true;
-                     if (!flushing_client_ && pToClient_len_ > 0) {
+                     if (cso)
+                         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                     if (rso)
+                         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                     assert(!flushing_client_ && !flushing_remote_);
+                     if (cso && pToClient_len_ > 0 && dir != FlushDirection::Remote) {
                          flushing_client_ = true;
                          doFlushPipeToClient(0);
-                     } else if (shutdown_remote_)
-                         terminate();
-                     });
-    }
-    if (rso && dir != FlushDirection::Client) {
-        auto sfd = shared_from_this();
-        if (dir != FlushDirection::Both) shutdown_client_ = true;
-        strand_.post([this, sfd] {
-                     boost::system::error_code ec;
-                     remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-                     shutdown_remote_ = true;
-                     if (!flushing_remote_ && pToRemote_len_ > 0) {
+                     }
+                     if (rso && pToRemote_len_ > 0 && dir != FlushDirection::Client) {
                          flushing_remote_ = true;
                          doFlushPipeToRemote(0);
-                     } else if (shutdown_client_)
-                         terminate();
+                     }
+                     terminate_if_flushed();
                      });
-    }
 }
 
 inline void SocksTCP::tcp_client_socket_read_again
