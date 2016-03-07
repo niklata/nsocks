@@ -201,7 +201,7 @@ public:
              std::string dst_hostname = "");
     ~SocksTCP();
     void start(boost::asio::ip::tcp::endpoint ep);
-    void terminate();
+    void terminate() {}
 
     inline void set_untracked() { tracked_ = false; }
     void set_tracker_iterator(std::list<std::weak_ptr<SocksTCP>>::iterator it) {
@@ -243,8 +243,6 @@ private:
     bool is_bind_:1;
 
 #ifdef USE_SPLICE
-    bool flushing_client_:1;
-    bool flushing_remote_:1;
     bool flush_invoked_:1;
     std::size_t pToRemote_len_;
     std::size_t pToClient_len_;
@@ -264,11 +262,6 @@ private:
     void doFlushPipeToRemote(int tries);
     void doFlushPipeToClient(int tries);
 private:
-
-    inline void terminate_if_flushed() {
-        if (!flushing_remote_ && !flushing_client_)
-            terminate();
-    }
 
     inline int splicePipeToClient();
     inline int splicePipeToRemote();
@@ -292,7 +285,7 @@ private:
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok);
 #else
-    inline void flush_then_terminate(FlushDirection dir) { terminate(); }
+    inline void flush_then_terminate(FlushDirection dir) { }
     inline void tcp_remote_socket_read_again
     (const std::shared_ptr<SocksTCP> &sfd,
      size_t bytes_xferred, bool splice_ok)

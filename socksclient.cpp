@@ -1186,7 +1186,6 @@ SocksTCP::SocksTCP(ba::io_service &io_service,
           dst_port_(dst_port), is_socks_v4_(is_socks_v4), is_bind_(is_bind)
 #ifdef USE_SPLICE
           ,
-          flushing_client_(false), flushing_remote_(false),
           flush_invoked_(false), pToRemote_len_(0), pToClient_len_(0),
           pToRemoteR_(io_service), pToClientR_(io_service),
           pToRemoteW_(io_service), pToClientW_(io_service)
@@ -1203,6 +1202,7 @@ SocksTCP::~SocksTCP()
     pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
 #endif
     untrack();
+    close_paired_sockets(client_socket_, remote_socket_);
     if (g_verbose_logs) {
         --socks_alive_count;
         print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
@@ -1216,12 +1216,6 @@ void SocksTCP::untrack()
     bool cxr(true);
     if (tracked_.compare_exchange_strong(cxr, false))
         conntracker_tcp.erase(get_tracker_iterator());
-}
-
-void SocksTCP::terminate()
-{
-    untrack();
-    close_paired_sockets(client_socket_, remote_socket_);
 }
 
 #ifdef USE_SPLICE
@@ -1285,27 +1279,22 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
     auto rso = remote_socket_.is_open();
     if (cso) client_socket_.cancel();
     if (rso) remote_socket_.cancel();
-    auto sfd = shared_from_this();
-    if (!cso && !rso)
-        strand_.post([this, sfd] { terminate(); });
-    else
+    if (cso || rso) {
+        auto sfd = shared_from_this();
         strand_.post([this, sfd, cso, rso, dir] {
                      boost::system::error_code ec;
                      if (cso)
                          client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
                      if (rso)
                          remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
-                     assert(!flushing_client_ && !flushing_remote_);
                      if (cso && pToClient_len_ > 0 && dir != FlushDirection::Remote) {
-                         flushing_client_ = true;
                          doFlushPipeToClient(0);
                      }
                      if (rso && pToRemote_len_ > 0 && dir != FlushDirection::Client) {
-                         flushing_remote_ = true;
                          doFlushPipeToRemote(0);
                      }
-                     terminate_if_flushed();
                      });
+    }
 }
 
 inline void SocksTCP::tcp_client_socket_read_again
@@ -1611,22 +1600,16 @@ void SocksTCP::doFlushPipeToRemote(int tries)
                  logfmt("rs-flush: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
-                 goto flush_done;
+                 return;
              }
              if ((spc = splicePipeToRemote()) < 0) {
-                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES) {
+                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES)
                      doFlushPipeToRemote(tries);
-                     return;
-                 }
-                 goto flush_done;
+                 return;
              }
              if (pToRemote_len_ == 0)
-                 goto flush_done;
+                 return;
              doFlushPipeToRemote(tries);
-             return;
-flush_done:
-             flushing_remote_ = false;
-             terminate_if_flushed();
          }));
 }
 
@@ -1646,22 +1629,16 @@ void SocksTCP::doFlushPipeToClient(int tries)
                  logfmt("cs-flush: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
                         boost::system::system_error(ec).what());
-                 goto flush_done;
+                 return;
              }
              if ((spc = splicePipeToClient()) < 0) {
-                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES) {
+                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES)
                      doFlushPipeToClient(tries);
-                     return;
-                 }
-                 goto flush_done;
+                 return;
              }
              if (pToClient_len_ == 0)
-                 goto flush_done;
+                 return;
              doFlushPipeToClient(tries);
-             return;
-flush_done:
-             flushing_client_ = false;
-             terminate_if_flushed();
          }));
 }
 #endif
@@ -1814,7 +1791,6 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
                             !dst_hostname_.size() ?
                             dst_address_.to_string() : dst_hostname_,
                             dst_port_, ec.message());
-                     terminate();
                  }
                  return;
              }
