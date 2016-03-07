@@ -1819,16 +1819,12 @@ SocksUDP::SocksUDP(ba::io_service &io_service,
 
 SocksUDP::~SocksUDP()
 {
+    close_udp_sockets();
     if (g_verbose_logs) {
         --socks_alive_count;
         --udp_alive_count;
         print_trackers_logentry("(n/a)", 0);
     }
-}
-
-void SocksUDP::terminate()
-{
-    close_udp_sockets();
 }
 
 void SocksUDP::start()
@@ -1842,7 +1838,6 @@ void SocksUDP::start()
     if (ecc) {
         logfmt("SocksUDP::start(): client socket has bad endpoint: {}\n",
                ecc.message());
-        terminate();
         return;
     }
     ssiz = send_reply_binds_v5
@@ -1861,7 +1856,6 @@ void SocksUDP::start()
                      logfmt("UDP Start: @{} [{}]\n",
                             !ecr? rep.address().to_string() : "NONE",
                             ec.message());
-                     terminate();
                  }
                  return;
              }
@@ -1898,7 +1892,6 @@ void SocksUDP::udp_tcp_socket_read()
                  if (ec != ba::error::operation_aborted) {
                      logfmt("Client closed TCP socket for UDP associate: {}\n",
                             boost::system::system_error(ec).what());
-                     terminate();
                  }
                  return;
              }
@@ -1921,7 +1914,6 @@ void SocksUDP::udp_client_socket_read()
                  if (ec != ba::error::operation_aborted) {
                      logfmt("Error on client UDP socket: {}\n",
                             boost::system::system_error(ec).what());
-                     terminate();
                  }
                  return;
              }
@@ -2160,7 +2152,6 @@ void SocksUDP::udp_remote_socket_read()
                  if (ec != ba::error::operation_aborted) {
                      logfmt("Error on remote UDP socket: {}\n",
                             boost::system::system_error(ec).what());
-                     terminate();
                  }
                  return;
              }

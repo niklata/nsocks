@@ -319,7 +319,7 @@ public:
              boost::asio::ip::udp::endpoint client_remote_ep);
     ~SocksUDP();
     void start();
-    void terminate();
+    void terminate() {}
 private:
     struct UDPFrags {
         UDPFrags(boost::asio::io_service &io_service)
