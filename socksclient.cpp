@@ -384,8 +384,7 @@ SocksInit::SocksInit(ba::io_service &io_service,
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
           ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false),
-          bind_listen_(false), auth_none_(false), auth_gssapi_(false),
-          auth_unpw_(false)
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
 {
     if (g_verbose_logs)
         ++socks_alive_count;
@@ -400,7 +399,13 @@ SocksInit::SocksInit(ba::io_service &io_service,
 
 SocksInit::~SocksInit()
 {
-    untrack();
+    if (bound_) {
+        bool cxr(true);
+        if (tracked_.compare_exchange_strong(cxr, false)) {
+            conntracker_bindlisten->erase(get_tracker_iterator(),
+                                          get_tracker_idx());
+        }
+    }
     if (g_verbose_logs) {
         --socks_alive_count;
         print_trackers_logentry(dst_hostname_.size() ? dst_hostname_
@@ -437,29 +442,20 @@ SocksInit::BoundSocket::~BoundSocket()
     BPA->release_port(local_endpoint_.port());
 }
 
-void SocksInit::untrack()
-{
-    if (!bind_listen_)
-        return;
-    bool cxr(true);
-    if (tracked_.compare_exchange_strong(cxr, false)) {
-        boost::system::error_code ec;
-        if (bound_)
-            bound_->acceptor_.cancel(ec);
-        conntracker_bindlisten->erase(get_tracker_iterator(),
-                                      get_tracker_idx());
-    }
-}
-
 void SocksInit::cancel_sockets()
 {
     cancel_paired_sockets(remote_socket_, client_socket_);
+    boost::system::error_code ec;
+    if (bound_)
+        bound_->acceptor_.cancel(ec);
 }
 
 void SocksInit::terminate()
 {
     close_paired_sockets(remote_socket_, client_socket_);
-    untrack();
+    boost::system::error_code ec;
+    if (bound_)
+        bound_->acceptor_.cancel(ec);
 }
 
 void SocksInit::read_greet()
@@ -1026,7 +1022,6 @@ void SocksInit::dispatch_tcp_bind()
         send_reply(RplFail);
         return;
     }
-    bind_listen_ = true;
     conntracker_bindlisten->store(shared_from_this());
 
     auto sfd = shared_from_this();
@@ -1196,7 +1191,9 @@ SocksTCP::~SocksTCP()
     pipe_close_raw(pToClient_len_, pToClientR_, pToClientW_);
     pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
 #endif
-    untrack();
+    bool cxr(true);
+    if (tracked_.compare_exchange_strong(cxr, false))
+        conntracker_tcp.erase(get_tracker_iterator());
     close_paired_sockets(client_socket_, remote_socket_);
     if (g_verbose_logs) {
         --socks_alive_count;
@@ -1204,13 +1201,6 @@ SocksTCP::~SocksTCP()
                                   : dst_address_.to_string(),
                                   dst_port_);
     }
-}
-
-void SocksTCP::untrack()
-{
-    bool cxr(true);
-    if (tracked_.compare_exchange_strong(cxr, false))
-        conntracker_tcp.erase(get_tracker_iterator());
 }
 
 #ifdef USE_SPLICE

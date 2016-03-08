@@ -57,7 +57,7 @@ public:
     void cancel_sockets();
     inline void set_untracked() { tracked_ = false; }
     inline void start() { read_greet(); }
-    inline bool is_bind_listen() const { return bind_listen_; }
+    inline bool is_bind_listen() const { return !!bound_; }
     void set_tracker_iterator(std::list<std::weak_ptr<SocksInit>>::iterator it,
                               unsigned char lidx) {
         assert(bound_);
@@ -145,7 +145,6 @@ private:
 #endif
     }
 
-    void untrack();
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     void kick_tcp_resolver_timer();
@@ -225,7 +224,6 @@ public:
     static void set_splice_pipe_size(int size);
 
 private:
-    void untrack();
     enum class FlushDirection { Both, Client, Remote };
 
     std::atomic<bool> tracked_;
