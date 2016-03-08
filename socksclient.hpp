@@ -164,6 +164,7 @@ private:
     bool is_udp_client_allowed(boost::asio::ip::address laddr) const;
     void dispatch_udp();
 
+    void do_send_reply(ReplyCode replycode, std::size_t ssiz);
     void send_reply(ReplyCode replycode);
     ReplyCode errorToReplyCode(const boost::system::error_code &ec);
 

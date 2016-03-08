@@ -995,8 +995,7 @@ void SocksInit::dispatch_tcp_bind()
     }
     assert(BPA);
     ba::ip::tcp::endpoint bind_ep;
-    auto rcnct = conntracker_tcp.find_by_addr_port
-        (dst_address_, dst_port_);
+    auto rcnct = conntracker_tcp.find_by_addr_port(dst_address_, dst_port_);
     try {
         if (rcnct) {
             // Bind to the local IP that is associated with the
@@ -1041,23 +1040,32 @@ void SocksInit::dispatch_tcp_bind()
              }
              logfmt("Accepted a connection to a BIND socket.\n");
              set_remote_socket_options();
-             bool is_socks_v4(is_socks_v4_);
 
-             boost::system::error_code eec;
-             auto ep = remote_socket_.remote_endpoint(eec);
-             if (eec) {
-                 logfmt("BIND socket: bad remote endpoint: {}\n",
-                        eec.message());
+             boost::system::error_code ecc;
+             auto ep = remote_socket_.local_endpoint(ecc);
+             if (ecc) {
+                 logfmt("TCP Bind: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
+                        dst_hostname_ : dst_address_.to_string(), ecc.message());
                  send_reply(RplFail);
                  return;
              }
 
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, true, is_socks_v4,
+                   std::move(dst_address_), dst_port_, true, bool(is_socks_v4_),
                    std::move(dst_hostname_));
          }));
-    send_reply(RplSuccess);
+    // Here we send the first response; the BND field corresponds
+    // to remote_socket_.local_endpoint().
+    std::size_t ssiz(0);
+    if (!is_socks_v4_) {
+        ssiz = send_reply_code_v5(sockbuf_, RplSuccess);
+        ssiz = send_reply_binds_v5(sockbuf_, ssiz, bind_ep);
+    } else {
+        ssiz = send_reply_code_v4(sockbuf_, RplSuccess);
+        ssiz = send_reply_binds_v4(sockbuf_, ssiz, bind_ep);
+    }
+    do_send_reply(RplSuccess, ssiz);
 }
 
 bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
@@ -1121,29 +1129,8 @@ void SocksInit::dispatch_udp()
     ct->start();
 }
 
-void SocksInit::send_reply(ReplyCode replycode)
+void SocksInit::do_send_reply(ReplyCode replycode, std::size_t ssiz)
 {
-    std::size_t ssiz(0);
-    if (!is_socks_v4_) {
-        assert(replycode != RplIdentWrong && replycode != RplIdentUnreach);
-        ssiz = send_reply_code_v5(sockbuf_, replycode);
-        if (replycode == RplSuccess) {
-            if (cmd_code_ != CmdTCPBind || !bound_) {
-                throw std::logic_error
-                    ("cmd_code_ != CmdTCPBind || !bound_ in send_reply(RplSuccess).\n");
-            } else
-                ssiz = send_reply_binds_v5(sockbuf_, ssiz,
-                                           bound_->local_endpoint_);
-        }
-    } else {
-        ssiz = send_reply_code_v4(sockbuf_, replycode);
-        if (!bound_) {
-            for (auto i = 0; i < 6; ++i)
-                sockbuf_[ssiz++] = 0;
-        }
-        else ssiz = send_reply_binds_v4(sockbuf_, ssiz,
-                                        bound_->local_endpoint_);
-    }
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_,
@@ -1163,6 +1150,22 @@ void SocksInit::send_reply(ReplyCode replycode)
                  terminate();
              }
          }));
+}
+
+// Only used for sending error replies.
+void SocksInit::send_reply(ReplyCode replycode)
+{
+    std::size_t ssiz(0);
+    assert(replycode != RplSuccess);
+    if (!is_socks_v4_) {
+        assert(replycode != RplIdentWrong && replycode != RplIdentUnreach);
+        ssiz = send_reply_code_v5(sockbuf_, replycode);
+    } else {
+        ssiz = send_reply_code_v4(sockbuf_, replycode);
+        for (auto i = 0; i < 6; ++i)
+            sockbuf_[ssiz++] = 0;
+    }
+    do_send_reply(replycode, ssiz);
 }
 
 SocksTCP::SocksTCP(ba::io_service &io_service,
