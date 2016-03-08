@@ -907,8 +907,8 @@ void SocksInit::dispatch_tcp_connect()
                  send_reply(errorToReplyCode(ec));
                  return;
              }
+             boost::system::error_code ecc;
              if (g_verbose_logs) {
-                 boost::system::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);
                  logfmt("TCP Connect @{} -> {}:{}\n",
                         !ecc? cep.address().to_string() : "NONE",
@@ -916,20 +916,17 @@ void SocksInit::dispatch_tcp_connect()
                         dst_address_.to_string() : dst_hostname_, dst_port_);
              }
              set_remote_socket_options();
-             bool is_socks_v4(is_socks_v4_);
-
-             boost::system::error_code eec;
-             auto ep = remote_socket_.remote_endpoint(eec);
-             if (eec) {
-                 logfmt("TCP Connect: bad remote endpoint: {}\n",
-                        eec.message());
+             auto ep = remote_socket_.local_endpoint(ecc);
+             if (ecc) {
+                 logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
+                        dst_hostname_ : dst_address_.to_string(), ecc.message());
                  send_reply(RplFail);
                  return;
              }
 
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, false, is_socks_v4,
+                   std::move(dst_address_), dst_port_, false, bool(is_socks_v4_),
                    std::move(dst_hostname_));
          }));
 }
