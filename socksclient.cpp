@@ -1030,8 +1030,10 @@ void SocksInit::dispatch_tcp_bind()
         return;
     }
 
-    if (!create_bind_socket(bind_ep))
+    if (!create_bind_socket(bind_ep)) {
+        send_reply(RplFail);
         return;
+    }
     bind_listen_ = true;
     conntracker_bindlisten->store(shared_from_this());
 
