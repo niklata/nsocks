@@ -903,31 +903,24 @@ void SocksInit::dispatch_tcp_connect()
         (ep, strand_.wrap(
          [this, sfd](const boost::system::error_code &ec)
          {
-             if (ec) {
-                 send_reply(errorToReplyCode(ec));
-                 return;
-             }
              boost::system::error_code ecc;
-             if (g_verbose_logs) {
-                 auto cep = client_socket_.remote_endpoint(ecc);
-                 logfmt("TCP Connect @{} -> {}:{}\n",
-                        !ecc? cep.address().to_string() : "NONE",
-                        addr_type_ != AddrDNS ?
-                        dst_address_.to_string() : dst_hostname_, dst_port_);
-             }
+             ba::ip::tcp::endpoint ep;
+             if (ec) goto ec_err;
              set_remote_socket_options();
-             auto ep = remote_socket_.local_endpoint(ecc);
-             if (ecc) {
-                 logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
-                        dst_hostname_ : dst_address_.to_string(), ecc.message());
-                 send_reply(RplFail);
-                 return;
-             }
-
+             ep = remote_socket_.local_endpoint(ecc);
+             if (ecc) goto rle_err;
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false, bool(is_socks_v4_),
                    std::move(dst_hostname_));
+             return;
+ec_err:
+             send_reply(errorToReplyCode(ec));
+             return;
+rle_err:
+             logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
+                    dst_hostname_ : dst_address_.to_string(), ecc.message());
+             send_reply(RplFail);
          }));
 }
 
