@@ -1316,28 +1316,20 @@ inline void SocksTCP::tcp_remote_socket_read_again
     tcp_remote_socket_read();
 }
 
-inline void SocksTCP::splicePipeToClient_err()
+inline void SocksTCP::splicePipeToClient_err(boost::string_ref cfn)
 {
-    boost::system::error_code ecc;
-    auto cep = client_socket_.remote_endpoint(ecc);
-    logfmt("splicePipeToClient_err: {} -> {}:{} [{}] => TERMINATE\n",
-           !ecc? cep.address().to_string() : "NONE",
-           dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
-           dst_port_, strerror(errno));
+    logfmt("cs/{}: [{}] splice: {}\n", cfn, dst_hostname_.size()?
+           dst_hostname_ : dst_address_.to_string(), strerror(errno));
     // If we get an error, the socket fd is already closed.
     // In this case, we do not want to flush this half
     // of the connection.
     flush_then_terminate(FlushDirection::Remote);
 }
 
-inline void SocksTCP::splicePipeToRemote_err()
+inline void SocksTCP::splicePipeToRemote_err(boost::string_ref cfn)
 {
-    boost::system::error_code ecc;
-    auto cep = remote_socket_.remote_endpoint(ecc);
-    logfmt("splicePipeToRemote_err: {} -> {}:{} [{}] => TERMINATE\n",
-           !ecc? cep.address().to_string() : "NONE",
-           dst_hostname_.size()? dst_hostname_ : dst_address_.to_string(),
-           dst_port_, strerror(errno));
+    logfmt("rs/{}: [{}] splice: {}\n", cfn, dst_hostname_.size()?
+           dst_hostname_ : dst_address_.to_string(), strerror(errno));
     // If we get an error, the socket fd is already closed.
     // In this case, we do not want to flush this half
     // of the connection.
@@ -1387,7 +1379,7 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
          {
              if (ec) goto ec_err;
              if (splicePipeToRemote() < -1) {
-                 splicePipeToRemote_err();
+                 splicePipeToRemote_err("tcp_client_socket_write_splice");
                  return;
              }
              if (pToRemote_len_ > 0) {
@@ -1420,7 +1412,7 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
          {
              if (ec) goto ec_err;
              if (splicePipeToClient() < -1) {
-                 splicePipeToClient_err();
+                 splicePipeToClient_err("tcp_remote_socket_write_splice");
                  return;
              }
              if (pToClient_len_ > 0) {
@@ -1462,7 +1454,7 @@ void SocksTCP::tcp_client_socket_read_splice()
              //      last n reads and revert to normal reads if below
              //      a threshold.
              if (splicePipeToRemote() < -1) {
-                 splicePipeToRemote_err();
+                 splicePipeToRemote_err("tcp_client_socket_read_splice");
                  return;
              }
              if (pToRemote_len_ > 0)
@@ -1525,7 +1517,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
              //      last n reads and revert to normal reads if below
              //      a threshold.
              if (splicePipeToClient() < -1) {
-                 splicePipeToClient_err();
+                 splicePipeToClient_err("tcp_remote_socket_read_splice");
                  return;
              }
              if (pToClient_len_ > 0)
