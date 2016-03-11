@@ -37,7 +37,6 @@
 
 #include <boost/asio.hpp>
 #include <boost/utility.hpp>
-#include <boost/utility/string_ref.hpp>
 #include <boost/optional.hpp>
 #include <nk/format.hpp>
 
@@ -263,10 +262,10 @@ private:
     void doFlushPipeToClient(int tries);
 private:
 
-    inline int splicePipeToClient();
-    inline int splicePipeToRemote();
-    inline void splicePipeToClient_err(boost::string_ref cfn);
-    inline void splicePipeToRemote_err(boost::string_ref cfn);
+    enum class splicePipeRet { ok = 0, interrupt = -1, eof = -2, error = -3 };
+
+    inline splicePipeRet splicePipeToClient();
+    inline splicePipeRet splicePipeToRemote();
     inline void tcp_client_socket_read_stopsplice() {
         assert(pToRemote_len_ == 0);
         pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);

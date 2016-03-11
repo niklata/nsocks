@@ -1316,56 +1316,40 @@ inline void SocksTCP::tcp_remote_socket_read_again
     tcp_remote_socket_read();
 }
 
-inline void SocksTCP::splicePipeToClient_err(boost::string_ref cfn)
-{
-    logfmt("cs/{}: [{}] splice: {}\n", cfn, dst_hostname_.size()?
-           dst_hostname_ : dst_address_.to_string(), strerror(errno));
-    // If we get an error, the socket fd is already closed.
-    // In this case, we do not want to flush this half
-    // of the connection.
-    flush_then_terminate(FlushDirection::Remote);
-}
-
-inline void SocksTCP::splicePipeToRemote_err(boost::string_ref cfn)
-{
-    logfmt("rs/{}: [{}] splice: {}\n", cfn, dst_hostname_.size()?
-           dst_hostname_ : dst_address_.to_string(), strerror(errno));
-    // If we get an error, the socket fd is already closed.
-    // In this case, we do not want to flush this half
-    // of the connection.
-    flush_then_terminate(FlushDirection::Client);
-}
-
-inline int SocksTCP::splicePipeToClient()
+inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient()
 {
     if (pToClient_len_ <= 0)
-        return 0;
+        return splicePipeRet::ok;
     auto n = splice(pToClientR_.native_handle(), NULL,
                     client_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
     if (n > 0) {
         pToClient_len_ -= n;
-        return 0;
+        return splicePipeRet::ok;
     }
+    if (n == 0)
+        return splicePipeRet::eof;
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
-        return -1;
-    return -2;
+        return splicePipeRet::interrupt;
+    return splicePipeRet::error;
 }
 
-inline int SocksTCP::splicePipeToRemote()
+inline SocksTCP::splicePipeRet SocksTCP::splicePipeToRemote()
 {
     if (pToRemote_len_ <= 0)
-        return 0;
+        return splicePipeRet::ok;
     auto n = splice(pToRemoteR_.native_handle(), NULL,
                     remote_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
     if (n > 0) {
         pToRemote_len_ -= n;
-        return 0;
+        return splicePipeRet::ok;
     }
+    if (n == 0)
+        return splicePipeRet::eof;
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
-        return -1;
-    return -2;
+        return splicePipeRet::interrupt;
+    return splicePipeRet::error;
 }
 
 void SocksTCP::tcp_client_socket_write_splice(int tries)
@@ -1377,11 +1361,9 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
+             splicePipeRet spr;
              if (ec) goto ec_err;
-             if (splicePipeToRemote() < -1) {
-                 splicePipeToRemote_err("tcp_client_socket_write_splice");
-                 return;
-             }
+             if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto splice_err;
              if (pToRemote_len_ > 0) {
                  tcp_client_socket_write_splice(tries);
                  return;
@@ -1390,6 +1372,14 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
                  tcp_client_socket_read_splice();
              else
                  tcp_client_socket_read_stopsplice();
+             return;
+splice_err:
+             if (spr != splicePipeRet::eof) {
+                 logfmt("rs/tcp_client_socket_write_splice: [{}] splice: {}\n",
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        strerror(errno));
+             }
+             flush_then_terminate(FlushDirection::Client);
              return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
@@ -1410,11 +1400,9 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
+             splicePipeRet spr;
              if (ec) goto ec_err;
-             if (splicePipeToClient() < -1) {
-                 splicePipeToClient_err("tcp_remote_socket_write_splice");
-                 return;
-             }
+             if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto splice_err;
              if (pToClient_len_ > 0) {
                  tcp_remote_socket_write_splice(tries);
                  return;
@@ -1423,6 +1411,14 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
                  tcp_remote_socket_read_splice();
              else
                  tcp_remote_socket_read_stopsplice();
+             return;
+splice_err:
+             if (spr != splicePipeRet::eof) {
+                 logfmt("cs/tcp_remote_socket_write_splice: [{}] splice: {}\n",
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        strerror(errno));
+             }
+             flush_then_terminate(FlushDirection::Remote);
              return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
@@ -1444,6 +1440,7 @@ void SocksTCP::tcp_client_socket_read_splice()
                      std::size_t bytes_xferred)
          {
              ssize_t spliced;
+             splicePipeRet spr;
              if (ec) goto ec_err;
              if ((spliced = splice(client_socket_.native_handle(), NULL,
                                    pToRemoteW_.native_handle(), NULL,
@@ -1453,10 +1450,7 @@ void SocksTCP::tcp_client_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (splicePipeToRemote() < -1) {
-                 splicePipeToRemote_err("tcp_client_socket_read_splice");
-                 return;
-             }
+             if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto spr_err;
              if (pToRemote_len_ > 0)
                  tcp_client_socket_write_splice(0);
              else
@@ -1487,6 +1481,14 @@ splice_err:
                     dst_hostname_ : dst_address_.to_string(), strerror(errno));
              flush_then_terminate(FlushDirection::Remote);
              return;
+spr_err:
+             if (spr != splicePipeRet::eof) {
+                 logfmt("rs/tcp_client_socket_read_splice: [{}] splice: {}\n",
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        strerror(errno));
+             }
+             flush_then_terminate(FlushDirection::Client);
+             return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
                  logfmt("cs: [{}] async_read_some: {}\n", dst_hostname_.size()?
@@ -1507,6 +1509,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
                      std::size_t bytes_xferred)
          {
              ssize_t spliced;
+             splicePipeRet spr;
              if (ec) goto ec_err;
              if ((spliced = splice(remote_socket_.native_handle(), NULL,
                                    pToClientW_.native_handle(), NULL,
@@ -1516,10 +1519,7 @@ void SocksTCP::tcp_remote_socket_read_splice()
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
-             if (splicePipeToClient() < -1) {
-                 splicePipeToClient_err("tcp_remote_socket_read_splice");
-                 return;
-             }
+             if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto spr_err;
              if (pToClient_len_ > 0)
                  tcp_remote_socket_write_splice(0);
              else
@@ -1551,6 +1551,14 @@ splice_err:
                     dst_hostname_ : dst_address_.to_string(), strerror(errno));
              flush_then_terminate(FlushDirection::Client);
              return;
+spr_err:
+             if (spr != splicePipeRet::eof) {
+                 logfmt("cs/tcp_remote_socket_read_splice: [{}] splice: {}\n",
+                        dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
+                        strerror(errno));
+             }
+             flush_then_terminate(FlushDirection::Remote);
+             return;
 ec_err:
              if (ec != ba::error::operation_aborted) {
                  logfmt("rs: [{}] async_read_some: {}\n", dst_hostname_.size()?
@@ -1570,7 +1578,7 @@ void SocksTCP::doFlushPipeToRemote(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
-             int spc;
+             splicePipeRet spc;
              if (ec) {
                  if (ec == ba::error::operation_aborted)
                      return;
@@ -1579,8 +1587,8 @@ void SocksTCP::doFlushPipeToRemote(int tries)
                         boost::system::system_error(ec).what());
                  return;
              }
-             if ((spc = splicePipeToRemote()) < 0) {
-                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES)
+             if ((spc = splicePipeToRemote()) != splicePipeRet::ok) {
+                 if (spc == splicePipeRet::interrupt && tries < MAX_PIPE_FLUSH_TRIES)
                      doFlushPipeToRemote(tries);
                  return;
              }
@@ -1599,7 +1607,7 @@ void SocksTCP::doFlushPipeToClient(int tries)
          [this, sfd, tries](const boost::system::error_code &ec,
                             std::size_t bytes_xferred)
          {
-             int spc;
+             splicePipeRet spc;
              if (ec) {
                  if (ec == ba::error::operation_aborted)
                      return;
@@ -1608,8 +1616,8 @@ void SocksTCP::doFlushPipeToClient(int tries)
                         boost::system::system_error(ec).what());
                  return;
              }
-             if ((spc = splicePipeToClient()) < 0) {
-                 if (spc == -1 && tries < MAX_PIPE_FLUSH_TRIES)
+             if ((spc = splicePipeToClient()) != splicePipeRet::ok) {
+                 if (spc == splicePipeRet::interrupt && tries < MAX_PIPE_FLUSH_TRIES)
                      doFlushPipeToClient(tries);
                  return;
              }
