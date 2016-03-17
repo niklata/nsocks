@@ -1327,7 +1327,7 @@ inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient()
         pToClient_len_ -= n;
         return splicePipeRet::ok;
     }
-    if (n == 0)
+    if (n == 0 || (n < 0 && errno == EPIPE))
         return splicePipeRet::eof;
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
         return splicePipeRet::interrupt;
@@ -1345,7 +1345,7 @@ inline SocksTCP::splicePipeRet SocksTCP::splicePipeToRemote()
         pToRemote_len_ -= n;
         return splicePipeRet::ok;
     }
-    if (n == 0)
+    if (n == 0 || (n < 0 && errno == EPIPE))
         return splicePipeRet::eof;
     if (n < 0 && (errno == EINTR || errno == EAGAIN))
         return splicePipeRet::interrupt;
