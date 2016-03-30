@@ -464,8 +464,8 @@ void SocksInit::read_greet()
     client_socket_.async_read_some
         (ba::buffer(sockbuf_.data() + ibSiz_, sockbuf_.size() - ibSiz_),
          strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              size_t consumed;
              boost::optional<SocksInit::ReplyCode> rc;
@@ -552,8 +552,8 @@ SocksInit::parse_greet(std::size_t &consumed)
         ba::async_write(
             client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
             strand_.wrap(
-                [this, sfd](const boost::system::error_code &ec,
-                            std::size_t bytes_xferred)
+                [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                            std::size_t bytes_xferred)
                 {
                     if (ec) {
                         logfmt("failed writing reply_greetz: {}\n",
@@ -806,8 +806,8 @@ void SocksInit::dns_lookup()
         }
         tcp_resolver->async_resolve
             (query, strand_.wrap(
-             [this, sfd](const boost::system::error_code &ec,
-                         ba::ip::tcp::resolver::iterator it)
+             [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                         ba::ip::tcp::resolver::iterator it)
              {
                  if (ec) {
                      send_reply(RplHostUnreach);
@@ -897,7 +897,7 @@ void SocksInit::dispatch_tcp_connect()
     auto sfd = shared_from_this();
     remote_socket_.async_connect
         (ep, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec)
          {
              boost::system::error_code ecc;
              ba::ip::tcp::endpoint ep;
@@ -1027,7 +1027,7 @@ void SocksInit::dispatch_tcp_bind()
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
         (remote_socket_, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec)
          {
              if (ec) {
                  send_reply(RplFail);
@@ -1131,8 +1131,8 @@ void SocksInit::do_send_reply(ReplyCode replycode, std::size_t ssiz)
         (client_socket_,
          ba::buffer(sockbuf_.data(), ssiz),
          strand_.wrap(
-         [this, sfd, replycode](const boost::system::error_code &ec,
-                                std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}, replycode](const boost::system::error_code &ec,
+                                                std::size_t bytes_xferred)
          {
              if (ec || replycode != RplSuccess) {
                  boost::system::error_code ecc;
@@ -1266,7 +1266,7 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
     if (rso) remote_socket_.cancel();
     if (cso || rso) {
         auto sfd = shared_from_this();
-        strand_.post([this, sfd, cso, rso, dir] {
+        strand_.post([this, sfd{std::move(sfd)}, cso, rso, dir] {
                      boost::system::error_code ec;
                      if (cso)
                          client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
@@ -1358,8 +1358,8 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, tries](const boost::system::error_code &ec,
-                            std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
+                                            std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1397,8 +1397,8 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, tries](const boost::system::error_code &ec,
-                            std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
+                                            std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1436,8 +1436,8 @@ void SocksTCP::tcp_client_socket_read_splice()
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              ssize_t spliced;
              splicePipeRet spr;
@@ -1505,8 +1505,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              ssize_t spliced;
              splicePipeRet spr;
@@ -1575,8 +1575,8 @@ void SocksTCP::doFlushPipeToRemote(int tries)
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, tries](const boost::system::error_code &ec,
-                            std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
+                                            std::size_t bytes_xferred)
          {
              splicePipeRet spc;
              if (ec) {
@@ -1604,8 +1604,8 @@ void SocksTCP::doFlushPipeToClient(int tries)
     auto sfd = shared_from_this();
     client_socket_.async_write_some
         (ba::null_buffers(), strand_.wrap(
-         [this, sfd, tries](const boost::system::error_code &ec,
-                            std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
+                                            std::size_t bytes_xferred)
          {
              splicePipeRet spc;
              if (ec) {
@@ -1636,8 +1636,8 @@ void SocksTCP::tcp_client_socket_read()
     auto sfd = shared_from_this();
     client_socket_.async_read_some
         (ba::buffer(ibm), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
@@ -1664,8 +1664,8 @@ void SocksTCP::tcp_client_socket_read()
              }
              ba::async_write
                  (remote_socket_, client_buf_, strand_.wrap(
-                  [this, sfd](const boost::system::error_code &ec,
-                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                              std::size_t bytes_xferred)
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
@@ -1687,8 +1687,8 @@ void SocksTCP::tcp_remote_socket_read()
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
         (ba::buffer(ibm), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted)
@@ -1715,8 +1715,8 @@ void SocksTCP::tcp_remote_socket_read()
              }
              ba::async_write
                  (client_socket_, remote_buf_, strand_.wrap(
-                  [this, sfd](const boost::system::error_code &ec,
-                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                              std::size_t bytes_xferred)
                   {
                       if (ec) {
                           if (ec != ba::error::operation_aborted)
@@ -1763,8 +1763,8 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
     auto sfd = shared_from_this();
     ba::async_write
         (client_socket_, client_buf_, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              client_buf_.consume(bytes_xferred);
              if (ec) {
@@ -1831,8 +1831,8 @@ void SocksUDP::start()
     auto sfd = shared_from_this();
     ba::async_write
         (tcp_client_socket_, ba::buffer(out_header_.data(), ssiz),
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -1870,8 +1870,8 @@ void SocksUDP::udp_tcp_socket_read()
     tcp_client_socket_.async_read_some
         (ba::buffer(tcp_inbuf_.data(),
                     tcp_inbuf_.size()), strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -1892,8 +1892,8 @@ void SocksUDP::udp_client_socket_read()
     client_socket_.async_receive_from
         (ba::buffer(inbuf_),
          csender_endpoint_, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -2033,8 +2033,8 @@ void SocksUDP::udp_proxy_packet()
     remote_socket_.async_send_to
         (ba::buffer(inbuf_.data() + poffset_, psize_),
          ba::ip::udp::endpoint(daddr_, dport_), 0, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              udp_client_socket_read();
          }));
@@ -2078,8 +2078,8 @@ void SocksUDP::udp_dns_lookup(const std::string &dnsname)
         }
         udp_resolver->async_resolve
             (query, strand_.wrap(
-             [this, sfd](const boost::system::error_code &ec,
-                         ba::ip::udp::resolver::iterator it)
+             [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                         ba::ip::udp::resolver::iterator it)
              {
                  if (ec) {
                      if (ec != ba::error::operation_aborted)
@@ -2130,8 +2130,8 @@ void SocksUDP::udp_remote_socket_read()
     remote_socket_.async_receive_from
         (ba::buffer(outbuf_),
          rsender_endpoint_, strand_.wrap(
-         [this, sfd](const boost::system::error_code &ec,
-                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                     std::size_t bytes_xferred)
          {
              if (ec) {
                  if (ec != ba::error::operation_aborted) {
@@ -2173,8 +2173,8 @@ void SocksUDP::udp_remote_socket_read()
              out_bufs_.push_back(boost::asio::buffer(outbuf_));
              client_socket_.async_send_to
                  (out_bufs_, client_remote_endpoint_, strand_.wrap(
-                  [this, sfd](const boost::system::error_code &ec,
-                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
+                                              std::size_t bytes_xferred)
                   {
                       udp_remote_socket_read();
                   }));
