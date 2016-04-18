@@ -1331,9 +1331,15 @@ inline SocksTCP::splicePipeRet SocksTCP::spliceRemoteToPipe()
     }
     switch (errno) {
     case EINTR: tcp_remote_socket_read_splice(); return splicePipeRet::interrupt;
+    case EAGAIN:
                 // EAGAIN can mean the pipe is full, or it can mean that
                 // the pipe write would block for another reason.
-    case EAGAIN: tcp_remote_socket_write_splice(0); return splicePipeRet::interrupt;
+                if (pToClient_len_ > 0) {
+                    tcp_remote_socket_write_splice(0);
+                    return splicePipeRet::interrupt;
+                }
+                tcp_remote_socket_read_splice();
+                return splicePipeRet::would_block;
     case EBADF:
                  // Splicing from a remote_socket_ that has been shutdown()'ed
                  // will fail with EBADF.
@@ -1366,9 +1372,15 @@ inline SocksTCP::splicePipeRet SocksTCP::spliceClientToPipe()
     }
     switch (errno) {
     case EINTR: tcp_client_socket_read_splice(); return splicePipeRet::interrupt;
+    case EAGAIN:
                 // EAGAIN can mean the pipe is full, or it can mean that
                 // the pipe write would block for another reason.
-    case EAGAIN: tcp_client_socket_write_splice(0); return splicePipeRet::interrupt;
+                if (pToRemote_len_ > 0) {
+                    tcp_client_socket_write_splice(0);
+                    return splicePipeRet::interrupt;
+                }
+                tcp_client_socket_read_splice();
+                return splicePipeRet::would_block;
     case EBADF:
                  // Splicing from a client_socket_ that has been shutdown()'ed
                  // will fail with EBADF.
@@ -1509,22 +1521,14 @@ void SocksTCP::tcp_client_socket_read_splice()
          [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
          {
-             if (ec) goto ec_err;
-             switch (spliceClientToPipe()) {
-             case splicePipeRet::ok: break;
-             case splicePipeRet::eof: return;
-             case splicePipeRet::interrupt: return;
-             case splicePipeRet::error: return;
-             }
-             // XXX: Could keep track of the average splice size of the
-             //      last n reads and revert to normal reads if below
-             //      a threshold.
              splicePipeRet spr;
-             if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto spr_err;
-             if (pToRemote_len_ > 0)
-                 tcp_client_socket_write_splice(0);
-             else
-                 tcp_client_socket_read_splice();
+             if (ec) goto ec_err;
+             while (spliceClientToPipe() == splicePipeRet::ok) {
+                 // XXX: Could keep track of the average splice size of the
+                 //      last n reads and revert to normal reads if below
+                 //      a threshold.
+                 if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto spr_err;
+             }
              return;
 spr_err:
              if (spr != splicePipeRet::eof) {
@@ -1553,22 +1557,14 @@ void SocksTCP::tcp_remote_socket_read_splice()
          [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
          {
-             if (ec) goto ec_err;
-             switch (spliceRemoteToPipe()) {
-             case splicePipeRet::ok: break;
-             case splicePipeRet::eof: return;
-             case splicePipeRet::interrupt: return;
-             case splicePipeRet::error: return;
-             }
-             // XXX: Could keep track of the average splice size of the
-             //      last n reads and revert to normal reads if below
-             //      a threshold.
              splicePipeRet spr;
-             if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto spr_err;
-             if (pToClient_len_ > 0)
-                 tcp_remote_socket_write_splice(0);
-             else
-                 tcp_remote_socket_read_splice();
+             if (ec) goto ec_err;
+             while (spliceRemoteToPipe() == splicePipeRet::ok) {
+                 // XXX: Could keep track of the average splice size of the
+                 //      last n reads and revert to normal reads if below
+                 //      a threshold.
+                 if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto spr_err;
+             }
              return;
 spr_err:
              if (spr != splicePipeRet::eof) {

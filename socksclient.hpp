@@ -262,7 +262,7 @@ private:
     void doFlushPipeToClient(int tries);
 private:
 
-    enum class splicePipeRet { ok = 0, interrupt = -1, eof = -2, error = -3 };
+    enum class splicePipeRet { ok = 0, would_block = -1, interrupt = -2, eof = -3, error = -4 };
 
     inline splicePipeRet spliceRemoteToPipe();
     inline splicePipeRet spliceClientToPipe();
