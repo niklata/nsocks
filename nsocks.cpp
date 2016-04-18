@@ -71,6 +71,7 @@ static uid_t nsocks_uid;
 static gid_t nsocks_gid;
 static std::size_t num_worker_threads = 1;
 static int gflags_detach;
+static bool use_seccomp{false};
 
 static void process_signals()
 {
@@ -95,29 +96,43 @@ static void process_signals()
         });
 }
 
-#if 0
-// XXX: This is not updated for nsocks.
-static int enforce_seccomp(void)
+static int enforce_seccomp(bool changed_uidgid)
 {
+    if (!use_seccomp)
+        return 0;
     struct sock_filter filter[] = {
         VALIDATE_ARCHITECTURE,
         EXAMINE_SYSCALL,
         ALLOW_SYSCALL(sendmsg),
         ALLOW_SYSCALL(recvmsg),
-        ALLOW_SYSCALL(read),
-        ALLOW_SYSCALL(write),
-        ALLOW_SYSCALL(sendto), // used for glibc syslog routines
+        ALLOW_SYSCALL(splice),
         ALLOW_SYSCALL(epoll_wait),
         ALLOW_SYSCALL(epoll_ctl),
+        ALLOW_SYSCALL(sendto),
+        ALLOW_SYSCALL(recvfrom),
+        ALLOW_SYSCALL(read),
+        ALLOW_SYSCALL(write),
         ALLOW_SYSCALL(getpeername),
         ALLOW_SYSCALL(getsockname),
         ALLOW_SYSCALL(stat),
         ALLOW_SYSCALL(open),
         ALLOW_SYSCALL(close),
+        ALLOW_SYSCALL(setsockopt),
+        ALLOW_SYSCALL(getsockopt),
+        ALLOW_SYSCALL(shutdown),
         ALLOW_SYSCALL(connect),
         ALLOW_SYSCALL(socket),
+        ALLOW_SYSCALL(timerfd_settime),
         ALLOW_SYSCALL(accept),
+        ALLOW_SYSCALL(bind),
+        ALLOW_SYSCALL(listen),
         ALLOW_SYSCALL(ioctl),
+
+        ALLOW_SYSCALL(futex),
+        ALLOW_SYSCALL(pipe2),
+        ALLOW_SYSCALL(fcntl),
+        ALLOW_SYSCALL(poll),
+
         ALLOW_SYSCALL(rt_sigreturn),
         ALLOW_SYSCALL(rt_sigaction),
 #ifdef __NR_sigreturn
@@ -137,6 +152,10 @@ static int enforce_seccomp(void)
         ALLOW_SYSCALL(mmap),
         ALLOW_SYSCALL(munmap),
 
+        ALLOW_SYSCALL(fstat),
+        ALLOW_SYSCALL(clone),
+        ALLOW_SYSCALL(mprotect),
+
         ALLOW_SYSCALL(exit_group),
         ALLOW_SYSCALL(exit),
         KILL_PROCESS,
@@ -145,13 +164,14 @@ static int enforce_seccomp(void)
     memset(&prog, 0, sizeof prog);
     prog.len = (unsigned short)(sizeof filter / sizeof filter[0]);
     prog.filter = filter;
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+    if (!changed_uidgid && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
         return -1;
     if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog))
         return -1;
+    fmt::print("seccomp filter installed.  Please disable seccomp if you encounter problems.\n");
+    std::fflush(stdout);
     return 0;
 }
-#endif
 
 static void hostmask_vec_add(const std::vector<std::string> &svec,
                              std::vector<std::pair<boost::asio::ip::address,
@@ -344,7 +364,7 @@ static void process_options(int ac, char *av[])
                 bind_highest_port = std::min(65535,std::max(0,atoi(opt.arg))); break;
             case OPT_NOBIND: g_disable_bind = true; break;
             case OPT_NOUDP: g_disable_udp = true; break;
-            case OPT_SECCOMP: /* use_seccomp = true; */ break;
+            case OPT_SECCOMP: use_seccomp = true; break;
             case OPT_VERBOSE: g_verbose_logs = true; break;
         }
     }
@@ -414,8 +434,8 @@ static void process_options(int ac, char *av[])
     if (nsocks_uid || nsocks_gid)
         nk_set_uidgid(nsocks_uid, nsocks_gid, NULL, 0);
 
-    // if (enforce_seccomp())
-    //     fmt::print("seccomp filter cannot be installed\n");
+    if (enforce_seccomp(nsocks_uid || nsocks_gid))
+        fmt::print("seccomp filter cannot be installed\n");
 }
 
 int main(int ac, char *av[])
