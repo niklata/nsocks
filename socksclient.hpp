@@ -264,6 +264,8 @@ private:
 
     enum class splicePipeRet { ok = 0, interrupt = -1, eof = -2, error = -3 };
 
+    inline splicePipeRet spliceRemoteToPipe();
+    inline splicePipeRet spliceClientToPipe();
     inline splicePipeRet splicePipeToClient();
     inline splicePipeRet splicePipeToRemote();
     inline void tcp_client_socket_read_stopsplice() {

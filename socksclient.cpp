@@ -1316,6 +1316,76 @@ inline void SocksTCP::tcp_remote_socket_read_again
     tcp_remote_socket_read();
 }
 
+inline SocksTCP::splicePipeRet SocksTCP::spliceRemoteToPipe()
+{
+    auto spliced = splice(remote_socket_.native_handle(), NULL,
+                          pToClientW_.native_handle(), NULL,
+                          splice_pipe_size, SPLICE_F_NONBLOCK);
+    if (spliced > 0) {
+        pToClient_len_ += spliced;
+        return splicePipeRet::ok;
+    }
+    if (spliced == 0 || (spliced < 0 && errno == EPIPE)) {
+        flush_then_terminate(FlushDirection::Client);
+        return splicePipeRet::eof;
+    }
+    switch (errno) {
+    case EINTR: tcp_remote_socket_read_splice(); return splicePipeRet::interrupt;
+                // EAGAIN can mean the pipe is full, or it can mean that
+                // the pipe write would block for another reason.
+    case EAGAIN: tcp_remote_socket_write_splice(0); return splicePipeRet::interrupt;
+    case EBADF:
+                 // Splicing from a remote_socket_ that has been shutdown()'ed
+                 // will fail with EBADF.
+                 if (flush_invoked_) {
+                     logfmt("rs: [{}] noticed shutdown: {}\n", dst_hostname_.size()?
+                            dst_hostname_ : dst_address_.to_string(), strerror(errno));
+                     flush_then_terminate(FlushDirection::Client);
+                     return splicePipeRet::error;
+                 }
+    default: break;
+    }
+    logfmt("rs: [{}] splice: {}\n", dst_hostname_.size()?
+           dst_hostname_ : dst_address_.to_string(), strerror(errno));
+    flush_then_terminate(FlushDirection::Client);
+    return splicePipeRet::error;
+}
+
+inline SocksTCP::splicePipeRet SocksTCP::spliceClientToPipe()
+{
+    auto spliced = splice(client_socket_.native_handle(), NULL,
+                          pToRemoteW_.native_handle(), NULL,
+                          splice_pipe_size, SPLICE_F_NONBLOCK);
+    if (spliced > 0) {
+        pToRemote_len_ += spliced;
+        return splicePipeRet::ok;
+    }
+    if (spliced == 0 || (spliced < 0 && errno == EPIPE)) {
+        flush_then_terminate(FlushDirection::Remote);
+        return splicePipeRet::eof;
+    }
+    switch (errno) {
+    case EINTR: tcp_client_socket_read_splice(); return splicePipeRet::interrupt;
+                // EAGAIN can mean the pipe is full, or it can mean that
+                // the pipe write would block for another reason.
+    case EAGAIN: tcp_client_socket_write_splice(0); return splicePipeRet::interrupt;
+    case EBADF:
+                 // Splicing from a client_socket_ that has been shutdown()'ed
+                 // will fail with EBADF.
+                 if (flush_invoked_) {
+                     logfmt("cs: [{}] noticed shutdown: {}\n", dst_hostname_.size()?
+                            dst_hostname_ : dst_address_.to_string(), strerror(errno));
+                     flush_then_terminate(FlushDirection::Remote);
+                     return splicePipeRet::error;
+                 }
+    default: break;
+    }
+    logfmt("cs: [{}] splice: {}\n", dst_hostname_.size()?
+           dst_hostname_ : dst_address_.to_string(), strerror(errno));
+    flush_then_terminate(FlushDirection::Remote);
+    return splicePipeRet::error;
+}
+
 inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient()
 {
     if (pToClient_len_ <= 0)
@@ -1439,47 +1509,22 @@ void SocksTCP::tcp_client_socket_read_splice()
          [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
          {
-             ssize_t spliced;
-             splicePipeRet spr;
              if (ec) goto ec_err;
-             if ((spliced = splice(client_socket_.native_handle(), NULL,
-                                   pToRemoteW_.native_handle(), NULL,
-                                   splice_pipe_size, SPLICE_F_NONBLOCK)) <= 0) // 0 is EOF
-                 goto splice_err;
-             pToRemote_len_ += spliced;
+             switch (spliceClientToPipe()) {
+             case splicePipeRet::ok: break;
+             case splicePipeRet::eof: return;
+             case splicePipeRet::interrupt: return;
+             case splicePipeRet::error: return;
+             }
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
+             splicePipeRet spr;
              if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto spr_err;
              if (pToRemote_len_ > 0)
                  tcp_client_socket_write_splice(0);
              else
                  tcp_client_socket_read_splice();
-             return;
-splice_err:
-             if (spliced == 0) {
-                 flush_then_terminate(FlushDirection::Remote);
-                 return;
-             }
-             switch (errno) {
-                 case EINTR: tcp_client_socket_read_splice(); return;
-                 // EAGAIN can mean the pipe is full, or it can mean that
-                 // the pipe write would block for another reason.
-                 case EAGAIN: tcp_client_socket_write_splice(0); return;
-                 case EBADF:
-                     // Splicing from a client_socket_ that has been shutdown()'ed
-                     // will fail with EBADF.
-                     if (flush_invoked_) {
-                         logfmt("cs: [{}] noticed shutdown: {}\n", dst_hostname_.size()?
-                                dst_hostname_ : dst_address_.to_string(), strerror(errno));
-                         flush_then_terminate(FlushDirection::Remote);
-                         return;
-                     }
-                 default: break;
-             }
-             logfmt("cs: [{}] splice: {}\n", dst_hostname_.size()?
-                    dst_hostname_ : dst_address_.to_string(), strerror(errno));
-             flush_then_terminate(FlushDirection::Remote);
              return;
 spr_err:
              if (spr != splicePipeRet::eof) {
@@ -1508,48 +1553,22 @@ void SocksTCP::tcp_remote_socket_read_splice()
          [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
                                      std::size_t bytes_xferred)
          {
-             ssize_t spliced;
-             splicePipeRet spr;
              if (ec) goto ec_err;
-             if ((spliced = splice(remote_socket_.native_handle(), NULL,
-                                   pToClientW_.native_handle(), NULL,
-                                   splice_pipe_size, SPLICE_F_NONBLOCK)) <= 0) // 0 is EOF
-                 goto splice_err;
-             pToClient_len_ += spliced;
+             switch (spliceRemoteToPipe()) {
+             case splicePipeRet::ok: break;
+             case splicePipeRet::eof: return;
+             case splicePipeRet::interrupt: return;
+             case splicePipeRet::error: return;
+             }
              // XXX: Could keep track of the average splice size of the
              //      last n reads and revert to normal reads if below
              //      a threshold.
+             splicePipeRet spr;
              if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto spr_err;
              if (pToClient_len_ > 0)
                  tcp_remote_socket_write_splice(0);
              else
                  tcp_remote_socket_read_splice();
-             return;
-splice_err:
-             if (spliced == 0) {
-                 flush_then_terminate(FlushDirection::Client);
-                 return;
-             }
-             switch (errno) {
-                 case EINTR: tcp_remote_socket_read_splice(); return;
-                 // EAGAIN can mean the pipe is full, or it can mean that
-                 // the pipe write would block for another reason.
-                 case EAGAIN: tcp_remote_socket_write_splice(0); return;
-                 case EBADF:
-                     // Splicing from a remote_socket_ that has been shutdown()'ed
-                     // will fail with EBADF.
-                     if (flush_invoked_) {
-                         logfmt("rs: [{}] noticed shutdown: {}\n", dst_hostname_.size()?
-                                dst_hostname_ : dst_address_.to_string(), strerror(errno));
-                         flush_then_terminate(FlushDirection::Client);
-                         return;
-                     }
-                 default: break;
-
-             }
-             logfmt("rs: [{}] splice: {}\n", dst_hostname_.size()?
-                    dst_hostname_ : dst_address_.to_string(), strerror(errno));
-             flush_then_terminate(FlushDirection::Client);
              return;
 spr_err:
              if (spr != splicePipeRet::eof) {
