@@ -54,6 +54,8 @@
 #define MAX_PIPE_FLUSH_TRIES 10
 #define UDP_BUFSIZE 1536
 
+#define SPLICE_MIN_XFER 64
+
 namespace ba = boost::asio;
 
 extern ba::io_service io_service;
@@ -1398,13 +1400,16 @@ inline SocksTCP::splicePipeRet SocksTCP::spliceClientToPipe()
     return splicePipeRet::error;
 }
 
-inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient()
+inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient(size_t *xferred)
 {
-    if (pToClient_len_ <= 0)
+    if (pToClient_len_ <= 0) {
+        if (xferred) *xferred = 0;
         return splicePipeRet::ok;
+    }
     auto n = splice(pToClientR_.native_handle(), NULL,
                     client_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
+    if (xferred && n > 0) *xferred = n;
     if (n > 0) {
         pToClient_len_ -= n;
         return splicePipeRet::ok;
@@ -1416,13 +1421,16 @@ inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient()
     return splicePipeRet::error;
 }
 
-inline SocksTCP::splicePipeRet SocksTCP::splicePipeToRemote()
+inline SocksTCP::splicePipeRet SocksTCP::splicePipeToRemote(size_t *xferred)
 {
-    if (pToRemote_len_ <= 0)
+    if (pToRemote_len_ <= 0) {
+        if (xferred) *xferred = 0;
         return splicePipeRet::ok;
+    }
     auto n = splice(pToRemoteR_.native_handle(), NULL,
                     remote_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
+    if (xferred && n > 0) *xferred = n;
     if (n > 0) {
         pToRemote_len_ -= n;
         return splicePipeRet::ok;
@@ -1524,10 +1532,13 @@ void SocksTCP::tcp_client_socket_read_splice()
              splicePipeRet spr;
              if (ec) goto ec_err;
              while (spliceClientToPipe() == splicePipeRet::ok) {
-                 // XXX: Could keep track of the average splice size of the
-                 //      last n reads and revert to normal reads if below
-                 //      a threshold.
-                 if ((spr = splicePipeToRemote()) < splicePipeRet::interrupt) goto spr_err;
+                 size_t xf;
+                 if ((spr = splicePipeToRemote(&xf)) < splicePipeRet::interrupt) goto spr_err;
+                 // XXX: Could use a windowed average of xf.
+                 if (xf < SPLICE_MIN_XFER && pToRemote_len_ == 0) {
+                     tcp_client_socket_read_stopsplice();
+                     return;
+                 }
              }
              return;
 spr_err:
@@ -1560,10 +1571,13 @@ void SocksTCP::tcp_remote_socket_read_splice()
              splicePipeRet spr;
              if (ec) goto ec_err;
              while (spliceRemoteToPipe() == splicePipeRet::ok) {
-                 // XXX: Could keep track of the average splice size of the
-                 //      last n reads and revert to normal reads if below
-                 //      a threshold.
-                 if ((spr = splicePipeToClient()) < splicePipeRet::interrupt) goto spr_err;
+                 size_t xf;
+                 if ((spr = splicePipeToClient(&xf)) < splicePipeRet::interrupt) goto spr_err;
+                 // XXX: Could use a windowed average of xf.
+                 if (xf < SPLICE_MIN_XFER && pToClient_len_ == 0) {
+                     tcp_remote_socket_read_stopsplice();
+                     return;
+                 }
              }
              return;
 spr_err:

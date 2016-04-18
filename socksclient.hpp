@@ -266,8 +266,8 @@ private:
 
     inline splicePipeRet spliceRemoteToPipe();
     inline splicePipeRet spliceClientToPipe();
-    inline splicePipeRet splicePipeToClient();
-    inline splicePipeRet splicePipeToRemote();
+    inline splicePipeRet splicePipeToClient(size_t *xferred = nullptr);
+    inline splicePipeRet splicePipeToRemote(size_t *xferred = nullptr);
     inline void tcp_client_socket_read_stopsplice() {
         assert(pToRemote_len_ == 0);
         pipe_close_raw(pToRemote_len_, pToRemoteR_, pToRemoteW_);
