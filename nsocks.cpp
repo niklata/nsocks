@@ -31,7 +31,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <fstream>
 #include <thread>
 
 #include <unistd.h>
@@ -51,21 +50,19 @@
 
 #include <signal.h>
 #include <errno.h>
-#include <getopt.h>
 
 #include <nk/format.hpp>
 #include <boost/asio.hpp>
-#include <boost/program_options.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include "socksclient.hpp"
+#include "optionparser.hpp"
 
 extern "C" {
 #include "nk/privilege.h"
 #include "nk/pidfile.h"
 #include "nk/seccomp-bpf.h"
 }
-
-namespace po = boost::program_options;
 
 boost::asio::io_service io_service;
 static boost::asio::signal_set asio_signal_set(io_service);
@@ -156,119 +153,6 @@ static int enforce_seccomp(void)
 }
 #endif
 
-static po::variables_map fetch_options(int ac, char *av[])
-{
-    std::string config_file;
-
-    po::options_description cli_opts("Command-line-exclusive options");
-    cli_opts.add_options()
-        ("config,c", po::value<std::string>(&config_file),
-         "path to configuration file")
-        ("background", "run as a background daemon")
-        ("verbose,V", "print details of normal operation")
-        ("help,h", "print help message")
-        ("version,v", "print version information")
-        ;
-
-    po::options_description gopts("Options");
-    gopts.add_options()
-        ("pidfile,f", po::value<std::string>(),
-         "path to process id file")
-        ("chroot,C", po::value<std::string>(),
-         "path in which nsocks should chroot itself")
-        ("address,a", po::value<std::vector<std::string> >()->composing(),
-         "'address[:port]' on which to listen (default all local)")
-        ("user,u", po::value<std::string>(),
-         "user name that nsocks should run as")
-        ("threads,T", po::value<std::size_t>()->default_value(1),
-         "number of worker threads that nsocks should use")
-        ("send-chunksize", po::value<std::size_t>()->default_value(1024),
-         "bytes of ram used as buffer when sending data for a connection")
-        ("receive-chunksize", po::value<std::size_t>()->default_value(2048),
-         "bytes of ram used as buffer when receiving data for a connection")
-        ("splice-size", po::value<std::size_t>()->default_value(1024 * 256),
-         "max byte size of the pipe buffer used for splicing data")
-        ("listenqueue,L", po::value<std::size_t>(),
-         "maximum number of pending client connections")
-        ("disable-ipv6", "disable proxy to ipv6 destinations")
-        ("prefer-ipv4", "prefer ipv4 addresses when looking up hostnames")
-        ("deny-dst", po::value<std::vector<std::string>>()->composing(),
-         "denies connections to the specified 'host/netmask'")
-        ("bind-allow-src", po::value<std::vector<std::string>>()->composing(),
-         "allows bind requests from the specified 'host/netmask'")
-        ("handshake-gc-interval", po::value<std::size_t>()->default_value(5),
-         "seconds between gc sweeps of unfinished handshakes")
-        ("bindlisten-gc-interval", po::value<std::size_t>()->default_value(180),
-         "seconds between gc sweeps of listening bind sockets")
-        ("bind-lowest-port", po::value<uint16_t>(),
-         "lowest port that will be assigned to bind requests")
-        ("bind-highest-port", po::value<uint16_t>(),
-         "highest port that will be assigned to bind requests")
-        ("disable-bind", "ignore client bind requests")
-        ("udp-allow-src", po::value<std::vector<std::string>>()->composing(),
-         "allows udp associate requests from the specified 'host/netmask'")
-        ("disable-udp", "ignore client udp associate requests")
-        ;
-
-    po::options_description cmdline_options;
-    cmdline_options.add(cli_opts).add(gopts);
-    po::options_description cfgfile_options;
-    cfgfile_options.add(gopts);
-
-    po::positional_options_description p;
-    p.add("address", -1);
-    po::variables_map vm;
-    try {
-        po::store(po::command_line_parser(ac, av).
-                  options(cmdline_options).positional(p).run(), vm);
-    } catch (const std::exception& e) {
-        fmt::print("{}\n", e.what());
-    }
-    po::notify(vm);
-
-    if (config_file.size()) {
-        std::ifstream ifs(config_file.c_str());
-        if (!ifs) {
-            fmt::print("Could not open config file: {}\n", config_file);
-            std::exit(EXIT_FAILURE);
-        }
-        po::store(po::parse_config_file(ifs, cfgfile_options), vm);
-        po::notify(vm);
-    }
-
-    if (vm.count("help")) {
-        fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
-                  "Copyright (c) 2013-2016 Nicholas J. Kain\n"
-                  "{} [options] addresses...\n{}\n", av[0], cmdline_options);
-        std::exit(EXIT_FAILURE);
-    }
-    if (vm.count("version")) {
-        fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
-            "Copyright (c) 2013-2016 Nicholas J. Kain\n"
-            "All rights reserved.\n\n"
-            "Redistribution and use in source and binary forms, with or without\n"
-            "modification, are permitted provided that the following conditions are met:\n\n"
-            "- Redistributions of source code must retain the above copyright notice,\n"
-            "  this list of conditions and the following disclaimer.\n"
-            "- Redistributions in binary form must reproduce the above copyright notice,\n"
-            "  this list of conditions and the following disclaimer in the documentation\n"
-            "  and/or other materials provided with the distribution.\n\n"
-            "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\n"
-            "AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n"
-            "IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n"
-            "ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE\n"
-            "LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n"
-            "CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n"
-            "SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n"
-            "INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n"
-            "CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n"
-            "ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n"
-            "POSSIBILITY OF SUCH DAMAGE.\n");
-        std::exit(EXIT_FAILURE);
-    }
-    return vm;
-}
-
 static void hostmask_vec_add(const std::vector<std::string> &svec,
                              std::vector<std::pair<boost::asio::ip::address,
                                                    unsigned int>> &dvec,
@@ -304,102 +188,199 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
     }
 }
 
+static void print_version()
+{
+    fmt::print("nsocks " NSOCKS_VERSION ", socks5 server.\n"
+               "Copyright (c) 2013-2016 Nicholas J. Kain\n"
+               "All rights reserved.\n\n"
+               "Redistribution and use in source and binary forms, with or without\n"
+               "modification, are permitted provided that the following conditions are met:\n\n"
+               "- Redistributions of source code must retain the above copyright notice,\n"
+               "  this list of conditions and the following disclaimer.\n"
+               "- Redistributions in binary form must reproduce the above copyright notice,\n"
+               "  this list of conditions and the following disclaimer in the documentation\n"
+               "  and/or other materials provided with the distribution.\n\n"
+               "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\n"
+               "AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n"
+               "IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n"
+               "ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE\n"
+               "LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n"
+               "CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n"
+               "SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n"
+               "INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n"
+               "CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n"
+               "ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n"
+               "POSSIBILITY OF SUCH DAMAGE.\n");
+}
+
+struct Arg : public option::Arg
+{
+    static void print_error(const char *head, const option::Option &opt, const char *tail)
+    {
+        fmt::fprintf(stderr, "%s%.*s%s", head, opt.namelen, opt.name, tail);
+    }
+    static option::ArgStatus Unknown(const option::Option &opt, bool msg)
+    {
+        if (msg) print_error("Unknown option '", opt, "'\n");
+        return option::ARG_ILLEGAL;
+    }
+    static option::ArgStatus String(const option::Option &opt, bool msg)
+    {
+        if (opt.arg && opt.arg[0])
+            return option::ARG_OK;
+        if (msg) print_error("Option '", opt, "' requires an argument\n");
+        return option::ARG_ILLEGAL;
+    }
+    static option::ArgStatus Integer(const option::Option &opt, bool msg)
+    {
+        char *endptr{nullptr};
+        if (opt.arg && strtol(opt.arg, &endptr, 10)){}
+        if (endptr != opt.arg && !*endptr)
+            return option::ARG_OK;
+        if (msg) print_error("Option '", opt, "' requires an integer argument\n");
+        return option::ARG_ILLEGAL;
+    }
+};
+enum OpIdx {
+    OPT_UNKNOWN, OPT_HELP, OPT_VERSION, OPT_BACKGROUND, OPT_PIDFILE,
+    OPT_CHROOT, OPT_USER, OPT_THREADS, OPT_SCHUNKSIZE, OPT_RCHUNKSIZE,
+    OPT_SPLICESIZE, OPT_LISTENQ, OPT_NOIPV6, OPT_PREFERIPV4, OPT_DENYDST,
+    OPT_BINDOK, OPT_UDPOK, OPT_HSHAKEGC, OPT_BINDGC, OPT_BINDLPORT,
+    OPT_BINDHPORT, OPT_NOBIND, OPT_NOUDP, OPT_SECCOMP, OPT_VERBOSE
+};
+static const option::Descriptor usage[] = {
+    { OPT_UNKNOWN,    0,  "",           "", Arg::Unknown,
+        "nsocks " NSOCKS_VERSION ", socks5 server.\n"
+        "Copyright (c) 2013-2016 Nicholas J. Kain\n"
+        "nsocks [options] listen-address[:port]...\n\nOptions:\n"},
+    { OPT_HELP,       0, "h",              "help",    Arg::None, "\t-h, \t--help  \tPrint usage and exit." },
+    { OPT_VERSION,    0, "v",           "version",    Arg::None, "\t-v, \t--version  \tPrint version and exit." },
+    { OPT_BACKGROUND, 0, "b",        "background",    Arg::None, "\t-b, \t--background  \tRun as a background daemon." },
+    { OPT_PIDFILE,    0, "f",           "pidfile",  Arg::String, "\t-f, \t--pidfile  \tPath to process id file." },
+    { OPT_CHROOT,     0, "C",            "chroot",  Arg::String, "\t-C, \t--chroot  \tPath in which nident should chroot itself." },
+    { OPT_USER,       0, "u",              "user",  Arg::String, "\t-u, \t--user  \tUser name that nident should run as." },
+    { OPT_THREADS,    0, "T",           "threads", Arg::Integer, "\t-T, \t--threads  \tNumber of worker threads that nsocks should use." },
+    { OPT_SCHUNKSIZE, 0,  "",    "send-chunksize", Arg::Integer, "\t    \t--send-chunksize  \tBytes of ram used as buffer when sending data for a connection." },
+    { OPT_RCHUNKSIZE, 0,  "", "receive-chunksize", Arg::Integer, "\t    \t--receive-chunksize  \tBytes of ram used as buffer when receiving data for a connection." },
+    { OPT_SPLICESIZE, 0,  "",       "splice-size", Arg::Integer, "\t    \t--splice-size  \tMax byte size of the pipe buffer used for splicing data." },
+    { OPT_LISTENQ,    0, "L",       "listenqueue", Arg::Integer, "\t-L  \t--listenqueue  \tMaximum number of pending client connections." },
+    { OPT_NOIPV6,     0,  "",      "disable-ipv6",    Arg::None, "\t    \t--disable-ipv6  \tHost kernel doesn't support ipv6." },
+    { OPT_PREFERIPV4, 0,  "",       "prefer-ipv4",    Arg::None, "\t    \t--prefer-ipv4  \tPrefer ipv4 addresses when looking up hostnames." },
+    { OPT_DENYDST,    0,  "",          "deny-dst",  Arg::String, "\t    \t--deny-dst  \tDenies connections to the specified 'host/netmask'." },
+    { OPT_BINDOK,     0,  "",    "bind-allow-src",  Arg::String, "\t    \t--bind-allow-src  \tAllows bind requests from the specified 'host/netmask'." },
+    { OPT_UDPOK,      0,  "",     "udp-allow-src",  Arg::String, "\t    \t--udp-allow-src  \tAllows udp associate requests from the specified 'host/netmask'." },
+    { OPT_HSHAKEGC,   0,  "",  "handshake-gc-sec", Arg::Integer, "\t    \t--handshake-gc-sec  \tSeconds between gc sweeps of unfinished handshakes." },
+    { OPT_BINDGC,     0,  "", "bindlisten-gc-sec", Arg::Integer, "\t    \t--bindlisten-gc-sec  \tSeconds between gc sweeps of listening bind sockets." },
+    { OPT_BINDLPORT,  0,  "",  "bind-lowest-port", Arg::Integer, "\t    \t--bind-lowest-port  \tLowest port that will be assigned to bind requests." },
+    { OPT_BINDHPORT,  0,  "", "bind-highest-port", Arg::Integer, "\t    \t--bind-highest-port  \tHighest port that will be assigned to bind requests." },
+    { OPT_NOBIND,     0,  "",      "disable-bind",    Arg::None, "\t    \t--disable-bind  \tIgnore client bind requests." },
+    { OPT_NOUDP,     0,  "",        "disable-udp",    Arg::None, "\t    \t--disable-udp  \tIgnore client udp associate requests." },
+    { OPT_SECCOMP,    0,  "",   "seccomp-enforce",    Arg::None, "\t    \t--seccomp-enforce  \tEnforce seccomp syscall restrictions." },
+    { OPT_VERBOSE,    0, "V",           "verbose",    Arg::None, "\t    \t--verbose  \tLog diagnostic information." },
+    {0,0,0,0,0,0}
+};
 static void process_options(int ac, char *av[])
 {
+    ac-=ac>0; av+=ac>0;
+    option::Stats stats(usage, ac, av);
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wvla"
+    option::Option options[stats.options_max], buffer[stats.buffer_max];
+#pragma GCC diagnostic pop
+    option::Parser parse(usage, ac, av, options, buffer);
+#else
+    auto options = std::make_unique<option::Option[]>(stats.options_max);
+    auto buffer = std::make_unique<option::Option[]>(stats.buffer_max);
+    option::Parser parse(usage, ac, av, options.get(), buffer.get());
+#endif
+    if (parse.error())
+        std::exit(EXIT_FAILURE);
+    if (options[OPT_HELP]) {
+        int col = getenv("COLUMNS") ? atoi(getenv("COLUMNS")) : 80;
+        option::printUsage(fwrite, stdout, usage, col);
+        std::exit(EXIT_FAILURE);
+    }
+    if (options[OPT_VERSION]) {
+        print_version();
+        std::exit(EXIT_FAILURE);
+    }
+
     std::vector<std::string> addrlist, denydstlist, bindallowsrclist,
         udpallowsrclist;
     std::string pidfile, chroot_path;
+    size_t hs_secs{5}, bindlisten_secs{180};
+    uint16_t bind_lowest_port(0), bind_highest_port(0);
 
-    auto vm(fetch_options(ac, av));
-
-    auto hs_secs = vm["handshake-gc-interval"].as<std::size_t>();
-    auto bindlisten_secs = vm["bindlisten-gc-interval"].as<std::size_t>();
-
-    if (vm.count("background"))
-        gflags_detach = 1;
-    if (vm.count("verbose"))
-        g_verbose_logs = true;
-    if (vm.count("pidfile"))
-        pidfile = vm["pidfile"].as<std::string>();
-    if (vm.count("chroot"))
-        chroot_path = vm["chroot"].as<std::string>();
-    if (vm.count("address"))
-        addrlist = vm["address"].as<std::vector<std::string> >();
-    if (vm.count("deny-dst"))
-        denydstlist = vm["deny-dst"].as<std::vector<std::string>>();
-    if (vm.count("bind-allow-src"))
-        bindallowsrclist = vm["bind-allow-src"].as<std::vector<std::string>>();
-    if (vm.count("udp-allow-src"))
-        udpallowsrclist = vm["udp-allow-src"].as<std::vector<std::string>>();
-    if (vm.count("user")) {
-        auto t = vm["user"].as<std::string>();
-        if (nk_uidgidbyname(t.c_str(), &nsocks_uid, &nsocks_gid)) {
-            fmt::print("invalid user '{}' specified\n", t.c_str());
-            std::exit(EXIT_FAILURE);
+    for (int i = 0; i < parse.optionsCount(); ++i) {
+        option::Option &opt = buffer[i];
+        switch (opt.index()) {
+            case OPT_BACKGROUND: gflags_detach = 1; break;
+            case OPT_PIDFILE: pidfile = std::string(opt.arg); break;
+            case OPT_CHROOT: chroot_path = std::string(opt.arg); break;
+            case OPT_USER:
+                if (nk_uidgidbyname(opt.arg, &nsocks_uid, &nsocks_gid)) {
+                    fmt::print("invalid user '{}' specified\n", opt.arg);
+                    std::exit(EXIT_FAILURE);
+                }
+                break;
+            case OPT_THREADS: num_worker_threads = std::max(1,atoi(opt.arg)); break;
+            case OPT_SCHUNKSIZE:
+                SocksTCP::set_send_buffer_chunk_size(std::max(128,atoi(opt.arg))); break;
+            case OPT_RCHUNKSIZE:
+                SocksTCP::set_receive_buffer_chunk_size(std::max(128,atoi(opt.arg))); break;
+            case OPT_SPLICESIZE: SocksTCP::set_splice_pipe_size(std::max(4096,atoi(opt.arg))); break;
+            case OPT_LISTENQ: set_listen_queuelen(std::max(1,atoi(opt.arg))); break;
+            case OPT_NOIPV6: g_disable_ipv6 = true; break;
+            case OPT_PREFERIPV4: g_prefer_ipv4 = true; break;
+            case OPT_DENYDST: denydstlist.emplace_back(opt.arg); break;
+            case OPT_BINDOK: bindallowsrclist.emplace_back(opt.arg); break;
+            case OPT_UDPOK: udpallowsrclist.emplace_back(opt.arg); break;
+            case OPT_HSHAKEGC: hs_secs = std::max(1,atoi(opt.arg)); break;
+            case OPT_BINDGC: bindlisten_secs = std::max(1,atoi(opt.arg)); break;
+            case OPT_BINDLPORT:
+                bind_lowest_port = std::min(65535,std::max(0,atoi(opt.arg))); break;
+            case OPT_BINDHPORT:
+                bind_highest_port = std::min(65535,std::max(0,atoi(opt.arg))); break;
+            case OPT_NOBIND: g_disable_bind = true; break;
+            case OPT_NOUDP: g_disable_udp = true; break;
+            case OPT_SECCOMP: /* use_seccomp = true; */ break;
+            case OPT_VERBOSE: g_verbose_logs = true; break;
         }
     }
-    if (vm.count("threads"))
-        num_worker_threads = vm["threads"].as<std::size_t>();
-    if (vm.count("send-chunksize")) {
-        auto t = vm["send-chunksize"].as<std::size_t>();
-        SocksTCP::set_send_buffer_chunk_size(t);
+    for (int i = 0; i < parse.nonOptionsCount(); ++i) {
+        addrlist.emplace_back(parse.nonOption(i));
     }
-    if (vm.count("receive-chunksize")) {
-        auto t = vm["receive-chunksize"].as<std::size_t>();
-        SocksTCP::set_receive_buffer_chunk_size(t);
-    }
-    if (vm.count("splice-size")) {
-        auto t = vm["splice-size"].as<std::size_t>();
-        SocksTCP::set_splice_pipe_size(t);
-    }
-    if (vm.count("listenqueue")) {
-        auto t = vm["listenqueue"].as<std::size_t>();
-        set_listen_queuelen(t);
-    }
-    if (vm.count("disable-ipv6"))
-        g_disable_ipv6 = true;
-    if (vm.count("prefer-ipv4"))
-        g_prefer_ipv4 = true;
-    if (vm.count("disable-bind"))
-        g_disable_bind = true;
-    if (vm.count("disable-udp"))
-        g_disable_udp = true;
-
-    uint16_t bind_lowest_port(0), bind_highest_port(0);
-    if (vm.count("bind-lowest-port"))
-        bind_lowest_port = vm["bind-lowest-port"].as<uint16_t>();
-    if (vm.count("bind-highest-port"))
-        bind_highest_port = vm["bind-lowest-port"].as<uint16_t>();
 
     init_prng();
     init_conntrackers(hs_secs, bindlisten_secs);
     init_bind_port_assigner(bind_lowest_port, bind_highest_port);
 
+    for (const auto &i: addrlist) {
+        std::string addr(i);
+        int port = 1080;
+        auto loc = addr.rfind(":");
+        if (loc != std::string::npos) {
+            auto pstr = addr.substr(loc + 1);
+            try {
+                port = boost::lexical_cast<unsigned short>(pstr);
+            } catch (const boost::bad_lexical_cast&) {
+                fmt::print("bad port in address '{}', defaulting to 1080\n", addr);
+            }
+            addr.erase(loc);
+        }
+        try {
+            auto addy = boost::asio::ip::address::from_string(addr);
+            auto ep = boost::asio::ip::tcp::endpoint(addy, port);
+            listeners.emplace_back(std::make_unique<ClientListener>(ep));
+        } catch (const boost::system::error_code&) {
+            fmt::print("bad address: {}\n", addr);
+        }
+    }
     if (!addrlist.size()) {
         auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);
         listeners.emplace_back(std::make_unique<ClientListener>(ep));
-    } else
-        for (const auto &i: addrlist) {
-            std::string addr(i);
-            int port = 1080;
-            auto loc = addr.rfind(":");
-            if (loc != std::string::npos) {
-                auto pstr = addr.substr(loc + 1);
-                try {
-                    port = boost::lexical_cast<unsigned short>(pstr);
-                } catch (const boost::bad_lexical_cast&) {
-                    fmt::print("bad port in address '{}', defaulting to 1080\n", addr);
-                }
-                addr.erase(loc);
-            }
-            try {
-                auto addy = boost::asio::ip::address::from_string(addr);
-                auto ep = boost::asio::ip::tcp::endpoint(addy, port);
-                listeners.emplace_back(std::make_unique<ClientListener>(ep));
-            } catch (const boost::system::error_code&) {
-                fmt::print("bad address: {}\n", addr);
-            }
-        }
+    }
 
     hostmask_vec_add(denydstlist, g_dst_deny_masks, "deny-dst");
     hostmask_vec_add(bindallowsrclist, g_client_bind_allow_masks,
@@ -435,7 +416,6 @@ static void process_options(int ac, char *av[])
 
     // if (enforce_seccomp())
     //     fmt::print("seccomp filter cannot be installed\n");
-
 }
 
 int main(int ac, char *av[])
