@@ -301,25 +301,21 @@ static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
-    auto bnd_addr = ep.address();
+    const auto bnd_addr = ep.address();
     if (bnd_addr.is_v4()) {
-        auto v4b = bnd_addr.to_v4().to_bytes();
+        const auto v4b = bnd_addr.to_v4().to_bytes();
         arr[asiz++] = 0x01;
-        for (auto &i: v4b)
+        for (const auto &i: v4b)
             arr[asiz++] = i;
     } else {
-        auto v6b = bnd_addr.to_v6().to_bytes();
+        const auto v6b = bnd_addr.to_v6().to_bytes();
         arr[asiz++] = 0x04;
-        for (auto &i: v6b)
+        for (const auto &i: v6b)
             arr[asiz++] = i;
     }
-    union {
-        uint16_t p;
-        char b[2];
-    } portu;
-    portu.p = htons(ep.port());
-    arr[asiz++] = portu.b[0];
-    arr[asiz++] = portu.b[1];
+    const uint16_t p{htons(ep.port())};
+    memcpy(&arr[asiz], &p, sizeof p);
+    asiz += sizeof p;
     return asiz;
 }
 
@@ -350,18 +346,14 @@ static inline size_t send_reply_binds_v4(std::array<char, 24> &arr,
                                          std::size_t asiz,
                                          ba::ip::tcp::endpoint ep)
 {
-    union {
-        uint16_t p;
-        char b[2];
-    } portu;
-    portu.p = htons(ep.port());
-    arr[asiz++] = portu.b[0];
-    arr[asiz++] = portu.b[1];
+    const uint16_t p{htons(ep.port())};
+    memcpy(&arr[asiz], &p, sizeof p);
+    asiz += sizeof p;
 
-    auto bnd_addr = ep.address();
+    const auto bnd_addr = ep.address();
     assert(bnd_addr.is_v4());
-    auto v4b = bnd_addr.to_v4().to_bytes();
-    for (auto &i: v4b)
+    const auto v4b = bnd_addr.to_v4().to_bytes();
+    for (const auto &i: v4b)
         arr[asiz++] = i;
     return asiz;
 }
@@ -2170,33 +2162,29 @@ void SocksUDP::udp_remote_socket_read()
                  return;
              }
              // Attach the header.
-             auto saddr = rsender_endpoint_.address();
-             uint16_t sport = rsender_endpoint_.port();
+             const auto saddr = rsender_endpoint_.address();
+             const uint16_t sport = rsender_endpoint_.port();
              std::size_t ohs = 4;
              if (saddr.is_v4()) {
                  out_header_[0] = 0;
                  out_header_[1] = 0;
                  out_header_[2] = 0;
                  out_header_[3] = 1;
-                 auto v4b = saddr.to_v4().to_bytes();
-                 for (auto &i: v4b)
+                 const auto v4b = saddr.to_v4().to_bytes();
+                 for (const auto &i: v4b)
                      out_header_[ohs++] = i;
              } else {
                  out_header_[0] = 0;
                  out_header_[1] = 0;
                  out_header_[2] = 0;
                  out_header_[3] = 4;
-                 auto v6b = saddr.to_v6().to_bytes();
-                 for (auto &i: v6b)
+                 const auto v6b = saddr.to_v6().to_bytes();
+                 for (const auto &i: v6b)
                      out_header_[ohs++] = i;
              }
-             union {
-                 uint16_t p;
-                 char b[2];
-             } portu;
-             portu.p = htons(sport);
-             out_header_[ohs++] = portu.b[0];
-             out_header_[ohs++] = portu.b[1];
+             const uint16_t p{htons(sport)};
+             memcpy(&out_header_[ohs], &p, sizeof p);
+             ohs += sizeof p;
              // Forward it to the client socket.
              out_bufs_.push_back(boost::asio::buffer(out_header_.data(), ohs));
              out_bufs_.push_back(boost::asio::buffer(outbuf_));
