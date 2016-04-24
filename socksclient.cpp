@@ -40,7 +40,7 @@
 #include <boost/dynamic_bitset.hpp>
 
 #include <random>
-#include "xorshift.hpp"
+#include <nk/xorshift.hpp>
 
 #ifdef HAS_64BIT
 #include <boost/lockfree/stack.hpp>
