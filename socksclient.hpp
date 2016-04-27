@@ -35,23 +35,21 @@
 #include <list>
 #include <netdb.h>
 
-#include <boost/asio.hpp>
-#include <boost/utility.hpp>
+#include <asio.hpp>
 #include <boost/optional.hpp>
 #include <nk/format.hpp>
 
 #ifdef USE_SPLICE
-extern void pipe_close_raw(std::size_t p_len,
-                           boost::asio::posix::stream_descriptor &sa,
-                           boost::asio::posix::stream_descriptor &sb);
+extern void pipe_close_raw(std::size_t p_len, asio::posix::stream_descriptor &sa,
+                           asio::posix::stream_descriptor &sb);
 #endif
 
-class SocksInit
-    : public std::enable_shared_from_this<SocksInit>, boost::noncopyable
+class SocksInit : public std::enable_shared_from_this<SocksInit>
 {
 public:
-    SocksInit(boost::asio::io_service &io_service,
-              boost::asio::ip::tcp::socket socket);
+    SocksInit(asio::io_service &io_service, asio::ip::tcp::socket socket);
+    SocksInit(const SocksInit &) = delete;
+    SocksInit& operator=(const SocksInit &) = delete;
     ~SocksInit();
     void terminate();
     void cancel_sockets();
@@ -125,11 +123,10 @@ private:
     };
 
     struct BoundSocket {
-        BoundSocket(boost::asio::io_service &io_service,
-                    boost::asio::ip::tcp::endpoint lep);
+        BoundSocket(asio::io_service &io_service, asio::ip::tcp::endpoint lep);
         ~BoundSocket();
-        boost::asio::ip::tcp::acceptor acceptor_;
-        boost::asio::ip::tcp::endpoint local_endpoint_;
+        asio::ip::tcp::acceptor acceptor_;
+        asio::ip::tcp::endpoint local_endpoint_;
         std::list<std::weak_ptr<SocksInit>>::iterator tracker_iterator_;
         unsigned char tracker_idx_;
     };
@@ -137,10 +134,10 @@ private:
     inline void set_remote_socket_options()
     {
         remote_socket_.non_blocking(true);
-        remote_socket_.set_option(boost::asio::ip::tcp::no_delay(true));
-        remote_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+        remote_socket_.set_option(asio::ip::tcp::no_delay(true));
+        remote_socket_.set_option(asio::socket_base::keep_alive(true));
 #ifdef TCP_QUICKACK
-        const boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
+        const asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
         remote_socket_.set_option(quickack);
 #endif
     }
@@ -149,7 +146,7 @@ private:
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     void kick_tcp_resolver_timer();
     enum class DNSType { None, V4, V6, Any };
-    bool dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resolver::iterator it,
+    bool dns_choose_address(DNSType addrtype, asio::ip::tcp::resolver::iterator it,
                             const size_t cv4, const size_t cv6);
     void dns_lookup();
     void dispatch_connrq(bool did_dns = false);
@@ -158,23 +155,23 @@ private:
 
     bool is_bind_client_allowed() const;
     void dispatch_tcp_bind();
-    bool create_bind_socket(boost::asio::ip::tcp::endpoint ep);
+    bool create_bind_socket(asio::ip::tcp::endpoint ep);
 
-    bool is_udp_client_allowed(boost::asio::ip::address laddr) const;
+    bool is_udp_client_allowed(asio::ip::address laddr) const;
     void dispatch_udp();
 
     void do_send_reply(ReplyCode replycode, std::size_t ssiz);
     void send_reply(ReplyCode replycode);
-    ReplyCode errorToReplyCode(const boost::system::error_code &ec);
+    ReplyCode errorToReplyCode(const std::error_code &ec);
 
     std::array<char, 24> sockbuf_;
     std::atomic<bool> tracked_;
     std::unique_ptr<BoundSocket> bound_;
     std::string dst_hostname_; // Shared
-    boost::asio::ip::address dst_address_; // Shared
-    boost::asio::strand strand_;
-    boost::asio::ip::tcp::socket client_socket_; // Shared
-    boost::asio::ip::tcp::socket remote_socket_; // Shared
+    asio::ip::address dst_address_; // Shared
+    asio::strand strand_;
+    asio::ip::tcp::socket client_socket_; // Shared
+    asio::ip::tcp::socket remote_socket_; // Shared
     uint16_t dst_port_; // Shared
     uint8_t pstate_;
     uint8_t ibSiz_;
@@ -189,18 +186,16 @@ private:
     bool auth_unpw_:1;
 };
 
-class SocksTCP
-    : public std::enable_shared_from_this<SocksTCP>, boost::noncopyable
+class SocksTCP : public std::enable_shared_from_this<SocksTCP>
 {
 public:
-    SocksTCP(boost::asio::io_service &io_service,
-             boost::asio::ip::tcp::socket client_socket,
-             boost::asio::ip::tcp::socket remote_socket,
-             boost::asio::ip::address dst_address,
-             uint16_t dst_port, bool is_bind, bool is_socks_v4,
-             std::string dst_hostname = "");
+    SocksTCP(asio::io_service &io_service, asio::ip::tcp::socket client_socket,
+             asio::ip::tcp::socket remote_socket, asio::ip::address dst_address,
+             uint16_t dst_port, bool is_bind, bool is_socks_v4, std::string dst_hostname = "");
+    SocksTCP(const SocksTCP &) = delete;
+    SocksTCP& operator=(const SocksTCP &) = delete;
     ~SocksTCP();
-    void start(boost::asio::ip::tcp::endpoint ep);
+    void start(asio::ip::tcp::endpoint ep);
     void terminate() {}
 
     inline void set_untracked() { tracked_ = false; }
@@ -211,10 +206,8 @@ public:
     get_tracker_iterator() const {
         return tracker_iterator_;
     }
-    bool matches_dst(const boost::asio::ip::address &addr,
-                     uint16_t port) const;
-    inline boost::asio::ip::tcp::endpoint
-        remote_socket_local_endpoint(boost::system::error_code &ec) const
+    bool matches_dst(const asio::ip::address &addr, uint16_t port) const;
+    inline asio::ip::tcp::endpoint remote_socket_local_endpoint(std::error_code &ec) const
     {
         return remote_socket_.local_endpoint(ec);
     }
@@ -228,15 +221,15 @@ private:
 
     std::atomic<bool> tracked_;
     std::list<std::weak_ptr<SocksTCP>>::iterator tracker_iterator_;
-    boost::asio::streambuf client_buf_;
-    boost::asio::streambuf remote_buf_;
+    asio::streambuf client_buf_;
+    asio::streambuf remote_buf_;
 
     // Shared with SocksInit
     std::string dst_hostname_;
-    boost::asio::ip::address dst_address_;
-    boost::asio::strand strand_;
-    boost::asio::ip::tcp::socket client_socket_;
-    boost::asio::ip::tcp::socket remote_socket_;
+    asio::ip::address dst_address_;
+    asio::strand strand_;
+    asio::ip::tcp::socket client_socket_;
+    asio::ip::tcp::socket remote_socket_;
     uint16_t dst_port_;
     bool is_socks_v4_:1;
     bool is_bind_:1;
@@ -247,13 +240,13 @@ private:
     std::size_t pToClient_len_;
     std::chrono::high_resolution_clock::time_point client_read_ts_;
     std::chrono::high_resolution_clock::time_point remote_read_ts_;
-    boost::asio::posix::stream_descriptor pToRemoteR_;
-    boost::asio::posix::stream_descriptor pToClientR_;
-    boost::asio::posix::stream_descriptor pToRemoteW_;
-    boost::asio::posix::stream_descriptor pToClientW_;
+    asio::posix::stream_descriptor pToRemoteR_;
+    asio::posix::stream_descriptor pToClientR_;
+    asio::posix::stream_descriptor pToRemoteW_;
+    asio::posix::stream_descriptor pToClientW_;
     void flush_then_terminate(FlushDirection dir);
-    bool init_pipe(boost::asio::posix::stream_descriptor &preader,
-                   boost::asio::posix::stream_descriptor &pwriter);
+    bool init_pipe(asio::posix::stream_descriptor &preader,
+                   asio::posix::stream_descriptor &pwriter);
     void tcp_client_socket_write_splice(int tries);
     void tcp_remote_socket_write_splice(int tries);
     void tcp_client_socket_read_splice();
@@ -309,42 +302,40 @@ private:
     void close_bind_listen_socket();
 };
 
-class SocksUDP
-    : public std::enable_shared_from_this<SocksUDP>, boost::noncopyable
+class SocksUDP : public std::enable_shared_from_this<SocksUDP>
 {
 public:
-    SocksUDP(boost::asio::io_service &io_service,
-             boost::asio::ip::tcp::socket tcp_client_socket,
-             boost::asio::ip::udp::endpoint client_ep,
-             boost::asio::ip::udp::endpoint remote_ep,
-             boost::asio::ip::udp::endpoint client_remote_ep);
+    SocksUDP(asio::io_service &io_service, asio::ip::tcp::socket tcp_client_socket,
+             asio::ip::udp::endpoint client_ep, asio::ip::udp::endpoint remote_ep,
+             asio::ip::udp::endpoint client_remote_ep);
+    SocksUDP(const SocksUDP &) = delete;
+    SocksUDP& operator=(const SocksUDP &) = delete;
     ~SocksUDP();
     void start();
     void terminate() {}
 private:
     struct UDPFrags {
-        UDPFrags(boost::asio::io_service &io_service)
-                : timer_(io_service), lastn_(0) {}
-        boost::asio::deadline_timer timer_;
+        UDPFrags(asio::io_service &io_service) : timer_(io_service), lastn_(0) {}
+        asio::deadline_timer timer_;
         std::vector<uint8_t> buf_;
-        boost::asio::ip::address addr_;
+        asio::ip::address addr_;
         std::string dns_;
         uint16_t port_;
         uint8_t lastn_;
 
         void reset() {
-            boost::system::error_code ec;
+            std::error_code ec;
             timer_.cancel(ec);
             buf_.clear();
             dns_.clear();
-            addr_ = boost::asio::ip::address();
+            addr_ = asio::ip::address();
             port_ = 0;
             lastn_ = 0;
         }
         void reaper_start() {
             timer_.expires_from_now(boost::posix_time::seconds(5));
             timer_.async_wait(
-                [this](const boost::system::error_code& error)
+                [this](const std::error_code& error)
                 {
                     if (error)
                         return;
@@ -366,21 +357,21 @@ private:
     void close_udp_sockets();
 
     // Shared with SocksInit
-    boost::asio::ip::tcp::socket tcp_client_socket_;
+    asio::ip::tcp::socket tcp_client_socket_;
 
-    boost::asio::ip::udp::endpoint client_endpoint_;
-    boost::asio::ip::udp::endpoint remote_endpoint_;
-    boost::asio::ip::udp::endpoint client_remote_endpoint_;
-    boost::asio::ip::udp::endpoint csender_endpoint_;
-    boost::asio::ip::udp::endpoint rsender_endpoint_;
-    boost::asio::strand strand_;
-    boost::asio::ip::udp::socket client_socket_;
-    boost::asio::ip::udp::socket remote_socket_;
-    boost::asio::ip::address daddr_;
+    asio::ip::udp::endpoint client_endpoint_;
+    asio::ip::udp::endpoint remote_endpoint_;
+    asio::ip::udp::endpoint client_remote_endpoint_;
+    asio::ip::udp::endpoint csender_endpoint_;
+    asio::ip::udp::endpoint rsender_endpoint_;
+    asio::strand strand_;
+    asio::ip::udp::socket client_socket_;
+    asio::ip::udp::socket remote_socket_;
+    asio::ip::address daddr_;
     std::vector<uint8_t> inbuf_;
     std::vector<uint8_t> outbuf_;
     std::array<char, 24> out_header_;
-    std::vector<boost::asio::const_buffer> out_bufs_;
+    std::vector<asio::const_buffer> out_bufs_;
     std::size_t poffset_;
     std::size_t psize_;
     uint16_t dport_;
@@ -388,15 +379,17 @@ private:
     std::array<char, 16> tcp_inbuf_;
 };
 
-class ClientListener : boost::noncopyable
+class ClientListener
 {
 public:
-    ClientListener(const boost::asio::ip::tcp::endpoint &endpoint);
-    const boost::asio::ip::tcp::acceptor &socket() const { return acceptor_; }
+    ClientListener(const asio::ip::tcp::endpoint &endpoint);
+    ClientListener(const ClientListener &) = delete;
+    ClientListener& operator=(const ClientListener &) = delete;
+    const asio::ip::tcp::acceptor &socket() const { return acceptor_; }
 private:
-    boost::asio::ip::tcp::acceptor acceptor_;
-    boost::asio::ip::tcp::endpoint endpoint_;
-    boost::asio::ip::tcp::socket socket_;
+    asio::ip::tcp::acceptor acceptor_;
+    asio::ip::tcp::endpoint endpoint_;
+    asio::ip::tcp::socket socket_;
 
     void start_accept();
 };
@@ -414,12 +407,9 @@ extern bool g_disable_ipv6;
 extern bool g_disable_bind;
 extern bool g_disable_udp;
 
-extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_dst_deny_masks;
-extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_bind_allow_masks;
-extern std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_udp_allow_masks;
+extern std::vector<std::pair<asio::ip::address, unsigned int>> g_dst_deny_masks;
+extern std::vector<std::pair<asio::ip::address, unsigned int>> g_client_bind_allow_masks;
+extern std::vector<std::pair<asio::ip::address, unsigned int>> g_client_udp_allow_masks;
 
 #endif /* NK_SOCKSCLIENT_H */
 

@@ -31,7 +31,7 @@
 
 #include <nk/format.hpp>
 
-class BindPortAssigner : boost::noncopyable
+class BindPortAssigner
 {
 public:
     BindPortAssigner(uint16_t start, uint16_t end)
@@ -40,6 +40,8 @@ public:
     {
         assert(start <= end);
     }
+    BindPortAssigner(const BindPortAssigner &) = delete;
+    BindPortAssigner& operator=(const BindPortAssigner &) = delete;
     uint16_t get_port()
     {
         std::lock_guard<std::mutex> wl(lock_);

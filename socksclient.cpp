@@ -56,9 +56,7 @@
 
 #define SPLICE_MIN_XFER 64
 
-namespace ba = boost::asio;
-
-extern ba::io_service io_service;
+extern asio::io_service io_service;
 extern bool gParanoid;
 extern bool gChrooted;
 
@@ -94,13 +92,13 @@ static nk::rng::xorshift64m g_random_prng(0);
 static int resolver_prunetimer_sec = 60;
 
 static std::mutex tcp_resolver_lock;
-static std::unique_ptr<boost::asio::ip::tcp::resolver> tcp_resolver;
-static std::unique_ptr<boost::asio::deadline_timer> tcp_resolver_timer;
+static std::unique_ptr<asio::ip::tcp::resolver> tcp_resolver;
+static std::unique_ptr<asio::deadline_timer> tcp_resolver_timer;
 static std::size_t tcp_resolver_timer_seq;
 
 static std::mutex udp_resolver_lock;
-static std::unique_ptr<boost::asio::ip::udp::resolver> udp_resolver;
-static std::unique_ptr<boost::asio::deadline_timer> udp_resolver_timer;
+static std::unique_ptr<asio::ip::udp::resolver> udp_resolver;
+static std::unique_ptr<asio::deadline_timer> udp_resolver_timer;
 static std::size_t udp_resolver_timer_seq;
 
 static std::mutex print_lock;
@@ -154,10 +152,10 @@ void init_conntrackers(std::size_t hs_secs, std::size_t bindlisten_secs)
 
 #ifdef USE_SPLICE
 void pipe_close_raw(std::size_t p_len,
-                    ba::posix::stream_descriptor &sa,
-                    ba::posix::stream_descriptor &sb)
+                    asio::posix::stream_descriptor &sa,
+                    asio::posix::stream_descriptor &sb)
 {
-    boost::system::error_code ec;
+    std::error_code ec;
     auto sao = sa.is_open();
     auto sbo = sb.is_open();
     if (p_len == 0 && sao && sbo) {
@@ -200,10 +198,9 @@ void pipe_close_raw(std::size_t p_len,
 }
 #endif
 
-static inline void cancel_paired_sockets(boost::asio::ip::tcp::socket &a,
-                                         boost::asio::ip::tcp::socket &b)
+static inline void cancel_paired_sockets(asio::ip::tcp::socket &a, asio::ip::tcp::socket &b)
 {
-    boost::system::error_code ec;
+    std::error_code ec;
     auto ao = a.is_open();
     auto bo = b.is_open();
     if (ao)
@@ -212,10 +209,9 @@ static inline void cancel_paired_sockets(boost::asio::ip::tcp::socket &a,
         b.cancel(ec);
 }
 
-static inline void close_paired_sockets(boost::asio::ip::tcp::socket &a,
-                                        boost::asio::ip::tcp::socket &b)
+static inline void close_paired_sockets(asio::ip::tcp::socket &a, asio::ip::tcp::socket &b)
 {
-    boost::system::error_code ec;
+    std::error_code ec;
     auto ao = a.is_open();
     auto bo = b.is_open();
     if (ao)
@@ -223,21 +219,18 @@ static inline void close_paired_sockets(boost::asio::ip::tcp::socket &a,
     if (bo)
         b.cancel(ec);
     if (ao)
-        a.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        a.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
     if (bo)
-        b.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+        b.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
     if (ao)
         a.close(ec);
     if (bo)
         b.close(ec);
 }
 
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_dst_deny_masks;
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_bind_allow_masks;
-std::vector<std::pair<boost::asio::ip::address, unsigned int>>
-g_client_udp_allow_masks;
+std::vector<std::pair<asio::ip::address, unsigned int>> g_dst_deny_masks;
+std::vector<std::pair<asio::ip::address, unsigned int>> g_client_bind_allow_masks;
+std::vector<std::pair<asio::ip::address, unsigned int>> g_client_udp_allow_masks;
 
 static std::atomic<std::size_t> socks_alive_count;
 static std::atomic<std::size_t> udp_alive_count;
@@ -288,8 +281,7 @@ void init_udp_associate_assigner(uint16_t lowport, uint16_t highport)
     UPA = std::make_unique<BindPortAssigner>(lowport, highport);
 }
 
-static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
-                                        SocksInit::ReplyCode replycode)
+static inline size_t send_reply_code_v5(std::array<char, 24> &arr, SocksInit::ReplyCode replycode)
 {
     arr[0] = 0x05;
     arr[1] = replycode;
@@ -297,9 +289,8 @@ static inline size_t send_reply_code_v5(std::array<char, 24> &arr,
     return 3;
 }
 
-static inline size_t send_reply_binds_v5(std::array<char, 24> &arr,
-                                         std::size_t asiz,
-                                         ba::ip::tcp::endpoint ep)
+static inline size_t send_reply_binds_v5(std::array<char, 24> &arr, std::size_t asiz,
+                                         asio::ip::tcp::endpoint ep)
 {
     const auto bnd_addr = ep.address();
     if (bnd_addr.is_v4()) {
@@ -342,9 +333,8 @@ static inline size_t send_reply_code_v4(std::array<char, 24> &arr,
     return 2;
 }
 
-static inline size_t send_reply_binds_v4(std::array<char, 24> &arr,
-                                         std::size_t asiz,
-                                         ba::ip::tcp::endpoint ep)
+static inline size_t send_reply_binds_v4(std::array<char, 24> &arr, std::size_t asiz,
+                                         asio::ip::tcp::endpoint ep)
 {
     const uint16_t p{htons(ep.port())};
     memcpy(&arr[asiz], &p, sizeof p);
@@ -372,8 +362,7 @@ static const char * const replyCodeString[] = {
     "IdentWrong",
 };
 
-SocksInit::SocksInit(ba::io_service &io_service,
-                     ba::ip::tcp::socket client_socket)
+SocksInit::SocksInit(asio::io_service &io_service, asio::ip::tcp::socket client_socket)
         : tracked_(true), strand_(io_service),
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
@@ -383,10 +372,10 @@ SocksInit::SocksInit(ba::io_service &io_service,
     if (g_verbose_logs)
         ++socks_alive_count;
     client_socket_.non_blocking(true);
-    client_socket_.set_option(boost::asio::ip::tcp::no_delay(true));
-    client_socket_.set_option(boost::asio::socket_base::keep_alive(true));
+    client_socket_.set_option(asio::ip::tcp::no_delay(true));
+    client_socket_.set_option(asio::socket_base::keep_alive(true));
 #ifdef TCP_QUICKACK
-    const boost::asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
+    const asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
     client_socket_.set_option(quickack);
 #endif
 }
@@ -408,15 +397,14 @@ SocksInit::~SocksInit()
     }
 }
 
-SocksInit::BoundSocket::BoundSocket(boost::asio::io_service &io_service,
-                                    boost::asio::ip::tcp::endpoint lep)
+SocksInit::BoundSocket::BoundSocket(asio::io_service &io_service, asio::ip::tcp::endpoint lep)
         : acceptor_(io_service), local_endpoint_(lep)
 {
-    boost::system::error_code ec;
+    std::error_code ec;
     acceptor_.open(lep.protocol(), ec);
     if (ec)
         throw std::runtime_error("open failed");
-    acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true), ec);
+    acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true), ec);
     if (ec)
         throw std::runtime_error("set_option/reuse_address failed");
     acceptor_.non_blocking(true, ec);
@@ -439,7 +427,7 @@ SocksInit::BoundSocket::~BoundSocket()
 void SocksInit::cancel_sockets()
 {
     cancel_paired_sockets(remote_socket_, client_socket_);
-    boost::system::error_code ec;
+    std::error_code ec;
     if (bound_)
         bound_->acceptor_.cancel(ec);
 }
@@ -447,7 +435,7 @@ void SocksInit::cancel_sockets()
 void SocksInit::terminate()
 {
     close_paired_sockets(remote_socket_, client_socket_);
-    boost::system::error_code ec;
+    std::error_code ec;
     if (bound_)
         bound_->acceptor_.cancel(ec);
 }
@@ -456,10 +444,9 @@ void SocksInit::read_greet()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(sockbuf_.data() + ibSiz_, sockbuf_.size() - ibSiz_),
+        (asio::buffer(sockbuf_.data() + ibSiz_, sockbuf_.size() - ibSiz_),
          strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              size_t consumed;
              boost::optional<SocksInit::ReplyCode> rc;
@@ -479,9 +466,8 @@ void SocksInit::read_greet()
              read_greet();
              return;
 ec_err:
-             if (ec != ba::error::eof && ec != ba::error::operation_aborted) {
-                 logfmt("read_greet() error: {}\n",
-                        boost::system::system_error(ec).what());
+             if (ec != asio::error::eof && ec != asio::error::operation_aborted) {
+                 logfmt("read_greet() error: {}\n", std::system_error(ec).what());
              }
              terminate();
          }));
@@ -543,15 +529,13 @@ SocksInit::parse_greet(std::size_t &consumed)
     }
     case Parsed5G_Auth: {
         auto sfd = shared_from_this();
-        ba::async_write(
-            client_socket_, ba::buffer(reply_greetz, sizeof reply_greetz),
+        asio::async_write(
+            client_socket_, asio::buffer(reply_greetz, sizeof reply_greetz),
             strand_.wrap(
-                [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                            std::size_t bytes_xferred)
+                [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
                 {
                     if (ec) {
-                        logfmt("failed writing reply_greetz: {}\n",
-                               boost::system::system_error(ec).what());
+                        logfmt("failed writing reply_greetz: {}\n", std::system_error(ec).what());
                         terminate();
                     }
                 }));
@@ -588,9 +572,9 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_DAddr;
         consumed += 4;
-        ba::ip::address_v4::bytes_type v4o;
+        asio::ip::address_v4::bytes_type v4o;
         memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
-        dst_address_ = ba::ip::address_v4(v4o);
+        dst_address_ = asio::ip::address_v4(v4o);
         poff_ += 4;
     }
     case Parsed4G_DAddr: {
@@ -662,18 +646,18 @@ p4g_version:
                 return boost::optional<ReplyCode>();
             pstate_ = Parsed5CR_DAddr;
             consumed += 4;
-            ba::ip::address_v4::bytes_type v4o;
+            asio::ip::address_v4::bytes_type v4o;
             memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
-            dst_address_ = ba::ip::address_v4(v4o);
+            dst_address_ = asio::ip::address_v4(v4o);
             poff_ += 4;
         } else if (addr_type_ == AddrIPv6) {
             if (ibSiz_ - poff_ < 16)
                 return boost::optional<ReplyCode>();
             pstate_ = Parsed5CR_DAddr;
             consumed += 16;
-            ba::ip::address_v6::bytes_type v6o;
+            asio::ip::address_v6::bytes_type v6o;
             memcpy(v6o.data(), sockbuf_.data() + poff_, 16);
-            dst_address_ = ba::ip::address_v6(v6o);
+            dst_address_ = asio::ip::address_v6(v6o);
             poff_ += 16;
             if (g_disable_ipv6)
                 return RplAddrNotSupp;
@@ -739,12 +723,12 @@ void SocksInit::kick_tcp_resolver_timer()
 {
     if (!tcp_resolver_timer)
         tcp_resolver_timer =
-            std::make_unique<boost::asio::deadline_timer>(io_service);
+            std::make_unique<asio::deadline_timer>(io_service);
     tcp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = tcp_resolver_timer_seq;
     tcp_resolver_timer->async_wait(
-        [this, seq](const boost::system::error_code& error)
+        [this, seq](const std::error_code& error)
         {
             if (error)
                 return;
@@ -759,10 +743,10 @@ void SocksInit::kick_tcp_resolver_timer()
         });
 }
 
-bool SocksInit::dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resolver::iterator it,
+bool SocksInit::dns_choose_address(DNSType addrtype, asio::ip::tcp::resolver::iterator it,
                                    const size_t cv4, const size_t cv6)
 {
-    static const ba::ip::tcp::resolver::iterator rie;
+    static const asio::ip::tcp::resolver::iterator rie;
     if (addrtype == DNSType::None)
         return false;
     size_t total_choices(addrtype == DNSType::Any ? cv4 + cv6
@@ -788,28 +772,28 @@ bool SocksInit::dns_choose_address(DNSType addrtype, boost::asio::ip::tcp::resol
 
 void SocksInit::dns_lookup()
 {
-    ba::ip::tcp::resolver::query query
+    asio::ip::tcp::resolver::query query
         (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
     auto sfd = shared_from_this();
     try {
         std::lock_guard<std::mutex> wl(tcp_resolver_lock);
         if (!tcp_resolver) {
-            tcp_resolver = std::make_unique<boost::asio::ip::tcp::resolver>
+            tcp_resolver = std::make_unique<asio::ip::tcp::resolver>
                 (io_service);
             kick_tcp_resolver_timer();
         }
         tcp_resolver->async_resolve
             (query, strand_.wrap(
-             [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                         ba::ip::tcp::resolver::iterator it)
+             [this, sfd{std::move(sfd)}](const std::error_code &ec,
+                                         asio::ip::tcp::resolver::iterator it)
              {
                  if (ec) {
                      send_reply(RplHostUnreach);
                      return;
                  }
                  std::size_t cv6(0), cv4(0);
-                 static const ba::ip::tcp::resolver::iterator rie;
-                 ba::ip::tcp::resolver::iterator oit(it);
+                 static const asio::ip::tcp::resolver::iterator rie;
+                 asio::ip::tcp::resolver::iterator oit(it);
                  for (; it != rie; ++it) {
                      if (it->endpoint().address().is_v4()) ++cv4;
                      else ++cv6;
@@ -860,17 +844,17 @@ void SocksInit::dispatch_connrq(bool did_dns)
     }
 }
 
-static const auto loopback_addr_v4 = ba::ip::address_v4::from_string("127.0.0.0");
-static const auto loopback_addr_v6 = ba::ip::address_v6::from_string("::1");
+static const auto loopback_addr_v4 = asio::ip::address_v4::from_string("127.0.0.0");
+static const auto loopback_addr_v6 = asio::ip::address_v6::from_string("::1");
 
-static bool is_dst_denied(const ba::ip::address &addr)
+static bool is_dst_denied(const asio::ip::address &addr)
 {
     // Deny proxy attempts to the local loopback addresses.
     if (addr == loopback_addr_v6 ||
-        nk::asio::compare_ip(addr, loopback_addr_v4, 8))
+        asio::compare_ip(addr, loopback_addr_v4, 8))
         return true;
     for (const auto &i: g_dst_deny_masks) {
-        auto r = nk::asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
+        auto r = asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
         if (r) {
             logfmt("DENIED connection to {}\n", addr.to_string());
             return true;
@@ -887,14 +871,14 @@ void SocksInit::dispatch_tcp_connect()
     }
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
-    auto ep = ba::ip::tcp::endpoint(dst_address_, dst_port_);
+    auto ep = asio::ip::tcp::endpoint(dst_address_, dst_port_);
     auto sfd = shared_from_this();
     remote_socket_.async_connect
         (ep, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec)
          {
-             boost::system::error_code ecc;
-             ba::ip::tcp::endpoint ep;
+             std::error_code ecc;
+             asio::ip::tcp::endpoint ep;
              if (ec) goto ec_err;
              set_remote_socket_options();
              ep = remote_socket_.local_endpoint(ecc);
@@ -915,21 +899,21 @@ rle_err:
 }
 
 SocksInit::ReplyCode
-SocksInit::errorToReplyCode(const boost::system::error_code &ec)
+SocksInit::errorToReplyCode(const std::error_code &ec)
 {
     ReplyCode rc(RplConnRefused);
-    if (ec == ba::error::access_denied ||
-        ec == ba::error::connection_refused) {
+    if (ec == asio::error::access_denied ||
+        ec == asio::error::connection_refused) {
         rc = RplConnRefused;
-    } else if (ec == ba::error::address_family_not_supported ||
-               ec == ba::error::fault || ec == ba::error::service_not_found ||
-               ec == ba::error::socket_type_not_supported) {
+    } else if (ec == asio::error::address_family_not_supported ||
+               ec == asio::error::fault || ec == asio::error::service_not_found ||
+               ec == asio::error::socket_type_not_supported) {
         rc = RplAddrNotSupp;
-    } else if (ec == ba::error::timed_out) {
+    } else if (ec == asio::error::timed_out) {
         rc = RplTTLExpired;
-    } else if (ec == ba::error::host_unreachable) {
+    } else if (ec == asio::error::host_unreachable) {
         rc = RplHostUnreach;
-    } else if (ec == ba::error::network_unreachable) {
+    } else if (ec == asio::error::network_unreachable) {
         rc = RplNetUnreach;
     }
     return rc;
@@ -937,7 +921,7 @@ SocksInit::errorToReplyCode(const boost::system::error_code &ec)
 
 bool SocksInit::is_bind_client_allowed() const
 {
-    boost::system::error_code ec;
+    std::error_code ec;
     auto cep = client_socket_.remote_endpoint(ec);
     if (ec) {
         logfmt("DENIED bind request; client has bad remote_endpoint: {}\n",
@@ -946,7 +930,7 @@ bool SocksInit::is_bind_client_allowed() const
     }
     auto laddr = cep.address();
     for (const auto &i: g_client_bind_allow_masks) {
-        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        auto r = asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
         if (r)
             return true;
     }
@@ -954,7 +938,7 @@ bool SocksInit::is_bind_client_allowed() const
     return false;
 }
 
-bool SocksInit::create_bind_socket(ba::ip::tcp::endpoint ep)
+bool SocksInit::create_bind_socket(asio::ip::tcp::endpoint ep)
 {
     int tries = 0;
     while (true) {
@@ -984,26 +968,26 @@ void SocksInit::dispatch_tcp_bind()
         return;
     }
     assert(BPA);
-    ba::ip::tcp::endpoint bind_ep;
+    asio::ip::tcp::endpoint bind_ep;
     auto rcnct = conntracker_tcp.find_by_addr_port(dst_address_, dst_port_);
     try {
         if (rcnct) {
             // Bind to the local IP that is associated with the
             // client-specified dst_address_ and dst_port_.
-            boost::system::error_code ec;
+            std::error_code ec;
             auto rlep = (*rcnct)->remote_socket_local_endpoint(ec);
             if (ec) {
                 send_reply(RplDeny);
                 return;
             }
-            bind_ep = ba::ip::tcp::endpoint(rlep.address(), BPA->get_port());
+            bind_ep = asio::ip::tcp::endpoint(rlep.address(), BPA->get_port());
         } else {
             if (!is_bind_client_allowed()) {
                 send_reply(RplDeny);
                 return;
             }
-            bind_ep = ba::ip::tcp::endpoint
-                (!g_disable_ipv6 ? ba::ip::tcp::v6() : ba::ip::tcp::v4(),
+            bind_ep = asio::ip::tcp::endpoint
+                (!g_disable_ipv6 ? asio::ip::tcp::v6() : asio::ip::tcp::v4(),
                  BPA->get_port());
         }
     } catch (const std::out_of_range &) {
@@ -1021,7 +1005,7 @@ void SocksInit::dispatch_tcp_bind()
     auto sfd = shared_from_this();
     bound_->acceptor_.async_accept
         (remote_socket_, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec)
          {
              if (ec) {
                  send_reply(RplFail);
@@ -1030,7 +1014,7 @@ void SocksInit::dispatch_tcp_bind()
              logfmt("Accepted a connection to a BIND socket.\n");
              set_remote_socket_options();
 
-             boost::system::error_code ecc;
+             std::error_code ecc;
              auto ep = remote_socket_.local_endpoint(ecc);
              if (ecc) {
                  logfmt("TCP Bind: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
@@ -1057,10 +1041,10 @@ void SocksInit::dispatch_tcp_bind()
     do_send_reply(RplSuccess, ssiz);
 }
 
-bool SocksInit::is_udp_client_allowed(boost::asio::ip::address laddr) const
+bool SocksInit::is_udp_client_allowed(asio::ip::address laddr) const
 {
     for (const auto &i: g_client_udp_allow_masks) {
-        auto r = nk::asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
+        auto r = asio::compare_ip(laddr, std::get<0>(i), std::get<1>(i));
         if (r)
             return true;
     }
@@ -1077,13 +1061,13 @@ void SocksInit::dispatch_udp()
         return;
     }
     assert(UPA);
-    boost::system::error_code ec;
+    std::error_code ec;
     auto client_rep = client_socket_.remote_endpoint(ec);
     if (ec || !is_udp_client_allowed(client_rep.address())) {
         send_reply(RplDeny);
         return;
     }
-    ba::ip::udp::endpoint udp_client_ep, udp_remote_ep;
+    asio::ip::udp::endpoint udp_client_ep, udp_remote_ep;
     uint16_t udp_local_port, udp_remote_port;
     auto client_lep = client_socket_.local_endpoint(ec);
     if (ec) {
@@ -1093,7 +1077,7 @@ void SocksInit::dispatch_udp()
     auto laddr(client_lep.address());
     try {
         udp_local_port = UPA->get_port();
-        udp_client_ep = ba::ip::udp::endpoint(laddr, udp_local_port);
+        udp_client_ep = asio::ip::udp::endpoint(laddr, udp_local_port);
     } catch (const std::out_of_range &) {
         // No ports are free for use as a local endpoint.
         send_reply(RplFail);
@@ -1101,8 +1085,8 @@ void SocksInit::dispatch_udp()
     }
     try {
         udp_remote_port = UPA->get_port();
-        udp_remote_ep = ba::ip::udp::endpoint
-            (!g_disable_ipv6 ? ba::ip::udp::v6() : ba::ip::udp::v4(),
+        udp_remote_ep = asio::ip::udp::endpoint
+            (!g_disable_ipv6 ? asio::ip::udp::v6() : asio::ip::udp::v4(),
              udp_remote_port);
     } catch (const std::out_of_range &) {
         // No ports are free for use as a remote endpoint.
@@ -1114,22 +1098,22 @@ void SocksInit::dispatch_udp()
     auto ct = std::make_shared<SocksUDP>
         (io_service, std::move(client_socket_),
          udp_client_ep, udp_remote_ep,
-         ba::ip::udp::endpoint(client_rep.address(), client_rep.port()));
+         asio::ip::udp::endpoint(client_rep.address(), client_rep.port()));
     ct->start();
 }
 
 void SocksInit::do_send_reply(ReplyCode replycode, std::size_t ssiz)
 {
     auto sfd = shared_from_this();
-    ba::async_write
+    asio::async_write
         (client_socket_,
-         ba::buffer(sockbuf_.data(), ssiz),
+         asio::buffer(sockbuf_.data(), ssiz),
          strand_.wrap(
-         [this, sfd{std::move(sfd)}, replycode](const boost::system::error_code &ec,
+         [this, sfd{std::move(sfd)}, replycode](const std::error_code &ec,
                                                 std::size_t bytes_xferred)
          {
              if (ec || replycode != RplSuccess) {
-                 boost::system::error_code ecc;
+                 std::error_code ecc;
                  auto cep = client_socket_.remote_endpoint(ecc);
                  logfmt("REJECT @{} -> {}:{} [{}]\n",
                      !ecc? cep.address().to_string() : "NONE",
@@ -1157,10 +1141,8 @@ void SocksInit::send_reply(ReplyCode replycode)
     do_send_reply(replycode, ssiz);
 }
 
-SocksTCP::SocksTCP(ba::io_service &io_service,
-                   boost::asio::ip::tcp::socket client_socket,
-                   boost::asio::ip::tcp::socket remote_socket,
-                   boost::asio::ip::address dst_address,
+SocksTCP::SocksTCP(asio::io_service &io_service, asio::ip::tcp::socket client_socket,
+                   asio::ip::tcp::socket remote_socket, asio::ip::address dst_address,
                    uint16_t dst_port, bool is_bind, bool is_socks_v4,
                    std::string dst_hostname)
         : tracked_(true),
@@ -1198,8 +1180,8 @@ SocksTCP::~SocksTCP()
 }
 
 #ifdef USE_SPLICE
-bool SocksTCP::init_pipe(boost::asio::posix::stream_descriptor &preader,
-                         boost::asio::posix::stream_descriptor &pwriter)
+bool SocksTCP::init_pipe(asio::posix::stream_descriptor &preader,
+                         asio::posix::stream_descriptor &pwriter)
 {
     int pipes[2];
 #ifdef HAS_64BIT
@@ -1261,11 +1243,11 @@ void SocksTCP::flush_then_terminate(FlushDirection dir)
     if (cso || rso) {
         auto sfd = shared_from_this();
         strand_.post([this, sfd{std::move(sfd)}, cso, rso, dir] {
-                     boost::system::error_code ec;
+                     std::error_code ec;
                      if (cso)
-                         client_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                         client_socket_.shutdown(asio::ip::tcp::socket::shutdown_receive, ec);
                      if (rso)
-                         remote_socket_.shutdown(ba::ip::tcp::socket::shutdown_receive, ec);
+                         remote_socket_.shutdown(asio::ip::tcp::socket::shutdown_receive, ec);
                      if (cso && pToClient_len_ > 0 && dir != FlushDirection::Remote) {
                          doFlushPipeToClient(0);
                      }
@@ -1439,9 +1421,8 @@ void SocksTCP::tcp_client_socket_write_splice(int tries)
     ++tries;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
-                                            std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}, tries](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1464,10 +1445,10 @@ splice_err:
              flush_then_terminate(FlushDirection::Client);
              return;
 ec_err:
-             if (ec != ba::error::operation_aborted) {
+             if (ec != asio::error::operation_aborted) {
                  logfmt("cs: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Client);
              }
          }));
@@ -1478,9 +1459,8 @@ void SocksTCP::tcp_remote_socket_write_splice(int tries)
     ++tries;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
-                                            std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}, tries](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1503,10 +1483,10 @@ splice_err:
              flush_then_terminate(FlushDirection::Remote);
              return;
 ec_err:
-             if (ec != ba::error::operation_aborted) {
+             if (ec != asio::error::operation_aborted) {
                  logfmt("rs: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Remote);
              }
          }));
@@ -1517,9 +1497,8 @@ void SocksTCP::tcp_client_socket_read_splice()
 {
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1542,10 +1521,10 @@ spr_err:
              flush_then_terminate(FlushDirection::Client);
              return;
 ec_err:
-             if (ec != ba::error::operation_aborted) {
+             if (ec != asio::error::operation_aborted) {
                  logfmt("cs: [{}] async_read_some: {}\n", dst_hostname_.size()?
                         dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Remote);
              }
          }));
@@ -1556,9 +1535,8 @@ void SocksTCP::tcp_remote_socket_read_splice()
 {
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spr;
              if (ec) goto ec_err;
@@ -1581,10 +1559,10 @@ spr_err:
              flush_then_terminate(FlushDirection::Remote);
              return;
 ec_err:
-             if (ec != ba::error::operation_aborted) {
+             if (ec != asio::error::operation_aborted) {
                  logfmt("rs: [{}] async_read_some: {}\n", dst_hostname_.size()?
                         dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  flush_then_terminate(FlushDirection::Client);
              }
          }));
@@ -1595,17 +1573,16 @@ void SocksTCP::doFlushPipeToRemote(int tries)
     ++tries;
     auto sfd = shared_from_this();
     remote_socket_.async_write_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
-                                            std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}, tries](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spc;
              if (ec) {
-                 if (ec == ba::error::operation_aborted)
+                 if (ec == asio::error::operation_aborted)
                      return;
                  logfmt("rs-flush: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  return;
              }
              if ((spc = splicePipeToRemote()) != splicePipeRet::ok) {
@@ -1624,17 +1601,16 @@ void SocksTCP::doFlushPipeToClient(int tries)
     ++tries;
     auto sfd = shared_from_this();
     client_socket_.async_write_some
-        (ba::null_buffers(), strand_.wrap(
-         [this, sfd{std::move(sfd)}, tries](const boost::system::error_code &ec,
-                                            std::size_t bytes_xferred)
+        (asio::null_buffers(), strand_.wrap(
+         [this, sfd{std::move(sfd)}, tries](const std::error_code &ec, std::size_t bytes_xferred)
          {
              splicePipeRet spc;
              if (ec) {
-                 if (ec == ba::error::operation_aborted)
+                 if (ec == asio::error::operation_aborted)
                      return;
                  logfmt("cs-flush: [{}] async_write_some: {}\n",
                         dst_hostname_.size()?  dst_hostname_ : dst_address_.to_string(),
-                        boost::system::system_error(ec).what());
+                        std::system_error(ec).what());
                  return;
              }
              if ((spc = splicePipeToClient()) != splicePipeRet::ok) {
@@ -1652,44 +1628,42 @@ void SocksTCP::doFlushPipeToClient(int tries)
 // Write data read from the client socket to the connect socket.
 void SocksTCP::tcp_client_socket_read()
 {
-    ba::streambuf::mutable_buffers_type ibm
+    asio::streambuf::mutable_buffers_type ibm
         = client_buf_.prepare(send_buffer_chunk_size);
     auto sfd = shared_from_this();
     client_socket_.async_read_some
-        (ba::buffer(ibm), strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+        (asio::buffer(ibm), strand_.wrap(
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted)
+                 if (ec != asio::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Remote);
                  return;
              }
              client_buf_.commit(bytes_xferred);
              // Client is trying to send data to the remote server.  Write it
              // to the remote_socket_.
-             boost::system::error_code ecx;
+             std::error_code ecx;
              auto cbs = client_buf_.size();
              auto r = remote_socket_.send
-                 (ba::buffer(client_buf_.data(), cbs), 0, ecx);
+                 (asio::buffer(client_buf_.data(), cbs), 0, ecx);
              if (r) {
                  client_buf_.consume(r);
                  if (r == cbs) {
                      tcp_client_socket_read_again(sfd, r, !client_buf_.size());
                      return;
                  }
-             } else if (ecx != ba::error::would_block) {
-                 if (ecx != ba::error::operation_aborted)
+             } else if (ecx != asio::error::would_block) {
+                 if (ecx != asio::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Client);
                  return;
              }
-             ba::async_write
+             asio::async_write
                  (remote_socket_, client_buf_, strand_.wrap(
-                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
                   {
                       if (ec) {
-                          if (ec != ba::error::operation_aborted)
+                          if (ec != asio::error::operation_aborted)
                               flush_then_terminate(FlushDirection::Client);
                           return;
                       }
@@ -1703,44 +1677,42 @@ void SocksTCP::tcp_client_socket_read()
 // Write data read from the connect socket to the client socket.
 void SocksTCP::tcp_remote_socket_read()
 {
-    ba::streambuf::mutable_buffers_type ibm
+    asio::streambuf::mutable_buffers_type ibm
         = remote_buf_.prepare(receive_buffer_chunk_size);
     auto sfd = shared_from_this();
     remote_socket_.async_read_some
-        (ba::buffer(ibm), strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+        (asio::buffer(ibm), strand_.wrap(
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted)
+                 if (ec != asio::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Client);
                  return;
              }
              remote_buf_.commit(bytes_xferred);
              // Remote server is trying to send data to the client.  Write it
              // to the client_socket_.
-             boost::system::error_code ecx;
+             std::error_code ecx;
              auto rbs = remote_buf_.size();
              auto r = client_socket_.send
-                 (ba::buffer(remote_buf_.data(), rbs), 0, ecx);
+                 (asio::buffer(remote_buf_.data(), rbs), 0, ecx);
              remote_buf_.consume(r);
              if (r) {
                  if (r == rbs) {
                      tcp_remote_socket_read_again(sfd, r, !remote_buf_.size());
                      return;
                  }
-             } else if (ecx != ba::error::would_block) {
-                 if (ecx != ba::error::operation_aborted)
+             } else if (ecx != asio::error::would_block) {
+                 if (ecx != asio::error::operation_aborted)
                      flush_then_terminate(FlushDirection::Remote);
                  return;
              }
-             ba::async_write
+             asio::async_write
                  (client_socket_, remote_buf_, strand_.wrap(
-                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
                   {
                       if (ec) {
-                          if (ec != ba::error::operation_aborted)
+                          if (ec != asio::error::operation_aborted)
                               flush_then_terminate(FlushDirection::Remote);
                           return;
                       }
@@ -1751,10 +1723,9 @@ void SocksTCP::tcp_remote_socket_read()
          }));
 }
 
-bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
-                           uint16_t port) const
+bool SocksTCP::matches_dst(const asio::ip::address &addr, uint16_t port) const
 {
-    if (!nk::asio::compare_ip(addr, dst_address_, 128))
+    if (!asio::compare_ip(addr, dst_address_, 128))
         return false;
     if (dst_port_ != port)
         return false;
@@ -1763,7 +1734,7 @@ bool SocksTCP::matches_dst(const boost::asio::ip::address &addr,
     return true;
 }
 
-void SocksTCP::start(ba::ip::tcp::endpoint ep)
+void SocksTCP::start(asio::ip::tcp::endpoint ep)
 {
     std::array<char, 24> sbuf;
     std::size_t ssiz;
@@ -1777,20 +1748,19 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
     }
 
     auto ibm = client_buf_.prepare(ssiz);
-    auto siz = std::min(ssiz, boost::asio::buffer_size(ibm));
-    memcpy(boost::asio::buffer_cast<char *>(ibm), sbuf.data(), siz);
+    auto siz = std::min(ssiz, asio::buffer_size(ibm));
+    memcpy(asio::buffer_cast<char *>(ibm), sbuf.data(), siz);
     client_buf_.commit(siz);
 
     auto sfd = shared_from_this();
-    ba::async_write
+    asio::async_write
         (client_socket_, client_buf_, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              client_buf_.consume(bytes_xferred);
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     boost::system::error_code ecc;
+                 if (ec != asio::error::operation_aborted) {
+                     std::error_code ecc;
                      auto cep = client_socket_.remote_endpoint(ecc);
                      logfmt("TCP Start: @{}-> {}:{} [{}]\n",
                             !ecc? cep.address().to_string() : "NONE",
@@ -1805,11 +1775,9 @@ void SocksTCP::start(ba::ip::tcp::endpoint ep)
          }));
 }
 
-SocksUDP::SocksUDP(ba::io_service &io_service,
-                   ba::ip::tcp::socket tcp_client_socket,
-                   ba::ip::udp::endpoint client_ep,
-                   ba::ip::udp::endpoint remote_ep,
-                   ba::ip::udp::endpoint client_remote_ep)
+SocksUDP::SocksUDP(asio::io_service &io_service, asio::ip::tcp::socket tcp_client_socket,
+                   asio::ip::udp::endpoint client_ep, asio::ip::udp::endpoint remote_ep,
+                   asio::ip::udp::endpoint client_remote_ep)
         : tcp_client_socket_(std::move(tcp_client_socket)),
           client_endpoint_(client_ep), remote_endpoint_(remote_ep),
           client_remote_endpoint_(client_remote_ep),
@@ -1839,7 +1807,7 @@ void SocksUDP::start()
     std::size_t ssiz;
 
     ssiz = send_reply_code_v5(sbuf, SocksInit::ReplyCode::RplSuccess);
-    boost::system::error_code ecc;
+    std::error_code ecc;
     auto ep = client_socket_.local_endpoint(ecc);
     if (ecc) {
         logfmt("SocksUDP::start(): client socket has bad endpoint: {}\n",
@@ -1847,17 +1815,16 @@ void SocksUDP::start()
         return;
     }
     ssiz = send_reply_binds_v5
-        (sbuf, ssiz, ba::ip::tcp::endpoint(ep.address(), ep.port()));
+        (sbuf, ssiz, asio::ip::tcp::endpoint(ep.address(), ep.port()));
     memcpy(out_header_.data(), sbuf.data(), ssiz);
     auto sfd = shared_from_this();
-    ba::async_write
-        (tcp_client_socket_, ba::buffer(out_header_.data(), ssiz),
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+    asio::async_write
+        (tcp_client_socket_, asio::buffer(out_header_.data(), ssiz),
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     boost::system::error_code ecr;
+                 if (ec != asio::error::operation_aborted) {
+                     std::error_code ecr;
                      auto rep = tcp_client_socket_.remote_endpoint(ecr);
                      logfmt("UDP Start: @{} [{}]\n",
                             !ecr? rep.address().to_string() : "NONE",
@@ -1874,7 +1841,7 @@ void SocksUDP::start()
 void SocksUDP::close_udp_sockets()
 {
     assert(UPA);
-    boost::system::error_code ec;
+    std::error_code ec;
     auto clep = client_socket_.local_endpoint(ec);
     if (!ec)
         UPA->release_port(clep.port());
@@ -1889,15 +1856,14 @@ void SocksUDP::udp_tcp_socket_read()
 {
     auto sfd = shared_from_this();
     tcp_client_socket_.async_read_some
-        (ba::buffer(tcp_inbuf_.data(),
+        (asio::buffer(tcp_inbuf_.data(),
                     tcp_inbuf_.size()), strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
+                 if (ec != asio::error::operation_aborted) {
                      logfmt("Client closed TCP socket for UDP associate: {}\n",
-                            boost::system::system_error(ec).what());
+                            std::system_error(ec).what());
                  }
                  return;
              }
@@ -1911,15 +1877,13 @@ void SocksUDP::udp_client_socket_read()
     inbuf_.resize(UDP_BUFSIZE);
     auto sfd = shared_from_this();
     client_socket_.async_receive_from
-        (ba::buffer(inbuf_),
+        (asio::buffer(inbuf_),
          csender_endpoint_, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("Error on client UDP socket: {}\n",
-                            boost::system::system_error(ec).what());
+                 if (ec != asio::error::operation_aborted) {
+                     logfmt("Error on client UDP socket: {}\n", std::system_error(ec).what());
                  }
                  return;
              }
@@ -1939,15 +1903,15 @@ void SocksUDP::udp_client_socket_read()
                          fragn = '\0';
                  }
                  auto atyp = inbuf_[3];
-                 ba::ip::address daddr;
+                 asio::ip::address daddr;
                  std::string dnsname;
                  switch (atyp) {
                      case 1: { // IPv4
                          if (bytes_xferred < 10)
                              goto nosend;
-                         ba::ip::address_v4::bytes_type v4o;
+                         asio::ip::address_v4::bytes_type v4o;
                          memcpy(v4o.data(), inbuf_.data() + headersiz, 4);
-                         daddr_ = ba::ip::address_v4(v4o);
+                         daddr_ = asio::ip::address_v4(v4o);
                          headersiz += 4;
                          break;
                      }
@@ -1966,9 +1930,9 @@ void SocksUDP::udp_client_socket_read()
                      case 4: { // IPv6
                          if (bytes_xferred < 22)
                              goto nosend;
-                         ba::ip::address_v6::bytes_type v6o;
+                         asio::ip::address_v6::bytes_type v6o;
                          memcpy(v6o.data(), inbuf_.data() + headersiz, 16);
-                         daddr_ = ba::ip::address_v6(v6o);
+                         daddr_ = asio::ip::address_v6(v6o);
                          headersiz += 16;
                          break;
                      }
@@ -2052,10 +2016,9 @@ void SocksUDP::udp_proxy_packet()
     }
     auto sfd = shared_from_this();
     remote_socket_.async_send_to
-        (ba::buffer(inbuf_.data() + poffset_, psize_),
-         ba::ip::udp::endpoint(daddr_, dport_), 0, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+        (asio::buffer(inbuf_.data() + poffset_, psize_),
+         asio::ip::udp::endpoint(daddr_, dport_), 0, strand_.wrap(
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              udp_client_socket_read();
          }));
@@ -2065,12 +2028,12 @@ void SocksUDP::kick_udp_resolver_timer()
 {
     if (!udp_resolver_timer)
         udp_resolver_timer =
-            std::make_unique<boost::asio::deadline_timer>(io_service);
+            std::make_unique<asio::deadline_timer>(io_service);
     udp_resolver_timer->expires_from_now
         (boost::posix_time::seconds(resolver_prunetimer_sec));
     auto seq = udp_resolver_timer_seq;
     udp_resolver_timer->async_wait(
-        [this, seq](const boost::system::error_code& error)
+        [this, seq](const std::error_code& error)
         {
             if (error)
                 return;
@@ -2087,27 +2050,27 @@ void SocksUDP::kick_udp_resolver_timer()
 
 void SocksUDP::udp_dns_lookup(const std::string &dnsname)
 {
-    ba::ip::udp::resolver::query query
+    asio::ip::udp::resolver::query query
         (dnsname, boost::lexical_cast<std::string>(dport_));
     auto sfd = shared_from_this();
     try {
         std::lock_guard<std::mutex> wl(udp_resolver_lock);
         if (!udp_resolver) {
-            udp_resolver = std::make_unique<boost::asio::ip::udp::resolver>
+            udp_resolver = std::make_unique<asio::ip::udp::resolver>
                 (io_service);
             kick_udp_resolver_timer();
         }
         udp_resolver->async_resolve
             (query, strand_.wrap(
-             [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                         ba::ip::udp::resolver::iterator it)
+             [this, sfd{std::move(sfd)}](const std::error_code &ec,
+                                         asio::ip::udp::resolver::iterator it)
              {
                  if (ec) {
-                     if (ec != ba::error::operation_aborted)
+                     if (ec != asio::error::operation_aborted)
                          udp_client_socket_read();
                      return;
                  }
-                 ba::ip::udp::resolver::iterator fv4, fv6, rie;
+                 asio::ip::udp::resolver::iterator fv4, fv6, rie;
                  for (; it != rie; ++it) {
                      bool isv4 = it->endpoint().address().is_v4();
                      if (isv4) {
@@ -2149,15 +2112,13 @@ void SocksUDP::udp_remote_socket_read()
     out_bufs_.clear();
     outbuf_.reserve(UDP_BUFSIZE);
     remote_socket_.async_receive_from
-        (ba::buffer(outbuf_),
+        (asio::buffer(outbuf_),
          rsender_endpoint_, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                     std::size_t bytes_xferred)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              if (ec) {
-                 if (ec != ba::error::operation_aborted) {
-                     logfmt("Error on remote UDP socket: {}\n",
-                            boost::system::system_error(ec).what());
+                 if (ec != asio::error::operation_aborted) {
+                     logfmt("Error on remote UDP socket: {}\n", std::system_error(ec).what());
                  }
                  return;
              }
@@ -2186,23 +2147,22 @@ void SocksUDP::udp_remote_socket_read()
              memcpy(&out_header_[ohs], &p, sizeof p);
              ohs += sizeof p;
              // Forward it to the client socket.
-             out_bufs_.push_back(boost::asio::buffer(out_header_.data(), ohs));
-             out_bufs_.push_back(boost::asio::buffer(outbuf_));
+             out_bufs_.push_back(asio::buffer(out_header_.data(), ohs));
+             out_bufs_.push_back(asio::buffer(outbuf_));
              client_socket_.async_send_to
                  (out_bufs_, client_remote_endpoint_, strand_.wrap(
-                  [this, sfd{std::move(sfd)}](const boost::system::error_code &ec,
-                                              std::size_t bytes_xferred)
+                  [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
                   {
                       udp_remote_socket_read();
                   }));
          }));
 }
 
-ClientListener::ClientListener(const ba::ip::tcp::endpoint &endpoint)
+ClientListener::ClientListener(const asio::ip::tcp::endpoint &endpoint)
         : acceptor_(io_service), endpoint_(endpoint), socket_(io_service)
 {
     acceptor_.open(endpoint_.protocol());
-    acceptor_.set_option(ba::ip::tcp::acceptor::reuse_address(true));
+    acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true));
     acceptor_.non_blocking(true);
     acceptor_.bind(endpoint_);
     acceptor_.listen(listen_queuelen);
@@ -2213,7 +2173,7 @@ void ClientListener::start_accept()
 {
     acceptor_.async_accept
         (socket_, endpoint_,
-         [this](const boost::system::error_code &ec)
+         [this](const std::error_code &ec)
          {
              if (!ec)
                  conntracker_hs->emplace(acceptor_.get_io_service(),

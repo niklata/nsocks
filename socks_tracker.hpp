@@ -30,15 +30,17 @@
 #define NJK_SOCKS_TRACKER_HPP_
 
 template <typename T>
-class ephTrackerVec : boost::noncopyable
+class ephTrackerVec
 {
 public:
-    ephTrackerVec(boost::asio::io_service &iosrv, std::size_t cyclefreq)
+    ephTrackerVec(asio::io_service &iosrv, std::size_t cyclefreq)
             : cyclefreq_(cyclefreq), timer_set_(false), hidx_(0),
               swapTimer_(iosrv) {}
+    ephTrackerVec(const ephTrackerVec &) = delete;
+    ephTrackerVec& operator=(const ephTrackerVec &) = delete;
     ~ephTrackerVec()
     {
-        boost::system::error_code ec;
+        std::error_code ec;
         swapTimer_.cancel(ec);
         for (std::size_t j = 0; j < 2; ++j)
             vec_cancel(j);
@@ -86,7 +88,7 @@ private:
             return;
         swapTimer_.expires_from_now
             (boost::posix_time::seconds(cyclefreq_));
-        swapTimer_.async_wait([this](const boost::system::error_code& error)
+        swapTimer_.async_wait([this](const std::error_code& error)
                               {
                                   if (error) {
                                       timer_set_ = false;
@@ -104,20 +106,22 @@ private:
     const std::size_t cyclefreq_;
     std::atomic<bool> timer_set_;
     std::atomic<std::size_t> hidx_;
-    boost::asio::deadline_timer swapTimer_;
+    asio::deadline_timer swapTimer_;
     std::vector<std::weak_ptr<T>> vec_[2];
 };
 
 template <typename T>
-class ephTrackerList : boost::noncopyable
+class ephTrackerList
 {
 public:
-    ephTrackerList(boost::asio::io_service &iosrv, std::size_t cyclefreq)
+    ephTrackerList(asio::io_service &iosrv, std::size_t cyclefreq)
         : cyclefreq_(cyclefreq), timer_set_(false), hidx_(0),
           swapTimer_(iosrv) {}
+    ephTrackerList(const ephTrackerList &) = delete;
+    ephTrackerList& operator=(const ephTrackerList &) = delete;
     ~ephTrackerList()
     {
-        boost::system::error_code ec;
+        std::error_code ec;
         swapTimer_.cancel(ec);
         for (std::size_t j = 0; j < 2; ++j)
             list_cancel(j);
@@ -183,7 +187,7 @@ private:
             return;
         swapTimer_.expires_from_now
             (boost::posix_time::seconds(cyclefreq_));
-        swapTimer_.async_wait([this](const boost::system::error_code& error)
+        swapTimer_.async_wait([this](const std::error_code& error)
                               {
                                   if (error) {
                                       timer_set_ = false;
@@ -199,15 +203,17 @@ private:
     const std::size_t cyclefreq_;
     std::atomic<bool> timer_set_;
     std::atomic<std::size_t> hidx_;
-    boost::asio::deadline_timer swapTimer_;
+    asio::deadline_timer swapTimer_;
     std::list<std::weak_ptr<T>> list_[2];
 };
 
 template <typename T>
-class connTracker : boost::noncopyable
+class connTracker
 {
 public:
     connTracker() {}
+    connTracker(const connTracker &) = delete;
+    connTracker& operator=(const connTracker &) = delete;
     ~connTracker()
     {
         for (auto &i: list_) {
@@ -223,7 +229,7 @@ public:
         list_.erase(it);
     }
     template <typename... Args>
-    void emplace(boost::asio::ip::tcp::endpoint ep, Args&&... args)
+    void emplace(asio::ip::tcp::endpoint ep, Args&&... args)
     {
         auto x = std::make_shared<T>(std::forward<Args>(args)...);
         {
@@ -234,7 +240,7 @@ public:
         x->start(ep);
     }
     boost::optional<std::shared_ptr<T>>
-    find_by_addr_port(boost::asio::ip::address addr, uint16_t port)
+    find_by_addr_port(asio::ip::address addr, uint16_t port)
     {
         std::lock_guard<std::mutex> wl(lock_);
         for (auto &i: list_) {

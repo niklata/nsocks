@@ -49,7 +49,7 @@
 #include <errno.h>
 #include <nk/format.hpp>
 #include <nk/optionarg.hpp>
-#include <boost/asio.hpp>
+#include <asio.hpp>
 #include <boost/lexical_cast.hpp>
 extern "C" {
 #include "nk/privilege.h"
@@ -58,8 +58,8 @@ extern "C" {
 }
 #include "socksclient.hpp"
 
-boost::asio::io_service io_service;
-static boost::asio::signal_set asio_signal_set(io_service);
+asio::io_service io_service;
+static asio::signal_set asio_signal_set(io_service);
 static std::vector<std::unique_ptr<ClientListener>> listeners;
 static uid_t nsocks_uid;
 static gid_t nsocks_gid;
@@ -84,10 +84,7 @@ static void process_signals()
     }
     asio_signal_set.add(SIGINT);
     asio_signal_set.add(SIGTERM);
-    asio_signal_set.async_wait(
-        [](const boost::system::error_code &, int signum) {
-            io_service.stop();
-        });
+    asio_signal_set.async_wait([](const std::error_code &, int signum) { io_service.stop(); });
 }
 
 static int enforce_seccomp(bool changed_uidgid)
@@ -168,8 +165,7 @@ static int enforce_seccomp(bool changed_uidgid)
 }
 
 static void hostmask_vec_add(const std::vector<std::string> &svec,
-                             std::vector<std::pair<boost::asio::ip::address,
-                                                   unsigned int>> &dvec,
+                             std::vector<std::pair<asio::ip::address, unsigned int>> &dvec,
                              const char sname[])
 {
     for (const auto &i: svec) {
@@ -187,7 +183,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
             addr.erase(loc);
         }
         try {
-            auto addy = boost::asio::ip::address::from_string(addr);
+            auto addy = asio::ip::address::from_string(addr);
             if (mask < 0)
                 mask = addy.is_v4() ? 32 : 128;
             if (addy.is_v4())
@@ -195,7 +191,7 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
             else
                 mask = std::min(mask, 128);
             dvec.emplace_back(addy, mask);
-        } catch (const boost::system::error_code&) {
+        } catch (const std::error_code&) {
             fmt::print("bad address in {}: '{}'\n", sname, addr);
             std::exit(EXIT_FAILURE);
         }
@@ -356,15 +352,15 @@ static void process_options(int ac, char *av[])
             addr.erase(loc);
         }
         try {
-            auto addy = boost::asio::ip::address::from_string(addr);
-            auto ep = boost::asio::ip::tcp::endpoint(addy, port);
+            auto addy = asio::ip::address::from_string(addr);
+            auto ep = asio::ip::tcp::endpoint(addy, port);
             listeners.emplace_back(std::make_unique<ClientListener>(ep));
-        } catch (const boost::system::error_code&) {
+        } catch (const std::error_code&) {
             fmt::print("bad address: {}\n", addr);
         }
     }
     if (!addrlist.size()) {
-        auto ep = boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v6(), 1080);
+        auto ep = asio::ip::tcp::endpoint(asio::ip::tcp::v6(), 1080);
         listeners.emplace_back(std::make_unique<ClientListener>(ep));
     }
 
