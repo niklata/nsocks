@@ -344,7 +344,6 @@ static void process_options(int ac, char *av[])
         addrlist.emplace_back(parse.nonOption(i));
     }
 
-    init_prng();
     init_conntrackers(hs_secs, bindlisten_secs);
     init_bind_port_assigner(bind_lowest_port, bind_highest_port);
 
