@@ -36,7 +36,6 @@
 #include <sys/types.h>
 #include <pwd.h>
 
-#include <boost/lexical_cast.hpp>
 #include <boost/dynamic_bitset.hpp>
 
 #include <random>
@@ -772,8 +771,7 @@ bool SocksInit::dns_choose_address(DNSType addrtype, asio::ip::tcp::resolver::it
 
 void SocksInit::dns_lookup()
 {
-    asio::ip::tcp::resolver::query query
-        (dst_hostname_, boost::lexical_cast<std::string>(dst_port_));
+    asio::ip::tcp::resolver::query query(dst_hostname_, std::to_string(dst_port_));
     auto sfd = shared_from_this();
     try {
         std::lock_guard<std::mutex> wl(tcp_resolver_lock);
@@ -2050,8 +2048,7 @@ void SocksUDP::kick_udp_resolver_timer()
 
 void SocksUDP::udp_dns_lookup(const std::string &dnsname)
 {
-    asio::ip::udp::resolver::query query
-        (dnsname, boost::lexical_cast<std::string>(dport_));
+    asio::ip::udp::resolver::query query(dnsname, std::to_string(dport_));
     auto sfd = shared_from_this();
     try {
         std::lock_guard<std::mutex> wl(udp_resolver_lock);

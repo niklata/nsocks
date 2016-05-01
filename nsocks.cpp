@@ -48,9 +48,9 @@
 #include <signal.h>
 #include <errno.h>
 #include <nk/format.hpp>
+#include <nk/from_string.hpp>
 #include <nk/optionarg.hpp>
 #include <asio.hpp>
-#include <boost/lexical_cast.hpp>
 extern "C" {
 #include "nk/privilege.h"
 #include "nk/pidfile.h"
@@ -175,8 +175,8 @@ static void hostmask_vec_add(const std::vector<std::string> &svec,
         if (loc != std::string::npos) {
             auto mstr = addr.substr(loc + 1);
             try {
-                mask = boost::lexical_cast<int>(mstr);
-            } catch (const boost::bad_lexical_cast&) {
+                mask = nk::from_string<int>(mstr);
+            } catch (const std::exception &) {
                 fmt::print("bad mask in {}: '{}'\n", sname, addr);
                 std::exit(EXIT_FAILURE);
             }
@@ -279,7 +279,9 @@ static void process_options(int ac, char *av[])
     if (parse.error())
         std::exit(EXIT_FAILURE);
     if (options[OPT_HELP]) {
-        int col = getenv("COLUMNS") ? atoi(getenv("COLUMNS")) : 80;
+        uint16_t col{80};
+        const auto cols = getenv("COLUMNS");
+        if (cols) col = nk::from_string<uint16_t>(cols);
         option::printUsage(fwrite, stdout, usage, col);
         std::exit(EXIT_FAILURE);
     }
@@ -306,24 +308,32 @@ static void process_options(int ac, char *av[])
                     std::exit(EXIT_FAILURE);
                 }
                 break;
-            case OPT_THREADS: num_worker_threads = std::max(1,atoi(opt.arg)); break;
+            case OPT_THREADS:
+                num_worker_threads = std::max(1,nk::from_string<int>(opt.arg)); break;
             case OPT_SCHUNKSIZE:
-                SocksTCP::set_send_buffer_chunk_size(std::max(128,atoi(opt.arg))); break;
+                SocksTCP::set_send_buffer_chunk_size
+                    (std::max(128,nk::from_string<int>(opt.arg))); break;
             case OPT_RCHUNKSIZE:
-                SocksTCP::set_receive_buffer_chunk_size(std::max(128,atoi(opt.arg))); break;
-            case OPT_SPLICESIZE: SocksTCP::set_splice_pipe_size(std::max(4096,atoi(opt.arg))); break;
-            case OPT_LISTENQ: set_listen_queuelen(std::max(1,atoi(opt.arg))); break;
+                SocksTCP::set_receive_buffer_chunk_size
+                    (std::max(128,nk::from_string<int>(opt.arg))); break;
+            case OPT_SPLICESIZE:
+                SocksTCP::set_splice_pipe_size(std::max(4096,nk::from_string<int>(opt.arg)));
+                break;
+            case OPT_LISTENQ:
+                set_listen_queuelen(std::max(1,nk::from_string<int>(opt.arg))); break;
             case OPT_NOIPV6: g_disable_ipv6 = true; break;
             case OPT_PREFERIPV4: g_prefer_ipv4 = true; break;
             case OPT_DENYDST: denydstlist.emplace_back(opt.arg); break;
             case OPT_BINDOK: bindallowsrclist.emplace_back(opt.arg); break;
             case OPT_UDPOK: udpallowsrclist.emplace_back(opt.arg); break;
-            case OPT_HSHAKEGC: hs_secs = std::max(1,atoi(opt.arg)); break;
-            case OPT_BINDGC: bindlisten_secs = std::max(1,atoi(opt.arg)); break;
+            case OPT_HSHAKEGC: hs_secs = std::max(1,nk::from_string<int>(opt.arg)); break;
+            case OPT_BINDGC: bindlisten_secs = std::max(1,nk::from_string<int>(opt.arg)); break;
             case OPT_BINDLPORT:
-                bind_lowest_port = std::min(65535,std::max(0,atoi(opt.arg))); break;
+                bind_lowest_port = std::min(65535,std::max(0,nk::from_string<int>(opt.arg)));
+                break;
             case OPT_BINDHPORT:
-                bind_highest_port = std::min(65535,std::max(0,atoi(opt.arg))); break;
+                bind_highest_port = std::min(65535,std::max(0,nk::from_string<int>(opt.arg)));
+                break;
             case OPT_NOBIND: g_disable_bind = true; break;
             case OPT_NOUDP: g_disable_udp = true; break;
             case OPT_SECCOMP: use_seccomp = true; break;
@@ -345,8 +355,8 @@ static void process_options(int ac, char *av[])
         if (loc != std::string::npos) {
             auto pstr = addr.substr(loc + 1);
             try {
-                port = boost::lexical_cast<unsigned short>(pstr);
-            } catch (const boost::bad_lexical_cast&) {
+                port = nk::from_string<uint16_t>(pstr);
+            } catch (const std::exception &) {
                 fmt::print("bad port in address '{}', defaulting to 1080\n", addr);
             }
             addr.erase(loc);
