@@ -386,7 +386,7 @@ static void process_options(int ac, char *av[])
         }
     }
 
-    if (pidfile.size() && file_exists(pidfile.c_str(), "w"))
+    if (pidfile.size())
         write_pid(pidfile.c_str());
 
     umask(077);
