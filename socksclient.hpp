@@ -106,6 +106,7 @@ private:
         Parsed4G_Cmd,
         Parsed4G_DPort,
         Parsed4G_DAddr,
+        Parsed4G_Userid,
 
         Parsed_Finished
     };
@@ -180,6 +181,7 @@ private:
     uint8_t cmd_code_:4;
     uint8_t addr_type_:4;
     bool is_socks_v4_:1;
+    bool socks_v4_dns_:1;
     bool bind_listen_:1;
     bool auth_none_:1;
     bool auth_gssapi_:1;

@@ -354,7 +354,7 @@ SocksInit::SocksInit(asio::io_service &io_service, asio::ip::tcp::socket client_
         : tracked_(true), strand_(io_service),
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
-          ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false),
+          ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false), socks_v4_dns_(false),
           auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
 {
     if (g_verbose_logs)
@@ -540,7 +540,7 @@ p4g_version:
         if (c == 0x1) {
             cmd_code_ = CmdTCPConnect;
         } else if (c == 0x2) {
-            cmd_code_ = CmdTCPConnect;
+            cmd_code_ = CmdTCPBind;
         } else {
             return RplCmdNotSupp;
         }
@@ -560,23 +560,51 @@ p4g_version:
             return boost::optional<ReplyCode>();
         pstate_ = Parsed4G_DAddr;
         consumed += 4;
-        asio::ip::address_v4::bytes_type v4o;
-        memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
-        dst_address_ = asio::ip::address_v4(v4o);
+        if (sockbuf_[poff_  ] == 0x0 &&
+            sockbuf_[poff_+1] == 0x0 &&
+            sockbuf_[poff_+2] == 0x0 &&
+            sockbuf_[poff_+3] != 0x0) {
+            socks_v4_dns_ = true;
+        } else {
+            asio::ip::address_v4::bytes_type v4o;
+            memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
+            dst_address_ = asio::ip::address_v4(v4o);
+        }
         poff_ += 4;
     }
     case Parsed4G_DAddr: {
         // Null-terminated userid.
-        for (; poff_ < ibSiz_; ++poff_) {
-            ++consumed;
-            ++ptmp_;
-            if (sockbuf_[poff_] == '\0') {
-                ptmp_ = 0;
+        for (auto i = poff_; i < ibSiz_; ++i) {
+            if (sockbuf_[i] == '\0') {
+                poff_ += (i - poff_ + 1);
+                consumed += (i - poff_ + 1);
+                if (!socks_v4_dns_) {
+                    pstate_ = Parsed_Finished;
+                    goto parsed_finished;
+                } else {
+                    pstate_ = Parsed4G_Userid;
+                    break;
+                }
+            }
+            if (i - poff_ > 64)
+                return RplFail;
+        }
+        if (pstate_ != Parsed4G_Userid)
+            return boost::optional<ReplyCode>();
+    }
+    case Parsed4G_Userid: {
+        // Null-terminated DNS hostname.
+        for (auto i = poff_; i < ibSiz_; ++i) {
+            if (sockbuf_[i] == '\0') {
+                dst_hostname_.append(sockbuf_.data() + poff_, i - poff_);
+                poff_ += (i - poff_ + 1);
+                consumed += (i - poff_ + 1);
                 pstate_ = Parsed_Finished;
                 goto parsed_finished;
             }
-            if (ptmp_ == UCHAR_MAX)
+            if (i - poff_ > 512) {
                 return RplFail;
+            }
         }
         return boost::optional<ReplyCode>();
     }
