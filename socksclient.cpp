@@ -1391,10 +1391,9 @@ inline SocksTCP::splicePipeRet SocksTCP::spliceClientToPipe()
 
 inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient(size_t *xferred)
 {
-    if (pToClient_len_ <= 0) {
-        if (xferred) *xferred = 0;
+    if (xferred) *xferred = 0;
+    if (pToClient_len_ <= 0)
         return splicePipeRet::ok;
-    }
     auto n = splice(pToClientR_.native_handle(), NULL,
                     client_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
@@ -1412,10 +1411,9 @@ inline SocksTCP::splicePipeRet SocksTCP::splicePipeToClient(size_t *xferred)
 
 inline SocksTCP::splicePipeRet SocksTCP::splicePipeToRemote(size_t *xferred)
 {
-    if (pToRemote_len_ <= 0) {
-        if (xferred) *xferred = 0;
+    if (xferred) *xferred = 0;
+    if (pToRemote_len_ <= 0)
         return splicePipeRet::ok;
-    }
     auto n = splice(pToRemoteR_.native_handle(), NULL,
                     remote_socket_.native_handle(), NULL,
                     splice_pipe_size, SPLICE_F_NONBLOCK);
