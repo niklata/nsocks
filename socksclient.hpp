@@ -37,7 +37,7 @@
 
 #include <asio.hpp>
 #include <boost/optional.hpp>
-#include <nk/format.hpp>
+#include <fmt/format.h>
 
 #ifdef USE_SPLICE
 extern void pipe_close_raw(std::size_t p_len, asio::posix::stream_descriptor &sa,

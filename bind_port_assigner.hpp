@@ -29,7 +29,7 @@
 #ifndef NJK_BIND_PORT_ASSIGNER_HPP_
 #define NJK_BIND_PORT_ASSIGNER_HPP_
 
-#include <nk/format.hpp>
+#include <fmt/format.h>
 
 class BindPortAssigner
 {

@@ -119,9 +119,9 @@ endif()
 include_directories("${PROJECT_SOURCE_DIR}"
                     "${PROJECT_SOURCE_DIR}/ncmlib"
                     "${PROJECT_SOURCE_DIR}/asio"
-                    "${PROJECT_SOURCE_DIR}/cppformat")
+                    "${PROJECT_SOURCE_DIR}/fmt")
 add_subdirectory(ncmlib)
-add_subdirectory(cppformat)
+add_subdirectory(fmt)
 
 include_directories ( ${Boost_INCLUDE_DIRS} )
 find_package(Threads)
@@ -132,5 +132,5 @@ set(NSOCKS_SRCS
   )
 
 add_executable(nsocks ${NSOCKS_SRCS})
-target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ncmlib cppformat)
+target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ncmlib fmt)
 
