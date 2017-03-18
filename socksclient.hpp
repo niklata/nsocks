@@ -170,7 +170,7 @@ private:
     std::unique_ptr<BoundSocket> bound_;
     std::string dst_hostname_; // Shared
     asio::ip::address dst_address_; // Shared
-    asio::strand strand_;
+    asio::io_service::strand strand_;
     asio::ip::tcp::socket client_socket_; // Shared
     asio::ip::tcp::socket remote_socket_; // Shared
     uint16_t dst_port_; // Shared
@@ -229,7 +229,7 @@ private:
     // Shared with SocksInit
     std::string dst_hostname_;
     asio::ip::address dst_address_;
-    asio::strand strand_;
+    asio::io_service::strand strand_;
     asio::ip::tcp::socket client_socket_;
     asio::ip::tcp::socket remote_socket_;
     uint16_t dst_port_;
@@ -366,7 +366,7 @@ private:
     asio::ip::udp::endpoint client_remote_endpoint_;
     asio::ip::udp::endpoint csender_endpoint_;
     asio::ip::udp::endpoint rsender_endpoint_;
-    asio::strand strand_;
+    asio::io_service::strand strand_;
     asio::ip::udp::socket client_socket_;
     asio::ip::udp::socket remote_socket_;
     asio::ip::address daddr_;
