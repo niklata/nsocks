@@ -480,8 +480,10 @@ SocksInit::parse_greet(std::size_t &consumed)
             pstate_ = Parsed4G_Version;
             is_socks_v4_ = true;
             goto p4g_version;
-        } else
+        } else {
+            logfmt("Fail: Parsed_None\n");
             return RplFail;
+        }
     }
     case Parsed5G_Version: {
         if (ibSiz_ - poff_ < 1)
@@ -505,13 +507,18 @@ SocksInit::parse_greet(std::size_t &consumed)
         }
         if (ptmp_ == 0) {
             pstate_ = Parsed5G_Auth;
-            if (poff_ != ibSiz_) // Reject if there are excess bytes in buffer.
+            if (poff_ != ibSiz_) { // Reject if there are excess bytes in buffer.
+                logfmt("Fail: Parsed5G_NumAuth: poff_ != ibSiz_\n");
                 return RplFail;
-            if (!auth_none_)
+            }
+            if (!auth_none_) {
+                logfmt("Fail: Parsed5G_NumAuth: !auth_none_\n");
                 return RplFail;
+            }
         } else if (ptmp_ > 0) {
             return boost::optional<ReplyCode>();
         } else {
+            logfmt("Fail: Parsed5G_NumAuth\n");
             return RplFail;
         }
     }
@@ -586,8 +593,10 @@ p4g_version:
                     break;
                 }
             }
-            if (i - poff_ > 64)
+            if (i - poff_ > 64) {
+                logfmt("Fail: Parsed4G_DAddr\n");
                 return RplFail;
+            }
         }
         if (pstate_ != Parsed4G_Userid)
             return boost::optional<ReplyCode>();
@@ -603,6 +612,7 @@ p4g_version:
                 goto parsed_finished;
             }
             if (i - poff_ > 512) {
+                logfmt("Fail: Parsed4G_Userid\n");
                 return RplFail;
             }
         }
@@ -614,8 +624,10 @@ p4g_version:
         pstate_ = Parsed5CR_Version;
         ++consumed;
         auto c = sockbuf_[poff_++];
-        if (c != 0x5)
+        if (c != 0x5) {
+            logfmt("Fail: Parsed5G_Replied\n");
             return RplFail;
+        }
     }
     case Parsed5CR_Version: {
         if (ibSiz_ - poff_ < 1)
@@ -638,8 +650,10 @@ p4g_version:
         pstate_ = Parsed5CR_Resv;
         ++consumed;
         auto c = sockbuf_[poff_++];
-        if (c != 0x0)
+        if (c != 0x0) {
+            logfmt("Fail: Parsed5CR_Cmd\n");
             return RplFail;
+        }
     }
     case Parsed5CR_Resv: {
         if (ibSiz_ - poff_ < 1)
@@ -1007,11 +1021,13 @@ void SocksInit::dispatch_tcp_bind()
         }
     } catch (const std::out_of_range &) {
         // No ports are free for use as a local endpoint.
+        logfmt("Fail: dispatch_tcp_bind: no ports are free\n");
         send_reply(RplFail);
         return;
     }
 
     if (!create_bind_socket(bind_ep)) {
+        logfmt("Fail: dispatch_tcp_bind: no ports are free\n");
         send_reply(RplFail);
         return;
     }
@@ -1023,6 +1039,7 @@ void SocksInit::dispatch_tcp_bind()
          [this, sfd{std::move(sfd)}](const std::error_code &ec)
          {
              if (ec) {
+                 logfmt("Fail: dispatch_tcp_bind: accept failed\n");
                  send_reply(RplFail);
                  return;
              }
