@@ -154,7 +154,6 @@ private:
     enum class DNSType { None, V4, V6, Any };
     void raw_dns_lookup(int af);
     void dns_lookup();
-    void dns_result(asio::ip::address addr_choice);
     void dispatch_connrq(bool did_dns = false);
 
     void dispatch_tcp_connect();
@@ -174,12 +173,14 @@ private:
     std::atomic<bool> tracked_;
     std::unique_ptr<BoundSocket> bound_;
     std::shared_ptr<SocksInit> selfref_; // Use for keeping alive during adns queries.
+    std::vector<asio::ip::address> dst_addresses_;
     std::string dst_hostname_; // Shared
     asio::ip::address dst_address_; // Shared
     asio::io_service::strand strand_;
     asio::ip::tcp::socket client_socket_; // Shared
     asio::ip::tcp::socket remote_socket_; // Shared
     uint16_t dst_port_; // Shared
+    uint16_t dst_addr_i_{0};
     uint8_t pstate_;
     uint8_t ibSiz_;
     uint8_t poff_;

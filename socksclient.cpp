@@ -760,7 +760,6 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 
     size_t ipchoices{0};
     for (auto p = host->h_addr_list; *p; ++p) ++ipchoices;
-
     if (ipchoices == 0) {
         if (host->h_addrtype == AF_INET) {
             if (g_prefer_ipv4 && !g_disable_ipv6) {
@@ -788,45 +787,38 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         return;
     }
 
-    // XXX: Choose a random address.  Probably better to store them all
-    //      and try each in sequence instead...
-    bool seq_fallback{false};
-    const size_t choicenum = g_random_prng() % ipchoices;
-    size_t j{0};
-again:
-    for (auto p = host->h_addr_list; *p; ++p, ++j) {
-        if (seq_fallback || j == choicenum) {
-            char addr_buf[64];
-            ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
-            std::error_code ec;
-            auto addrchoice = asio::ip::address::from_string(addr_buf, ec);
-            if (!ec) {
-                // It's possible for the resolver to return an address
-                // that is unspecified after lookup, eg, host file blocking.
-                if (addrchoice.is_unspecified())
-                    continue;
-                self->strand_.post([self, ac = std::move(addrchoice)]() {
-                    auto sfd = std::move(self->selfref_);
-                    self->dns_result(std::move(ac));
-                });
-                return;
-            }
-            if (seq_fallback) continue;
-            j = 0;
-            seq_fallback = true;
-            goto again;
-        }
+    std::vector<asio::ip::address> addrs;
+    {
+        size_t rsv{0};
+        for (auto p = host->h_addr_list; *p; ++p, ++rsv);
+        addrs.reserve(rsv);
     }
-    self->strand_.post([self]() {
+    for (auto p = host->h_addr_list; *p; ++p) {
+        if (g_disable_ipv6 && host->h_addrtype == AF_INET6)
+            continue;
+        char addr_buf[64];
+        ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
+        std::error_code ec;
+        auto a = asio::ip::address::from_string(addr_buf, ec);
+        if (ec) continue;
+        // It's possible for the resolver to return an address
+        // that is unspecified after lookup, eg, host file blocking.
+        if (a.is_unspecified()) continue;
+        addrs.emplace_back(std::move(a));
+    }
+    if (addrs.empty()) {
+        self->strand_.post([self]() {
+            auto sfd = std::move(self->selfref_);
+            self->send_reply(RplHostUnreach);
+        });
+        return;
+    }
+    std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
+    self->strand_.post([self, ac = std::move(addrs)]() {
         auto sfd = std::move(self->selfref_);
-        self->send_reply(RplHostUnreach);
+        self->dst_addresses_ = std::move(ac);
+        self->dispatch_connrq(true);
     });
-}
-
-void SocksInit::dns_result(asio::ip::address addr_choice)
-{
-    dst_address_ = std::move(addr_choice);
-    dispatch_connrq(true);
 }
 
 void SocksInit::raw_dns_lookup(int af)
@@ -876,6 +868,14 @@ static bool is_dst_denied(const asio::ip::address &addr)
 
 void SocksInit::dispatch_tcp_connect()
 {
+    if (!dst_addresses_.empty()) {
+        if (dst_addr_i_ < dst_addresses_.size())
+            dst_address_ = dst_addresses_[dst_addr_i_++];
+        else {
+          send_reply(RplFail);
+          return;
+        }
+    }
     if (is_dst_denied(dst_address_)) {
         send_reply(RplDeny);
         return;
@@ -900,12 +900,18 @@ void SocksInit::dispatch_tcp_connect()
                    std::move(dst_hostname_));
              return;
 ec_err:
-             send_reply(errorToReplyCode(ec));
+             if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
+                 send_reply(errorToReplyCode(ec));
+             else
+                 dispatch_tcp_connect();
              return;
 rle_err:
              logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
                     dst_hostname_ : dst_address_.to_string(), ecc.message());
-             send_reply(RplFail);
+             if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
+                 send_reply(RplFail);
+             else
+                 dispatch_tcp_connect();
          }));
 }
 
