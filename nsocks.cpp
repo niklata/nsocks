@@ -321,7 +321,7 @@ static void process_options(int ac, char *av[])
                 break;
             case OPT_LISTENQ:
                 set_listen_queuelen(std::max(1,nk::from_string<int>(opt.arg))); break;
-            case OPT_NOIPV6: g_disable_ipv6 = true; break;
+            case OPT_NOIPV6: g_disable_ipv6 = true; g_prefer_ipv4 = true; break;
             case OPT_PREFERIPV4: g_prefer_ipv4 = true; break;
             case OPT_DENYDST: denydstlist.emplace_back(opt.arg); break;
             case OPT_BINDOK: bindallowsrclist.emplace_back(opt.arg); break;
