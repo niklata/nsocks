@@ -356,18 +356,18 @@ private:
     void udp_tcp_socket_read();
     void udp_client_socket_read();
     void udp_remote_socket_read();
-    bool udp_frags_different(uint8_t fragn, uint8_t atyp,
-                             const std::string &dnsname);
-    bool udp_frag_handle(uint8_t fragn, uint8_t atyp,
-                         const std::string &dnsname);
+    bool udp_frags_different(uint8_t fragn, uint8_t atyp);
+    bool udp_frag_handle(uint8_t fragn, uint8_t atyp);
     void udp_proxy_packet();
-    void kick_udp_resolver_timer();
-    void udp_dns_lookup(const std::string &dnsname);
+    static void dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host);
+    void raw_dns_lookup(int af);
+    void dns_lookup();
     void close_udp_sockets();
 
     // Shared with SocksInit
     asio::ip::tcp::socket tcp_client_socket_;
 
+    std::shared_ptr<SocksUDP> selfref_; // Use for keeping alive during adns queries.
     asio::ip::udp::endpoint client_endpoint_;
     asio::ip::udp::endpoint remote_endpoint_;
     asio::ip::udp::endpoint client_remote_endpoint_;
@@ -377,6 +377,7 @@ private:
     asio::ip::udp::socket client_socket_;
     asio::ip::udp::socket remote_socket_;
     asio::ip::address daddr_;
+    std::string dnsname_;
     std::vector<uint8_t> inbuf_;
     std::vector<uint8_t> outbuf_;
     std::array<char, 24> out_header_;

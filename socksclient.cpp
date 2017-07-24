@@ -88,13 +88,6 @@ void SocksTCP::set_splice_pipe_size(int size) {
 
 static nk::rng::xoroshiro128p g_random_prng;
 
-static int resolver_prunetimer_sec = 60;
-
-static std::mutex udp_resolver_lock;
-static std::unique_ptr<asio::ip::udp::resolver> udp_resolver;
-static std::unique_ptr<asio::deadline_timer> udp_resolver_timer;
-static std::size_t udp_resolver_timer_seq;
-
 static std::mutex print_lock;
 template <typename... Args>
 static void logfmt(Args&&... args)
@@ -1922,7 +1915,6 @@ void SocksUDP::udp_client_socket_read()
                  }
                  auto atyp = inbuf_[3];
                  asio::ip::address daddr;
-                 std::string dnsname;
                  switch (atyp) {
                      case 1: { // IPv4
                          if (bytes_xferred < 10)
@@ -1939,7 +1931,7 @@ void SocksUDP::udp_client_socket_read()
                          size_t dnssiz = inbuf_[headersiz++];
                          if (bytes_xferred - headersiz < dnssiz + 2)
                              goto nosend;
-                         dnsname = std::string
+                         dnsname_ = std::string
                              (reinterpret_cast<const  char *>
                               (inbuf_.data() + headersiz), dnssiz);
                          headersiz += dnssiz;
@@ -1962,11 +1954,11 @@ void SocksUDP::udp_client_socket_read()
                  poffset_ = headersiz;
                  psize_ = bytes_xferred - headersiz;
 
-                 if (fragn != '\0' && udp_frag_handle(fragn, atyp, dnsname))
+                 if (fragn != '\0' && udp_frag_handle(fragn, atyp))
                      return;
 
-                 if (dnsname.size() > 0)
-                     udp_dns_lookup(dnsname);
+                 if (!dnsname_.empty())
+                     dns_lookup();
                  else
                      udp_proxy_packet();
                  return;
@@ -1976,8 +1968,7 @@ void SocksUDP::udp_client_socket_read()
          }));
 }
 
-bool SocksUDP::udp_frags_different(uint8_t fragn, uint8_t atyp,
-                                      const std::string &dnsname)
+bool SocksUDP::udp_frags_different(uint8_t fragn, uint8_t atyp)
 {
     if (fragn <= frags_->lastn_)
         return true;
@@ -1987,26 +1978,25 @@ bool SocksUDP::udp_frags_different(uint8_t fragn, uint8_t atyp,
         if (daddr_ != frags_->addr_)
             return true;
     } else { // DNS
-        if (dnsname != frags_->dns_)
+        if (dnsname_ != frags_->dns_)
             return true;
     }
     return false;
 }
 
 // If true then the caller doesn't need to proceed.
-bool SocksUDP::udp_frag_handle(uint8_t fragn, uint8_t atyp,
-                                  const std::string &dnsname)
+bool SocksUDP::udp_frag_handle(uint8_t fragn, uint8_t atyp)
 {
     const bool new_frags(frags_->buf_.size() == 0);
     const bool send_frags(fragn > 127);
-    if (new_frags || udp_frags_different(fragn, atyp, dnsname)) {
+    if (new_frags || udp_frags_different(fragn, atyp)) {
         frags_->reset();
         frags_->lastn_ = fragn;
         frags_->port_ = dport_;
         if (atyp != 3)
             frags_->addr_ = daddr_;
         else // DNS
-            frags_->dns_ = dnsname;
+            frags_->dns_ = dnsname_;
     }
     frags_->buf_.insert
         (frags_->buf_.end(),
@@ -2042,84 +2032,79 @@ void SocksUDP::udp_proxy_packet()
          }));
 }
 
-void SocksUDP::kick_udp_resolver_timer()
+void SocksUDP::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
 {
-    if (!udp_resolver_timer)
-        udp_resolver_timer =
-            std::make_unique<asio::deadline_timer>(io_service);
-    udp_resolver_timer->expires_from_now
-        (boost::posix_time::seconds(resolver_prunetimer_sec));
-    auto seq = udp_resolver_timer_seq;
-    udp_resolver_timer->async_wait(
-        [this, seq](const std::error_code& error)
-        {
-            if (error)
-                return;
-            std::lock_guard<std::mutex> wl(udp_resolver_lock);
-            auto cseq = udp_resolver_timer_seq;
-            if (cseq == seq) {
-                udp_resolver->cancel();
-                udp_resolver.reset();
-                return;
-            }
-            kick_udp_resolver_timer();
+    auto self = (SocksUDP *)self_;
+
+    if (status != ARES_SUCCESS || timeouts) {
+        self->strand_.post([self]() {
+            auto sfd = std::move(self->selfref_);
+            self->udp_client_socket_read();
         });
+        return;
+    }
+
+    size_t ipchoices{0};
+    for (auto p = host->h_addr_list; *p; ++p) ++ipchoices;
+    if (ipchoices == 0) {
+        if (host->h_addrtype == AF_INET) {
+            if (g_prefer_ipv4 && !g_disable_ipv6) {
+                self->strand_.post([self]() {
+                    self->raw_dns_lookup(AF_INET6);
+                });
+            } else {
+                self->strand_.post([self]() {
+                    auto sfd = std::move(self->selfref_);
+                    self->udp_client_socket_read();
+                });
+            }
+        } else if (host->h_addrtype == AF_INET6) {
+            if (g_prefer_ipv4) {
+                self->strand_.post([self]() {
+                    auto sfd = std::move(self->selfref_);
+                    self->udp_client_socket_read();
+                });
+            } else {
+                self->strand_.post([self]() {
+                    self->raw_dns_lookup(AF_INET);
+                });
+            }
+        }
+        return;
+    }
+
+    for (auto p = host->h_addr_list; *p; ++p) {
+        if (g_disable_ipv6 && host->h_addrtype == AF_INET6)
+            continue;
+        char addr_buf[64];
+        ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
+        std::error_code ec;
+        auto a = asio::ip::address::from_string(addr_buf, ec);
+        if (ec) continue;
+        // It's possible for the resolver to return an address
+        // that is unspecified after lookup, eg, host file blocking.
+        if (a.is_unspecified()) continue;
+        self->strand_.post([self, a = std::move(a)]() {
+            auto sfd = std::move(self->selfref_);
+            self->daddr_ = std::move(a);
+            self->udp_proxy_packet();
+        });
+    }
+    self->strand_.post([self]() {
+        auto sfd = std::move(self->selfref_);
+        self->udp_client_socket_read();
+    });
 }
 
-void SocksUDP::udp_dns_lookup(const std::string &dnsname)
+void SocksUDP::raw_dns_lookup(int af)
 {
-    asio::ip::udp::resolver::query query(dnsname, std::to_string(dport_));
-    auto sfd = shared_from_this();
-    try {
-        std::lock_guard<std::mutex> wl(udp_resolver_lock);
-        if (!udp_resolver) {
-            udp_resolver = std::make_unique<asio::ip::udp::resolver>
-                (io_service);
-            kick_udp_resolver_timer();
-        }
-        udp_resolver->async_resolve
-            (query, strand_.wrap(
-             [this, sfd{std::move(sfd)}](const std::error_code &ec,
-                                         asio::ip::udp::resolver::iterator it)
-             {
-                 if (ec) {
-                     if (ec != asio::error::operation_aborted)
-                         udp_client_socket_read();
-                     return;
-                 }
-                 asio::ip::udp::resolver::iterator fv4, fv6, rie;
-                 for (; it != rie; ++it) {
-                     bool isv4 = it->endpoint().address().is_v4();
-                     if (isv4) {
-                         if (g_prefer_ipv4) {
-                             daddr_ = it->endpoint().address();
-                             udp_proxy_packet();
-                             return;
-                         }
-                         if (fv4 == rie)
-                             fv4 = it;
-                     } else {
-                         if (!g_prefer_ipv4) {
-                             daddr_ = it->endpoint().address();
-                             udp_proxy_packet();
-                             return;
-                         }
-                         if (fv6 == rie)
-                             fv6 = it;
-                     }
-                 }
-                 daddr_ = g_prefer_ipv4 ? fv4->endpoint().address()
-                                              : fv6->endpoint().address();
-                 if (g_disable_ipv6 && !daddr_.is_v4()) {
-                     udp_client_socket_read();
-                     return;
-                 }
-                 udp_proxy_packet();
-             }));
-        ++udp_resolver_timer_seq;
-    } catch (const std::exception &) {
-        udp_client_socket_read();
-    }
+    g_adns->query_hostname(dnsname_.c_str(), af, SocksUDP::dnslookup_cb, this);
+}
+
+void SocksUDP::dns_lookup()
+{
+    selfref_ = shared_from_this();
+    raw_dns_lookup(g_prefer_ipv4 ? AF_INET : AF_INET6);
 }
 
 void SocksUDP::udp_remote_socket_read()
