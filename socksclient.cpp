@@ -822,7 +822,7 @@ void SocksInit::raw_dns_lookup(int af)
 void SocksInit::dns_lookup()
 {
     selfref_ = shared_from_this();
-    raw_dns_lookup(g_prefer_ipv4 ? AF_INET : AF_INET6);
+    raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
 }
 
 void SocksInit::dispatch_connrq(bool did_dns)
@@ -2104,7 +2104,7 @@ void SocksUDP::raw_dns_lookup(int af)
 void SocksUDP::dns_lookup()
 {
     selfref_ = shared_from_this();
-    raw_dns_lookup(g_prefer_ipv4 ? AF_INET : AF_INET6);
+    raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
 }
 
 void SocksUDP::udp_remote_socket_read()
