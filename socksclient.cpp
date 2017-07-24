@@ -39,7 +39,6 @@
 #include <boost/dynamic_bitset.hpp>
 
 #include <nk/xorshift.hpp>
-#include <nk/scopeguard.hpp>
 
 #ifdef HAS_64BIT
 #include <boost/lockfree/stack.hpp>
@@ -747,20 +746,13 @@ parsed5cr_dnslen:
     return boost::optional<ReplyCode>();
 }
 
-// XXX: Disgusting but works.  Another strategy would be to just store a shared_ptr of itself
-// in the SocksInit class, abusing circular refs.
-static std::map<SocksInit *, std::shared_ptr<SocksInit>> dns_lookup_pq;
 void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
 {
     auto self = (SocksInit *)self_;
-    auto dlpi = dns_lookup_pq.find(self);
-    assert(dlpi != dns_lookup_pq.end());
-    auto sg = nk::scopeGuard([&dlpi](){
-        dns_lookup_pq.erase(dlpi);
-    });
 
     if (status != ARES_SUCCESS || timeouts) {
-        self->strand_.post([self, sfd = std::move(*dlpi)]() {
+        self->strand_.post([self]() {
+            auto sfd = std::move(self->selfref_);
             self->send_reply(RplHostUnreach);
         });
         return;
@@ -772,22 +764,22 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
     if (ipchoices == 0) {
         if (host->h_addrtype == AF_INET) {
             if (g_prefer_ipv4 && !g_disable_ipv6) {
-                sg.dismiss();
                 self->strand_.post([self]() {
                     self->raw_dns_lookup(AF_INET6);
                 });
             } else {
-                self->strand_.post([self, sfd = std::move(*dlpi)]() {
+                self->strand_.post([self]() {
+                    auto sfd = std::move(self->selfref_);
                     self->send_reply(RplHostUnreach);
                 });
             }
         } else if (host->h_addrtype == AF_INET6) {
             if (g_prefer_ipv4) {
-                self->strand_.post([self, sfd = std::move(*dlpi)]() {
+                self->strand_.post([self]() {
+                    auto sfd = std::move(self->selfref_);
                     self->send_reply(RplHostUnreach);
                 });
             } else {
-                sg.dismiss();
                 self->strand_.post([self]() {
                     self->raw_dns_lookup(AF_INET);
                 });
@@ -804,27 +796,29 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 again:
     for (auto p = host->h_addr_list; *p; ++p, ++j) {
         if (seq_fallback || j == choicenum) {
-        char addr_buf[64];
-        ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
-        std::error_code ec;
-        auto addrchoice = asio::ip::address::from_string(addr_buf, ec);
-        if (!ec) {
-            // It's possible for the resolver to return an address
-            // that is unspecified after lookup, eg, host file blocking.
-            if (addrchoice.is_unspecified())
-                continue;
-            self->strand_.post([self, sfd = std::move(*dlpi), ac = std::move(addrchoice)]() {
-                self->dns_result(std::move(ac));
-            });
-            return;
-        }
-        if (seq_fallback) continue;
-        j = 0;
-        seq_fallback = true;
-        goto again;
+            char addr_buf[64];
+            ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
+            std::error_code ec;
+            auto addrchoice = asio::ip::address::from_string(addr_buf, ec);
+            if (!ec) {
+                // It's possible for the resolver to return an address
+                // that is unspecified after lookup, eg, host file blocking.
+                if (addrchoice.is_unspecified())
+                    continue;
+                self->strand_.post([self, ac = std::move(addrchoice)]() {
+                    auto sfd = std::move(self->selfref_);
+                    self->dns_result(std::move(ac));
+                });
+                return;
+            }
+            if (seq_fallback) continue;
+            j = 0;
+            seq_fallback = true;
+            goto again;
         }
     }
-    self->strand_.post([self, sfd = std::move(*dlpi)]() {
+    self->strand_.post([self]() {
+        auto sfd = std::move(self->selfref_);
         self->send_reply(RplHostUnreach);
     });
 }
@@ -842,7 +836,7 @@ void SocksInit::raw_dns_lookup(int af)
 
 void SocksInit::dns_lookup()
 {
-    dns_lookup_pq.emplace(std::make_pair(this, shared_from_this()));
+    selfref_ = shared_from_this();
     raw_dns_lookup(g_prefer_ipv4 ? AF_INET : AF_INET6);
 }
 
