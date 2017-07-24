@@ -127,10 +127,11 @@ include_directories ( ${Boost_INCLUDE_DIRS} )
 find_package(Threads)
 
 set(NSOCKS_SRCS
+  nadns/dns.cpp
   socksclient.cpp
   nsocks.cpp
   )
 
 add_executable(nsocks ${NSOCKS_SRCS})
-target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ncmlib fmt)
+target_link_libraries(nsocks ${CMAKE_THREAD_LIBS_INIT} ncmlib fmt cares)
 

@@ -1,6 +1,6 @@
 /* nsocks.c - socks5 server
  *
- * (c) 2013-2016 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2017 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -411,7 +411,11 @@ static void process_options(int ac, char *av[])
 
 int main(int ac, char *av[])
 {
+    const nk::net::adns_init adnslib;
     process_options(ac, av);
+
+    g_adns = std::make_unique<nk::net::adns_resolver>();
+    g_adns->run();
 
     if (num_worker_threads > 1) {
         std::vector<std::thread> threads;

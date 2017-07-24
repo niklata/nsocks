@@ -1,6 +1,6 @@
 /* socksclient.hpp - socks client request handling
  *
- * (c) 2013-2016 Nicholas J. Kain <njkain at gmail dot com>
+ * (c) 2013-2017 Nicholas J. Kain <njkain at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,10 @@
 #include <asio.hpp>
 #include <boost/optional.hpp>
 #include <fmt/format.h>
+
+#include "nadns/dns.hpp"
+
+extern std::unique_ptr<nk::net::adns_resolver> g_adns;
 
 #ifdef USE_SPLICE
 extern void pipe_close_raw(std::size_t p_len, asio::posix::stream_descriptor &sa,
@@ -143,13 +147,14 @@ private:
 #endif
     }
 
+    static void dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host);
+
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
-    void kick_tcp_resolver_timer();
     enum class DNSType { None, V4, V6, Any };
-    bool dns_choose_address(DNSType addrtype, asio::ip::tcp::resolver::iterator it,
-                            const size_t cv4, const size_t cv6);
+    void raw_dns_lookup(int af);
     void dns_lookup();
+    void dns_result(asio::ip::address addr_choice);
     void dispatch_connrq(bool did_dns = false);
 
     void dispatch_tcp_connect();
