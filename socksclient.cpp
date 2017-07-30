@@ -816,7 +816,18 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 
 void SocksInit::raw_dns_lookup(int af)
 {
-    g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
+    std::error_code ec;
+    asio::ip::address a;
+    if (!dst_hostname_.empty())
+        a = asio::ip::address::from_string(dst_hostname_, ec);
+    if (dst_hostname_.empty() || ec)
+        g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
+    else {
+        dst_address_ = std::move(a);
+        strand_.post([self = shared_from_this()]() {
+            self->dispatch_connrq(true);
+        });
+    }
 }
 
 void SocksInit::dns_lookup()
