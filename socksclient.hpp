@@ -389,6 +389,8 @@ private:
     uint16_t dport_;
     std::unique_ptr<UDPFrags> frags_;
     std::array<char, 16> tcp_inbuf_;
+    bool dnsq_v6_:1;
+    bool dnsq_v4_:1;
 };
 
 class ClientListener

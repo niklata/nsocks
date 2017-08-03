@@ -1805,7 +1805,7 @@ SocksUDP::SocksUDP(asio::io_service &io_service, asio::ip::tcp::socket tcp_clien
           client_remote_endpoint_(client_remote_ep),
           strand_(io_service),
           client_socket_(io_service, client_ep),
-          remote_socket_(io_service, remote_ep)
+          remote_socket_(io_service, remote_ep), dnsq_v6_{false}, dnsq_v4_{false}
 {
     if (g_verbose_logs) {
         ++socks_alive_count;
@@ -2045,42 +2045,43 @@ void SocksUDP::udp_proxy_packet()
 
 void SocksUDP::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
 {
-    auto self = (SocksUDP *)self_;
+    auto self = std::move(((SocksUDP *)self_)->selfref_);
+
+    const auto try_other_af = [&self]() {
+        if (self->dnsq_v6_ && self->dnsq_v4_) return false;
+        if (self->dnsq_v4_) {
+            if (!g_disable_ipv6) {
+                self->strand_.post([self]() {
+                    self->raw_dns_lookup(AF_INET6);
+                });
+                return true;
+            }
+        } else if (self->dnsq_v6_) {
+            self->strand_.post([self]() {
+                self->raw_dns_lookup(AF_INET);
+            });
+            return true;
+        }
+        return false;
+    };
 
     if (status != ARES_SUCCESS || timeouts) {
-        self->strand_.post([self]() {
-            auto sfd = std::move(self->selfref_);
-            self->udp_client_socket_read();
-        });
+        bool retry{false};
+        if (status  == ARES_ENODATA)
+            retry = try_other_af();
+        if (!retry) {
+            self->strand_.post([self, status, timeouts]() {
+                logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
+                self->udp_client_socket_read();
+            });
+        }
         return;
     }
 
     size_t ipchoices{0};
     for (auto p = host->h_addr_list; *p; ++p) ++ipchoices;
     if (ipchoices == 0) {
-        if (host->h_addrtype == AF_INET) {
-            if (g_prefer_ipv4 && !g_disable_ipv6) {
-                self->strand_.post([self]() {
-                    self->raw_dns_lookup(AF_INET6);
-                });
-            } else {
-                self->strand_.post([self]() {
-                    auto sfd = std::move(self->selfref_);
-                    self->udp_client_socket_read();
-                });
-            }
-        } else if (host->h_addrtype == AF_INET6) {
-            if (g_prefer_ipv4) {
-                self->strand_.post([self]() {
-                    auto sfd = std::move(self->selfref_);
-                    self->udp_client_socket_read();
-                });
-            } else {
-                self->strand_.post([self]() {
-                    self->raw_dns_lookup(AF_INET);
-                });
-            }
-        }
+        try_other_af();
         return;
     }
 
@@ -2096,25 +2097,36 @@ void SocksUDP::dnslookup_cb(void *self_, int status, int timeouts, struct hosten
         // that is unspecified after lookup, eg, host file blocking.
         if (a.is_unspecified()) continue;
         self->strand_.post([self, a = std::move(a)]() {
-            auto sfd = std::move(self->selfref_);
             self->daddr_ = std::move(a);
             self->udp_proxy_packet();
         });
     }
     self->strand_.post([self]() {
-        auto sfd = std::move(self->selfref_);
         self->udp_client_socket_read();
     });
 }
 
 void SocksUDP::raw_dns_lookup(int af)
 {
-    g_adns->query_hostname(dnsname_.c_str(), af, SocksUDP::dnslookup_cb, this);
+    selfref_ = shared_from_this();
+    std::error_code ec;
+    asio::ip::address a;
+    if (!dnsname_.empty())
+        a = asio::ip::address::from_string(dnsname_, ec);
+    if (dnsname_.empty() || ec) {
+        if (af == AF_INET) dnsq_v4_ = true;
+        if (af == AF_INET6) dnsq_v6_ = true;
+        g_adns->query_hostname(dnsname_.c_str(), af, SocksUDP::dnslookup_cb, this);
+    } else {
+        daddr_ = std::move(a);
+        strand_.post([self = shared_from_this()]() {
+            self->udp_proxy_packet();
+        });
+    }
 }
 
 void SocksUDP::dns_lookup()
 {
-    selfref_ = shared_from_this();
     raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
 }
 
