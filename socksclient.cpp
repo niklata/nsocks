@@ -345,7 +345,8 @@ SocksInit::SocksInit(asio::io_service &io_service, asio::ip::tcp::socket client_
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
           ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false), socks_v4_dns_(false),
-          auth_none_(false), auth_gssapi_(false), auth_unpw_(false)
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false), dnsq_v6_{false},
+          dnsq_v4_{false}
 {
     if (g_verbose_logs)
         ++socks_alive_count;
@@ -741,42 +742,43 @@ parsed5cr_dnslen:
 
 void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
 {
-    auto self = (SocksInit *)self_;
+    auto self = std::move(((SocksInit *)self_)->selfref_);
+
+    const auto try_other_af = [&self]() {
+        if (self->dnsq_v6_ && self->dnsq_v4_) return false;
+        if (self->dnsq_v4_) {
+            if (!g_disable_ipv6) {
+                self->strand_.post([self]() {
+                    self->raw_dns_lookup(AF_INET6);
+                });
+                return true;
+            }
+        } else if (self->dnsq_v6_) {
+            self->strand_.post([self]() {
+                self->raw_dns_lookup(AF_INET);
+            });
+            return true;
+        }
+        return false;
+    };
 
     if (status != ARES_SUCCESS || timeouts) {
-        self->strand_.post([self]() {
-            auto sfd = std::move(self->selfref_);
-            self->send_reply(RplHostUnreach);
-        });
+        bool retry{false};
+        if (status  == ARES_ENODATA)
+            retry = try_other_af();
+        if (!retry) {
+            self->strand_.post([self, status, timeouts]() {
+                logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
+                self->send_reply(RplHostUnreach);
+            });
+        }
         return;
     }
 
     size_t ipchoices{0};
     for (auto p = host->h_addr_list; *p; ++p) ++ipchoices;
     if (ipchoices == 0) {
-        if (host->h_addrtype == AF_INET) {
-            if (g_prefer_ipv4 && !g_disable_ipv6) {
-                self->strand_.post([self]() {
-                    self->raw_dns_lookup(AF_INET6);
-                });
-            } else {
-                self->strand_.post([self]() {
-                    auto sfd = std::move(self->selfref_);
-                    self->send_reply(RplHostUnreach);
-                });
-            }
-        } else if (host->h_addrtype == AF_INET6) {
-            if (g_prefer_ipv4) {
-                self->strand_.post([self]() {
-                    auto sfd = std::move(self->selfref_);
-                    self->send_reply(RplHostUnreach);
-                });
-            } else {
-                self->strand_.post([self]() {
-                    self->raw_dns_lookup(AF_INET);
-                });
-            }
-        }
+        try_other_af();
         return;
     }
 
@@ -800,15 +802,11 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         addrs.emplace_back(std::move(a));
     }
     if (addrs.empty()) {
-        self->strand_.post([self]() {
-            auto sfd = std::move(self->selfref_);
-            self->send_reply(RplHostUnreach);
-        });
+        try_other_af();
         return;
     }
     std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
     self->strand_.post([self, ac = std::move(addrs)]() {
-        auto sfd = std::move(self->selfref_);
         self->dst_addresses_ = std::move(ac);
         self->dispatch_connrq(true);
     });
@@ -816,13 +814,16 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 
 void SocksInit::raw_dns_lookup(int af)
 {
+    selfref_ = shared_from_this();
     std::error_code ec;
     asio::ip::address a;
     if (!dst_hostname_.empty())
         a = asio::ip::address::from_string(dst_hostname_, ec);
-    if (dst_hostname_.empty() || ec)
+    if (dst_hostname_.empty() || ec) {
+        if (af == AF_INET) dnsq_v4_ = true;
+        if (af == AF_INET6) dnsq_v6_ = true;
         g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
-    else {
+    } else {
         dst_address_ = std::move(a);
         strand_.post([self = shared_from_this()]() {
             self->dispatch_connrq(true);
@@ -832,7 +833,6 @@ void SocksInit::raw_dns_lookup(int af)
 
 void SocksInit::dns_lookup()
 {
-    selfref_ = shared_from_this();
     raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
 }
 
