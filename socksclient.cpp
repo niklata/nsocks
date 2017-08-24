@@ -38,7 +38,7 @@
 
 #include <boost/dynamic_bitset.hpp>
 
-#include <nk/xorshift.hpp>
+#include <nk/tyche.hpp>
 
 #ifdef HAS_64BIT
 #include <boost/lockfree/stack.hpp>
@@ -86,7 +86,7 @@ void SocksTCP::set_splice_pipe_size(int size) {
     splice_pipe_size = std::max(PIPE_BUF, size);
 }
 
-static nk::rng::xoroshiro128p g_random_prng;
+static nk::rng::tyche g_random_prng;
 
 static std::mutex print_lock;
 template <typename... Args>
