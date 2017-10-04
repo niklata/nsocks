@@ -86,9 +86,9 @@ To use this example configuration, invoke nsocks as follows:
 
 ## Downloads
 
-* [GitLab](https://github.com/niklata/nsocks)
-* [BitBucket](https://gitlab.com/niklata/nsocks)
-* [GitHub](https://bitbucket.com/niklata/nsocks)
+* [GitLab](https://gitlab.com/niklata/nsocks)
+* [BitBucket](https://bitbucket.com/niklata/nsocks)
+* [GitHub](https://github.com/niklata/nsocks)
 
 ## Portability
 
