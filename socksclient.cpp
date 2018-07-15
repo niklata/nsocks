@@ -892,10 +892,9 @@ void SocksInit::dispatch_tcp_connect()
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
     auto ep = asio::ip::tcp::endpoint(dst_address_, dst_port_);
-    auto sfd = shared_from_this();
     remote_socket_.async_connect
         (ep, strand_.wrap(
-         [this, sfd{std::move(sfd)}](const std::error_code &ec)
+         [this, sfd{shared_from_this()}](const std::error_code &ec)
          {
              std::error_code ecc;
              asio::ip::tcp::endpoint ep;
@@ -911,16 +910,20 @@ void SocksInit::dispatch_tcp_connect()
 ec_err:
              if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
                  send_reply(errorToReplyCode(ec));
-             else
+             else {
+                 remote_socket_.close();
                  dispatch_tcp_connect();
+             }
              return;
 rle_err:
              logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
                     dst_hostname_ : dst_address_.to_string(), ecc.message());
              if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
                  send_reply(RplFail);
-             else
+             else {
+                 remote_socket_.close();
                  dispatch_tcp_connect();
+             }
          }));
 }
 
