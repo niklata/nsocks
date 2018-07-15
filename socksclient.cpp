@@ -873,16 +873,21 @@ static bool is_dst_denied(const asio::ip::address &addr)
 void SocksInit::dispatch_tcp_connect()
 {
     if (!dst_addresses_.empty()) {
-        if (dst_addr_i_ < dst_addresses_.size())
+        if (dst_addr_i_ < dst_addresses_.size()) {
             dst_address_ = dst_addresses_[dst_addr_i_++];
-        else {
+            if (is_dst_denied(dst_address_)) {
+                dispatch_tcp_connect();
+                return;
+            }
+        } else {
           send_reply(RplFail);
           return;
         }
-    }
-    if (is_dst_denied(dst_address_)) {
-        send_reply(RplDeny);
-        return;
+    } else {
+        if (is_dst_denied(dst_address_)) {
+            send_reply(RplDeny);
+            return;
+        }
     }
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
