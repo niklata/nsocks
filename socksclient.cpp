@@ -895,9 +895,9 @@ void SocksInit::dispatch_tcp_connect()
              std::error_code ecc;
              asio::ip::tcp::endpoint ep;
              if (ec) goto ec_err;
-             set_remote_socket_options();
              ep = remote_socket_.local_endpoint(ecc);
              if (ecc) goto rle_err;
+             set_remote_socket_options();
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false, bool(is_socks_v4_),
@@ -1036,7 +1036,6 @@ void SocksInit::dispatch_tcp_bind()
                  return;
              }
              logfmt("Accepted a connection to a BIND socket.\n");
-             set_remote_socket_options();
 
              std::error_code ecc;
              auto ep = remote_socket_.local_endpoint(ecc);
@@ -1047,6 +1046,7 @@ void SocksInit::dispatch_tcp_bind()
                  return;
              }
 
+             set_remote_socket_options();
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, true, bool(is_socks_v4_),
