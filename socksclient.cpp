@@ -931,6 +931,7 @@ SocksInit::ReplyCode
 SocksInit::errorToReplyCode(const std::error_code &ec)
 {
     ReplyCode rc(RplConnRefused);
+    logfmt("ASIO error code: {}: {}\n", ec.value(), ec.message());
     if (ec == asio::error::access_denied ||
         ec == asio::error::connection_refused) {
         rc = RplConnRefused;
