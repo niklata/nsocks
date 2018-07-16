@@ -767,7 +767,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
     auto self = std::move(((SocksInit *)self_)->selfref_);
 
     const auto try_other_af = [&self]() {
-        if (self->dnsq_v6_ && self->dnsq_v4_) return false;
+        if ((self->dnsq_v6_ || g_disable_ipv6) && self->dnsq_v4_) return false;
         if (self->dnsq_v4_) {
             if (!g_disable_ipv6) {
                 self->strand_.post([self]() {
