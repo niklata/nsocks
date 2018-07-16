@@ -179,14 +179,13 @@ private:
     std::atomic<bool> tracked_;
     std::unique_ptr<BoundSocket> bound_;
     std::shared_ptr<SocksInit> selfref_; // Use for keeping alive during adns queries.
-    std::vector<asio::ip::address> dst_addresses_;
+    std::vector<asio::ip::tcp::endpoint> dst_eps_;
     std::string dst_hostname_; // Shared
     asio::ip::address dst_address_; // Shared
     asio::io_service::strand strand_;
     asio::ip::tcp::socket client_socket_; // Shared
     asio::ip::tcp::socket remote_socket_; // Shared
     uint16_t dst_port_; // Shared
-    uint16_t dst_addr_i_{0};
     uint8_t pstate_;
     uint8_t ibSiz_;
     uint8_t poff_;

@@ -567,6 +567,7 @@ p4g_version:
             asio::ip::address_v4::bytes_type v4o;
             memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
             dst_address_ = asio::ip::address_v4(v4o);
+            dst_eps_.emplace_back(dst_address_, dst_port_);
         }
         poff_ += 4;
     }
@@ -670,6 +671,7 @@ p4g_version:
             asio::ip::address_v4::bytes_type v4o;
             memcpy(v4o.data(), sockbuf_.data() + poff_, 4);
             dst_address_ = asio::ip::address_v4(v4o);
+            dst_eps_.emplace_back(dst_address_, dst_port_);
             poff_ += 4;
         } else if (addr_type_ == AddrIPv6) {
             if (ibSiz_ - poff_ < 16)
@@ -679,6 +681,7 @@ p4g_version:
             asio::ip::address_v6::bytes_type v6o;
             memcpy(v6o.data(), sockbuf_.data() + poff_, 16);
             dst_address_ = asio::ip::address_v6(v6o);
+            dst_eps_.emplace_back(dst_address_, dst_port_);
             poff_ += 16;
             if (g_disable_ipv6)
                 return RplAddrNotSupp;
@@ -738,6 +741,25 @@ parsed5cr_dnslen:
     default: throw std::logic_error("undefined parse state");
     }
     return boost::optional<ReplyCode>();
+}
+
+static const auto loopback_addr_v4 = asio::ip::address_v4::from_string("127.0.0.0");
+static const auto loopback_addr_v6 = asio::ip::address_v6::from_string("::1");
+
+static bool is_dst_denied(const asio::ip::address &addr)
+{
+    // Deny proxy attempts to the local loopback addresses.
+    if (addr == loopback_addr_v6 ||
+        asio::compare_ip(addr, loopback_addr_v4, 8))
+        return true;
+    for (const auto &i: g_dst_deny_masks) {
+        auto r = asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
+        if (r) {
+            logfmt("DENIED connection to {}\n", addr.to_string());
+            return true;
+        }
+    }
+    return false;
 }
 
 void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
@@ -806,29 +828,33 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         return;
     }
     std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
-    self->strand_.post([self, ac = std::move(addrs)]() {
-        self->dst_addresses_ = std::move(ac);
+    for (const auto &i: addrs) {
+        if (is_dst_denied(i)) continue;
+        self->dst_eps_.emplace_back(i, self->dst_port_);
+    }
+    self->strand_.post([self]() {
         self->dispatch_connrq(true);
     });
 }
 
 void SocksInit::raw_dns_lookup(int af)
 {
-    selfref_ = shared_from_this();
-    std::error_code ec;
-    asio::ip::address a;
-    if (!dst_hostname_.empty())
-        a = asio::ip::address::from_string(dst_hostname_, ec);
-    if (dst_hostname_.empty() || ec) {
-        if (af == AF_INET) dnsq_v4_ = true;
-        if (af == AF_INET6) dnsq_v6_ = true;
-        g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
-    } else {
-        dst_address_ = std::move(a);
-        strand_.post([self = shared_from_this()]() {
-            self->dispatch_connrq(true);
-        });
+    // Handle the case where dst_hostname_ is actually an ip address.
+    if (!dst_hostname_.empty()) {
+        std::error_code ec;
+        auto a = asio::ip::address::from_string(dst_hostname_, ec);
+        if (!ec) {
+            dst_eps_.emplace_back(a, dst_port_);
+            strand_.post([self = shared_from_this()]() {
+                self->dispatch_connrq(true);
+            });
+            return;
+        }
     }
+    if (af == AF_INET) dnsq_v4_ = true;
+    if (af == AF_INET6) dnsq_v6_ = true;
+    selfref_ = shared_from_this();
+    g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
 }
 
 void SocksInit::dns_lookup()
@@ -838,7 +864,7 @@ void SocksInit::dns_lookup()
 
 void SocksInit::dispatch_connrq(bool did_dns)
 {
-    if (!did_dns && dst_hostname_.size() > 0 && dst_address_.is_unspecified()) {
+    if (!did_dns && dst_hostname_.size() > 0 && dst_eps_.empty()) {
         dns_lookup();
         return;
     }
@@ -851,80 +877,30 @@ void SocksInit::dispatch_connrq(bool did_dns)
     }
 }
 
-static const auto loopback_addr_v4 = asio::ip::address_v4::from_string("127.0.0.0");
-static const auto loopback_addr_v6 = asio::ip::address_v6::from_string("::1");
-
-static bool is_dst_denied(const asio::ip::address &addr)
-{
-    // Deny proxy attempts to the local loopback addresses.
-    if (addr == loopback_addr_v6 ||
-        asio::compare_ip(addr, loopback_addr_v4, 8))
-        return true;
-    for (const auto &i: g_dst_deny_masks) {
-        auto r = asio::compare_ip(addr, std::get<0>(i), std::get<1>(i));
-        if (r) {
-            logfmt("DENIED connection to {}\n", addr.to_string());
-            return true;
-        }
-    }
-    return false;
-}
-
 void SocksInit::dispatch_tcp_connect()
 {
-    if (!dst_addresses_.empty()) {
-        if (dst_addr_i_ < dst_addresses_.size()) {
-            dst_address_ = dst_addresses_[dst_addr_i_++];
-            if (is_dst_denied(dst_address_)) {
-                dispatch_tcp_connect();
-                return;
-            }
-        } else {
-          send_reply(RplFail);
-          return;
-        }
-    } else {
-        if (is_dst_denied(dst_address_)) {
-            send_reply(RplDeny);
-            return;
-        }
-    }
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
-    auto ep = asio::ip::tcp::endpoint(dst_address_, dst_port_);
     if (remote_socket_.is_open()) {
         remote_socket_.cancel();
         remote_socket_.close();
     }
-    remote_socket_.async_connect
-        (ep, strand_.wrap(
-         [this, sfd{shared_from_this()}](const std::error_code &ec)
+    asio::async_connect(remote_socket_, dst_eps_, strand_.wrap(
+         [this, sfd{shared_from_this()}](const std::error_code &ec,
+                                         asio::ip::tcp::endpoint ep)
          {
              std::error_code ecc;
-             asio::ip::tcp::endpoint ep;
              if (ec) goto ec_err;
-             ep = remote_socket_.local_endpoint(ecc);
-             if (ecc) goto rle_err;
              ecc = set_remote_socket_options();
              if (ecc) goto ec_err;
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
-                   std::move(dst_address_), dst_port_, false, bool(is_socks_v4_),
+                   ep.address(), dst_port_, false, bool(is_socks_v4_),
                    std::move(dst_hostname_));
              return;
 ec_err:
-             if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
-                 send_reply(errorToReplyCode(ec));
-             else
-                 dispatch_tcp_connect();
+             send_reply(errorToReplyCode(ec));
              return;
-rle_err:
-             logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
-                    dst_hostname_ : dst_address_.to_string(), ecc.message());
-             if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
-                 send_reply(RplFail);
-             else
-                 dispatch_tcp_connect();
          }));
 }
 
