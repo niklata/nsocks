@@ -864,10 +864,8 @@ void SocksInit::dispatch_tcp_connect()
 {
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
-    if (remote_socket_.is_open()) {
-        remote_socket_.cancel();
-        remote_socket_.close();
-    }
+    if (remote_socket_.is_open())
+        return;
     asio::async_connect(remote_socket_, dst_eps_, strand_.wrap(
          [this, sfd{shared_from_this()}](const std::error_code &ec,
                                          asio::ip::tcp::endpoint ep)
