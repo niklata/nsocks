@@ -136,15 +136,21 @@ private:
         unsigned char tracker_idx_;
     };
 
-    inline void set_remote_socket_options()
+    inline std::error_code set_remote_socket_options()
     {
-        remote_socket_.non_blocking(true);
-        remote_socket_.set_option(asio::ip::tcp::no_delay(true));
-        remote_socket_.set_option(asio::socket_base::keep_alive(true));
+        std::error_code ec;
+        remote_socket_.non_blocking(true, ec);
+        if (ec) return ec;
+        remote_socket_.set_option(asio::ip::tcp::no_delay(true), ec);
+        if (ec) return ec;
+        remote_socket_.set_option(asio::socket_base::keep_alive(true), ec);
+        if (ec) return ec;
 #ifdef TCP_QUICKACK
         const asio::detail::socket_option::boolean<IPPROTO_TCP, TCP_QUICKACK> quickack(true);
-        remote_socket_.set_option(quickack);
+        remote_socket_.set_option(quickack, ec);
+        if (ec) return ec;
 #endif
+        return ec;
     }
 
     static void dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host);

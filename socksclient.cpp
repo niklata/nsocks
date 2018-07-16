@@ -892,6 +892,10 @@ void SocksInit::dispatch_tcp_connect()
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
     auto ep = asio::ip::tcp::endpoint(dst_address_, dst_port_);
+    if (remote_socket_.is_open()) {
+        remote_socket_.cancel();
+        remote_socket_.close();
+    }
     remote_socket_.async_connect
         (ep, strand_.wrap(
          [this, sfd{shared_from_this()}](const std::error_code &ec)
@@ -901,7 +905,8 @@ void SocksInit::dispatch_tcp_connect()
              if (ec) goto ec_err;
              ep = remote_socket_.local_endpoint(ecc);
              if (ecc) goto rle_err;
-             set_remote_socket_options();
+             ecc = set_remote_socket_options();
+             if (ecc) goto ec_err;
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, false, bool(is_socks_v4_),
@@ -910,20 +915,16 @@ void SocksInit::dispatch_tcp_connect()
 ec_err:
              if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
                  send_reply(errorToReplyCode(ec));
-             else {
-                 remote_socket_.close();
+             else
                  dispatch_tcp_connect();
-             }
              return;
 rle_err:
              logfmt("TCP Connect: [{}] rs.local_endpoint: {}\n", dst_hostname_.size()?
                     dst_hostname_ : dst_address_.to_string(), ecc.message());
              if (dst_addresses_.empty() || dst_addresses_.size() <= dst_addr_i_)
                  send_reply(RplFail);
-             else {
-                 remote_socket_.close();
+             else
                  dispatch_tcp_connect();
-             }
          }));
 }
 
@@ -939,7 +940,7 @@ SocksInit::errorToReplyCode(const std::error_code &ec)
                ec == asio::error::fault || ec == asio::error::service_not_found ||
                ec == asio::error::socket_type_not_supported) {
         rc = RplAddrNotSupp;
-    } else if (ec == asio::error::timed_out) {
+    } else if (ec == asio::error::timed_out || ec == asio::error::operation_aborted) {
         rc = RplTTLExpired;
     } else if (ec == asio::error::host_unreachable) {
         rc = RplHostUnreach;
@@ -1055,7 +1056,11 @@ void SocksInit::dispatch_tcp_bind()
                  return;
              }
 
-             set_remote_socket_options();
+             if (const auto ecc = set_remote_socket_options(); ecc) {
+                   logfmt("set_remote_socket_options failed {}: {}\n", ecc.value(), ecc.message());
+                   send_reply(RplFail);
+                   return;
+             }
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    std::move(dst_address_), dst_port_, true, bool(is_socks_v4_),
