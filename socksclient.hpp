@@ -57,6 +57,8 @@ public:
     ~SocksInit();
     void terminate();
     void cancel_sockets();
+    void expire_timeout();
+    void expire_timeout_nobind();
     inline void set_untracked() { tracked_ = false; }
     inline void start() { read_greet(); }
     inline bool is_bind_listen() const { return !!bound_; }

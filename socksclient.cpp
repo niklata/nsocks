@@ -411,6 +411,22 @@ void SocksInit::cancel_sockets()
         bound_->acceptor_.cancel(ec);
 }
 
+void SocksInit::expire_timeout()
+{
+    strand_.post([self{shared_from_this()}]() {
+        self->set_untracked();
+        self->cancel_sockets();
+    });
+}
+
+void SocksInit::expire_timeout_nobind()
+{
+    strand_.post([self{shared_from_this()}]() {
+        if (!self->is_bind_listen())
+            self->cancel_sockets();
+    });
+}
+
 void SocksInit::terminate()
 {
     close_paired_sockets(remote_socket_, client_socket_);

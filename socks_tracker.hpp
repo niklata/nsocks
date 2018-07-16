@@ -66,8 +66,7 @@ private:
     inline void vec_cancel(std::size_t x) {
         for (auto &i: vec_[x]) {
             auto j = i.lock();
-            if (j && !j->is_bind_listen())
-                j->cancel_sockets();
+            if (j) j->expire_timeout_nobind();
         }
     }
     bool doSwap() {
@@ -162,15 +161,10 @@ public:
 private:
     inline void list_cancel(std::size_t x) {
         auto end = list_[x].end();
-        typename std::list<std::weak_ptr<T>>::iterator ip;
         for (auto i = list_[x].begin(); i != end;) {
             auto j = i->lock();
-            if (j) {
-                j->set_untracked();
-                j->cancel_sockets();
-            }
-            ip = i++;
-            list_[x].erase(ip);
+            if (j) j->expire_timeout();
+            list_[x].erase(i++);
         }
     }
     bool doSwap() {
