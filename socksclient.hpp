@@ -198,8 +198,8 @@ private:
     bool auth_none_:1;
     bool auth_gssapi_:1;
     bool auth_unpw_:1;
-    bool dnsq_v6_:1;
-    bool dnsq_v4_:1;
+    std::atomic<bool> dnsq_v6_;
+    std::atomic<bool> dnsq_v4_;
 };
 
 class SocksTCP : public std::enable_shared_from_this<SocksTCP>
