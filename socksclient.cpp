@@ -345,7 +345,7 @@ SocksInit::SocksInit(asio::io_service &io_service, asio::ip::tcp::socket client_
           client_socket_(std::move(client_socket)),
           remote_socket_(io_service), pstate_(ParsedState::Parsed_None),
           ibSiz_(0), poff_(0), ptmp_(0), is_socks_v4_(false), socks_v4_dns_(false),
-          auth_none_(false), auth_gssapi_(false), auth_unpw_(false), dnsq_v6_{false},
+          auth_none_(false), auth_gssapi_(false), auth_unpw_(false), dnsq_v6_{g_disable_ipv6},
           dnsq_v4_{false}
 {
     if (g_verbose_logs)
@@ -768,21 +768,19 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 
     const auto try_other_af = [&self, status, timeouts]() {
         self->strand_.post([self, status, timeouts]() {
-            if ((self->dnsq_v6_ || g_disable_ipv6) && self->dnsq_v4_) goto done;
-            if (self->dnsq_v4_) {
-                if (!g_disable_ipv6) {
-                    self->raw_dns_lookup(AF_INET6);
-                    return;
-                }
-            } else if (self->dnsq_v6_) {
+            if (self->dnsq_v4_ && !self->dnsq_v6_) {
+                self->raw_dns_lookup(AF_INET6);
+            } else if (self->dnsq_v6_ && !self->dnsq_v4_) {
                 self->raw_dns_lookup(AF_INET);
-                return;
+            } else {
+                logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
+                self->send_reply(RplHostUnreach);
             }
-        done:
-            logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
-            self->send_reply(RplHostUnreach);
         });
     };
+
+    if (status == ARES_ECANCELLED)
+        return;
 
     if (status != ARES_SUCCESS) {
         try_other_af();
@@ -820,13 +818,11 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         return;
     }
     std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
-    std::vector<asio::ip::tcp::endpoint> dst_eps;
-    for (const auto &i: addrs) {
-        if (is_dst_denied(i)) continue;
-        dst_eps.emplace_back(i, self->dst_port_);
-    }
-    self->strand_.post([self, t = std::move(dst_eps)]() {
-        self->dst_eps_ = std::move(t);
+    self->strand_.post([self, v = std::move(addrs)]() {
+        for (const auto &i: v) {
+            if (is_dst_denied(i)) continue;
+            self->dst_eps_.emplace_back(i, self->dst_port_);
+        }
         self->dispatch_tcp_connect();
     });
 }
