@@ -766,34 +766,26 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
 {
     auto self = std::move(((SocksInit *)self_)->selfref_);
 
-    const auto try_other_af = [&self]() {
-        if ((self->dnsq_v6_ || g_disable_ipv6) && self->dnsq_v4_) return false;
-        if (self->dnsq_v4_) {
-            if (!g_disable_ipv6) {
-                self->strand_.post([self]() {
+    const auto try_other_af = [&self, status, timeouts]() {
+        self->strand_.post([self, status, timeouts]() {
+            if ((self->dnsq_v6_ || g_disable_ipv6) && self->dnsq_v4_) goto done;
+            if (self->dnsq_v4_) {
+                if (!g_disable_ipv6) {
                     self->raw_dns_lookup(AF_INET6);
-                });
-                return true;
-            }
-        } else if (self->dnsq_v6_) {
-            self->strand_.post([self]() {
+                    return;
+                }
+            } else if (self->dnsq_v6_) {
                 self->raw_dns_lookup(AF_INET);
-            });
-            return true;
-        }
-        return false;
+                return;
+            }
+        done:
+            logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
+            self->send_reply(RplHostUnreach);
+        });
     };
 
     if (status != ARES_SUCCESS || timeouts) {
-        bool retry{false};
-        if (status  == ARES_ENODATA)
-            retry = try_other_af();
-        if (!retry) {
-            self->strand_.post([self, status, timeouts]() {
-                logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
-                self->send_reply(RplHostUnreach);
-            });
-        }
+        try_other_af();
         return;
     }
 
@@ -828,11 +820,13 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         return;
     }
     std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
+    std::vector<asio::ip::tcp::endpoint> dst_eps;
     for (const auto &i: addrs) {
         if (is_dst_denied(i)) continue;
-        self->dst_eps_.emplace_back(i, self->dst_port_);
+        dst_eps.emplace_back(i, self->dst_port_);
     }
-    self->strand_.post([self]() {
+    self->strand_.post([self, t = std::move(dst_eps)]() {
+        self->dst_eps_ = std::move(t);
         self->dispatch_tcp_connect();
     });
 }
@@ -845,9 +839,7 @@ void SocksInit::raw_dns_lookup(int af)
         auto a = asio::ip::address::from_string(dst_hostname_, ec);
         if (!ec) {
             dst_eps_.emplace_back(a, dst_port_);
-            strand_.post([self = shared_from_this()]() {
-                self->dispatch_tcp_connect();
-            });
+            dispatch_tcp_connect();
             return;
         }
     }
@@ -857,15 +849,10 @@ void SocksInit::raw_dns_lookup(int af)
     g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
 }
 
-void SocksInit::dns_lookup()
+void SocksInit::dispatch_connrq()
 {
-    raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
-}
-
-void SocksInit::dispatch_connrq(bool did_dns)
-{
-    if (!did_dns && dst_hostname_.size() > 0 && dst_eps_.empty()) {
-        dns_lookup();
+    if (!dst_hostname_.empty()) {
+        raw_dns_lookup((g_prefer_ipv4 || g_disable_ipv6) ? AF_INET : AF_INET6);
         return;
     }
     // The name has been resolved to an address or we have an address.

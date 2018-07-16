@@ -159,8 +159,7 @@ private:
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
     enum class DNSType { None, V4, V6, Any };
     void raw_dns_lookup(int af);
-    void dns_lookup();
-    void dispatch_connrq(bool did_dns = false);
+    void dispatch_connrq();
 
     void dispatch_tcp_connect();
 
