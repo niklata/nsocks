@@ -833,7 +833,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         self->dst_eps_.emplace_back(i, self->dst_port_);
     }
     self->strand_.post([self]() {
-        self->dispatch_connrq(true);
+        self->dispatch_tcp_connect();
     });
 }
 
@@ -846,7 +846,7 @@ void SocksInit::raw_dns_lookup(int af)
         if (!ec) {
             dst_eps_.emplace_back(a, dst_port_);
             strand_.post([self = shared_from_this()]() {
-                self->dispatch_connrq(true);
+                self->dispatch_tcp_connect();
             });
             return;
         }
