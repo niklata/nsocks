@@ -784,7 +784,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         });
     };
 
-    if (status != ARES_SUCCESS || timeouts) {
+    if (status != ARES_SUCCESS) {
         try_other_af();
         return;
     }
@@ -2042,7 +2042,7 @@ void SocksUDP::dnslookup_cb(void *self_, int status, int timeouts, struct hosten
         return false;
     };
 
-    if (status != ARES_SUCCESS || timeouts) {
+    if (status != ARES_SUCCESS) {
         bool retry{false};
         if (status  == ARES_ENODATA)
             retry = try_other_af();
