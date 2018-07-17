@@ -780,21 +780,12 @@ static bool is_dst_denied(const asio::ip::address &addr)
     return false;
 }
 
-static std::mutex dnsquerying_mtx;
-static std::unordered_map<uintptr_t, std::shared_ptr<SocksInit>> dnsquerying;
-
 void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host)
 {
-    std::shared_ptr<SocksInit> self;
-    {
-        std::unique_lock<std::mutex> l{dnsquerying_mtx};
-        if (auto i = dnsquerying.find(reinterpret_cast<uintptr_t>(self_)); i != dnsquerying.end()) {
-            self = std::move(i->second);
-            dnsquerying.erase(i);
-        } else {
-            return;
-        }
-    }
+    auto spp = reinterpret_cast<std::shared_ptr<SocksInit> *>(self_);
+    auto self = std::move(*spp);
+    delete spp;
+    if (!self) return;
 
     const auto try_other_af = [&self, status, timeouts]() {
         self->strand_.post([self{std::move(self)}, status, timeouts]() {
@@ -871,12 +862,8 @@ void SocksInit::raw_dns_lookup(int af)
     }
     if (af == AF_INET) dnsq_v4_ = true;
     if (af == AF_INET6) dnsq_v6_ = true;
-    {
-        std::unique_lock<std::mutex> l{dnsquerying_mtx};
-        if (dnsquerying.find(reinterpret_cast<uintptr_t>(this)) == dnsquerying.end())
-            dnsquerying.emplace(std::make_pair(reinterpret_cast<uintptr_t>(this), shared_from_this()));
-    }
-    g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, this);
+    auto spp = new std::shared_ptr<SocksInit>{shared_from_this()};
+    g_adns->query_hostname(dst_hostname_.c_str(), af, SocksInit::dnslookup_cb, spp);
 }
 
 void SocksInit::dispatch_connrq()
