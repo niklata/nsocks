@@ -783,7 +783,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
     auto self = std::move(((SocksInit *)self_)->selfref_);
 
     const auto try_other_af = [&self, status, timeouts]() {
-        self->strand_.post([self, status, timeouts]() {
+        self->strand_.post([self{std::move(self)}, status, timeouts]() {
             if (self->dnsq_v4_ && !self->dnsq_v6_) {
                 self->raw_dns_lookup(AF_INET6);
             } else if (self->dnsq_v6_ && !self->dnsq_v4_) {
@@ -834,7 +834,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         return;
     }
     std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
-    self->strand_.post([self, v = std::move(addrs)]() {
+    self->strand_.post([self{std::move(self)}, v = std::move(addrs)]() {
         for (const auto &i: v) {
             if (is_dst_denied(i)) continue;
             self->dst_eps_.emplace_back(i, self->dst_port_);
@@ -880,11 +880,9 @@ void SocksInit::dispatch_tcp_connect()
 {
     // Connect to the remote address.  If we connect successfully, then
     // open a proxying local tcp socket and inform the requesting client.
-    if (remote_socket_.is_open())
-        return;
+    auto sfd = shared_from_this();
     asio::async_connect(remote_socket_, dst_eps_, strand_.wrap(
-         [this, sfd{shared_from_this()}](const std::error_code &ec,
-                                         asio::ip::tcp::endpoint ep)
+         [this, sfd{std::move(sfd)}](const std::error_code &ec, asio::ip::tcp::endpoint ep)
          {
              if (ec) {
                  if (ec == asio::error::operation_aborted)
