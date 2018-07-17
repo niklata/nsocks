@@ -886,18 +886,21 @@ void SocksInit::dispatch_tcp_connect()
          [this, sfd{shared_from_this()}](const std::error_code &ec,
                                          asio::ip::tcp::endpoint ep)
          {
-             std::error_code ecc;
-             if (ec) goto ec_err;
-             ecc = set_remote_socket_options();
-             if (ecc) goto ec_err;
+             if (ec) {
+                 if (ec == asio::error::operation_aborted)
+                    return;
+                 send_reply(errorToReplyCode(ec));
+                 return;
+             }
+             if (const auto ecc = set_remote_socket_options(); ecc) {
+                 logfmt("set_remote_socket_options failed\n");
+                 send_reply(errorToReplyCode(ecc));
+                 return;
+             }
              conntracker_tcp.emplace(ep, io_service,
                    std::move(client_socket_), std::move(remote_socket_),
                    ep.address(), dst_port_, false, bool(is_socks_v4_),
                    std::move(dst_hostname_));
-             return;
-ec_err:
-             send_reply(errorToReplyCode(ec));
-             return;
          }));
 }
 
