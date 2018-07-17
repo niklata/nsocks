@@ -413,7 +413,8 @@ void SocksInit::cancel_sockets()
 
 void SocksInit::expire_timeout()
 {
-    strand_.post([self{shared_from_this()}]() {
+    auto sfd = shared_from_this();
+    strand_.post([self{std::move(sfd)}]() {
         self->set_untracked();
         self->cancel_sockets();
     });
@@ -421,7 +422,8 @@ void SocksInit::expire_timeout()
 
 void SocksInit::expire_timeout_nobind()
 {
-    strand_.post([self{shared_from_this()}]() {
+    auto sfd = shared_from_this();
+    strand_.post([self{std::move(sfd)}]() {
         if (!self->is_bind_listen())
             self->cancel_sockets();
     });
