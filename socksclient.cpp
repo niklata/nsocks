@@ -768,32 +768,28 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
     delete spp;
     if (!self) return;
 
-    const auto try_other_af = [self, status, timeouts]() {
-        self->strand_.post([self{std::move(self)}, status, timeouts]() {
-            if (self->dnsq_v4_ && !self->dnsq_v6_) {
-                self->raw_dns_lookup(AF_INET6);
-            } else if (self->dnsq_v6_ && !self->dnsq_v4_) {
-                self->raw_dns_lookup(AF_INET);
-            } else {
-                logfmt("DNS lookup failed: status={} timeouts={}\n", status, timeouts);
-                self->send_reply(RplHostUnreach);
-            }
-        });
-    };
-
-    if (status == ARES_ECANCELLED)
-        return;
-
-    if (status != ARES_SUCCESS) {
-        try_other_af();
-        return;
-    }
-
-    size_t ipchoices{0};
-    for (auto p = host->h_addr_list; *p; ++p) ++ipchoices;
-    if (ipchoices == 0) {
-        try_other_af();
-        return;
+    std::error_code ec{};
+    switch (status) {
+    case ARES_SUCCESS:
+        break;
+    case ARES_ENOTIMP:
+        ec = asio::error::socket_type_not_supported;
+        break;
+    case ARES_EBADNAME:
+        ec = asio::error::no_data;
+        break;
+    case ARES_ENOTFOUND:
+        ec = asio::error::host_not_found;
+        break;
+    case ARES_ENOMEM:
+        ec = asio::error::no_memory;
+        break;
+    case ARES_EDESTRUCTION:
+        ec = asio::error::shut_down;
+        break;
+    default:
+        ec = asio::error::no_recovery;
+        break;
     }
 
     std::vector<asio::ip::address> addrs;
@@ -803,30 +799,53 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
         addrs.reserve(rsv);
     }
     for (auto p = host->h_addr_list; *p; ++p) {
-        if (g_disable_ipv6 && host->h_addrtype == AF_INET6)
-            continue;
         char addr_buf[64];
         ares_inet_ntop(host->h_addrtype, *p, addr_buf, sizeof addr_buf);
-        std::error_code ec;
-        auto a = asio::ip::address::from_string(addr_buf, ec);
-        if (ec) continue;
+        std::error_code ecc;
+        auto a = asio::ip::address::from_string(addr_buf, ecc);
+        if (ecc) continue;
         // It's possible for the resolver to return an address
         // that is unspecified after lookup, eg, host file blocking.
         if (a.is_unspecified()) continue;
         addrs.emplace_back(std::move(a));
     }
-    if (addrs.empty()) {
-        try_other_af();
+    std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
+
+    self->strand_.post([s = self, e = ec, v = std::move(addrs)]() {
+        s->dns_complete(e, v);
+    });
+}
+
+void SocksInit::dns_complete(const std::error_code &ec, const std::vector<asio::ip::address> &addrs)
+{
+    if (!client_socket_.is_open())
+        return;
+
+    if (ec) {
+        if (ec == asio::error::operation_aborted)
+            return;
+        logfmt("DNS lookup failed: '{}'\n", dst_hostname_);
+        send_reply(RplHostUnreach);
         return;
     }
-    std::shuffle(addrs.begin(), addrs.end(), g_random_prng);
-    self->strand_.post([self{std::move(self)}, v = std::move(addrs)]() {
-        for (const auto &i: v) {
-            if (is_dst_denied(i)) continue;
-            self->dst_eps_.emplace_back(i, self->dst_port_);
+
+    for (const auto &i: addrs) {
+        if (is_dst_denied(i)) continue;
+        dst_eps_.emplace_back(i, dst_port_);
+    }
+
+    if (dst_eps_.empty()) {
+        if (!dnsq_v6_) {
+            raw_dns_lookup(AF_INET6);
+        } else if (!dnsq_v4_) {
+            raw_dns_lookup(AF_INET);
+        } else {
+            logfmt("DNS has no associated addresses: '{}'\n", dst_hostname_);
+            send_reply(RplHostUnreach);
         }
-        self->dispatch_tcp_connect();
-    });
+        return;
+    }
+    dispatch_tcp_connect();
 }
 
 void SocksInit::raw_dns_lookup(int af)

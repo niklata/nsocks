@@ -155,6 +155,7 @@ private:
     }
 
     static void dnslookup_cb(void *self_, int status, int timeouts, struct hostent *host);
+    void dns_complete(const std::error_code &ec, const std::vector<asio::ip::address> &addrs);
 
     void read_greet();
     boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
