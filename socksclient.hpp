@@ -56,7 +56,6 @@ public:
     SocksInit& operator=(const SocksInit &) = delete;
     ~SocksInit();
     void terminate();
-    void cancel_sockets();
     void expire_timeout();
     void expire_timeout_nobind();
     inline void set_untracked() { tracked_ = false; }

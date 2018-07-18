@@ -176,17 +176,6 @@ void pipe_close_raw(std::size_t p_len,
 }
 #endif
 
-static inline void cancel_paired_sockets(asio::ip::tcp::socket &a, asio::ip::tcp::socket &b)
-{
-    std::error_code ec;
-    auto ao = a.is_open();
-    auto bo = b.is_open();
-    if (ao)
-        a.cancel(ec);
-    if (bo)
-        b.cancel(ec);
-}
-
 static inline void close_paired_sockets(asio::ip::tcp::socket &a, asio::ip::tcp::socket &b)
 {
     std::error_code ec;
@@ -403,20 +392,12 @@ SocksInit::BoundSocket::~BoundSocket()
     BPA->release_port(local_endpoint_.port());
 }
 
-void SocksInit::cancel_sockets()
-{
-    cancel_paired_sockets(remote_socket_, client_socket_);
-    std::error_code ec;
-    if (bound_)
-        bound_->acceptor_.cancel(ec);
-}
-
 void SocksInit::expire_timeout()
 {
     auto sfd = shared_from_this();
     strand_.post([self{std::move(sfd)}]() {
         self->set_untracked();
-        self->cancel_sockets();
+        self->terminate();
     });
 }
 
@@ -425,7 +406,7 @@ void SocksInit::expire_timeout_nobind()
     auto sfd = shared_from_this();
     strand_.post([self{std::move(sfd)}]() {
         if (!self->is_bind_listen())
-            self->cancel_sockets();
+            self->terminate();
     });
 }
 
@@ -787,7 +768,7 @@ void SocksInit::dnslookup_cb(void *self_, int status, int timeouts, struct hoste
     delete spp;
     if (!self) return;
 
-    const auto try_other_af = [&self, status, timeouts]() {
+    const auto try_other_af = [self, status, timeouts]() {
         self->strand_.post([self{std::move(self)}, status, timeouts]() {
             if (self->dnsq_v4_ && !self->dnsq_v6_) {
                 self->raw_dns_lookup(AF_INET6);
