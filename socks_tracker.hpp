@@ -218,7 +218,7 @@ public:
         }
         x->start(ep);
     }
-    boost::optional<std::shared_ptr<T>>
+    std::optional<std::shared_ptr<T>>
     find_by_addr_port(asio::ip::address addr, uint16_t port)
     {
         std::lock_guard<std::mutex> wl(lock_);
@@ -229,7 +229,7 @@ public:
             if (j->matches_dst(addr, port))
                 return j;
         }
-        return boost::optional<std::shared_ptr<T>>();
+        return {};
     }
     std::size_t size() {
         std::lock_guard<std::mutex> wl(lock_);

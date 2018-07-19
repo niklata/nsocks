@@ -36,7 +36,7 @@
 #include <netdb.h>
 
 #include <asio.hpp>
-#include <boost/optional.hpp>
+#include <optional>
 #include <fmt/format.h>
 
 #include "nadns/dns.hpp"
@@ -158,7 +158,7 @@ private:
     void dns_complete(const std::error_code &ec, const std::vector<asio::ip::address> &addrs);
 
     void read_greet();
-    boost::optional<ReplyCode> parse_greet(std::size_t &consumed);
+    std::optional<ReplyCode> parse_greet(std::size_t &consumed);
     enum class DNSType { None, V4, V6, Any };
     void raw_dns_lookup(int af);
     void dispatch_connrq();

@@ -427,7 +427,7 @@ void SocksInit::read_greet()
          [this, sfd{std::move(sfd)}](const std::error_code &ec, std::size_t bytes_xferred)
          {
              size_t consumed;
-             boost::optional<SocksInit::ReplyCode> rc;
+             std::optional<SocksInit::ReplyCode> rc;
              if (ec) goto ec_err;
              if (!bytes_xferred)
                  return;
@@ -456,14 +456,14 @@ ec_err:
 // We don't support authentication.
 static const char reply_greetz[2] = {'\x5','\x0'};
 
-boost::optional<SocksInit::ReplyCode>
+std::optional<SocksInit::ReplyCode>
 SocksInit::parse_greet(std::size_t &consumed)
 {
     consumed = 0;
     switch (pstate_) {
     case Parsed_None: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         ++consumed;
         auto c = sockbuf_[poff_++];
         if (c == 0x05) {
@@ -479,7 +479,7 @@ SocksInit::parse_greet(std::size_t &consumed)
     }
     case Parsed5G_Version: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed5G_NumAuth;
         ++consumed;
         ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
@@ -508,7 +508,7 @@ SocksInit::parse_greet(std::size_t &consumed)
                 return RplFail;
             }
         } else if (ptmp_ > 0) {
-            return boost::optional<ReplyCode>();
+            return {};
         } else {
             logfmt("Fail: Parsed5G_NumAuth\n");
             return RplFail;
@@ -527,12 +527,12 @@ SocksInit::parse_greet(std::size_t &consumed)
                     }
                 }));
         pstate_ = Parsed5G_Replied;
-        return boost::optional<ReplyCode>();
+        return {};
     }
 p4g_version:
     case Parsed4G_Version: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed4G_Cmd;
         ++consumed;
         auto c = sockbuf_[poff_++];
@@ -546,7 +546,7 @@ p4g_version:
     }
     case Parsed4G_Cmd: {
         if (ibSiz_ - poff_ < 2)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed4G_DPort;
         consumed += 2;
         uint16_t tmp;
@@ -556,7 +556,7 @@ p4g_version:
     }
     case Parsed4G_DPort: {
         if (ibSiz_ - poff_ < 4)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed4G_DAddr;
         consumed += 4;
         if (sockbuf_[poff_  ] == 0x0 &&
@@ -592,7 +592,7 @@ p4g_version:
             }
         }
         if (pstate_ != Parsed4G_Userid)
-            return boost::optional<ReplyCode>();
+            return {};
     }
     case Parsed4G_Userid: {
         // Null-terminated DNS hostname.
@@ -609,11 +609,11 @@ p4g_version:
                 return RplFail;
             }
         }
-        return boost::optional<ReplyCode>();
+        return {};
     }
     case Parsed5G_Replied: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed5CR_Version;
         ++consumed;
         auto c = sockbuf_[poff_++];
@@ -624,7 +624,7 @@ p4g_version:
     }
     case Parsed5CR_Version: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed5CR_Cmd;
         ++consumed;
         auto c = sockbuf_[poff_++];
@@ -639,7 +639,7 @@ p4g_version:
     }
     case Parsed5CR_Cmd: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed5CR_Resv;
         ++consumed;
         auto c = sockbuf_[poff_++];
@@ -650,7 +650,7 @@ p4g_version:
     }
     case Parsed5CR_Resv: {
         if (ibSiz_ - poff_ < 1)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed5CR_AddrType;
         ++consumed;
         auto c = sockbuf_[poff_++];
@@ -666,7 +666,7 @@ p4g_version:
     case Parsed5CR_AddrType: {
         if (addr_type_ == AddrIPv4) {
             if (ibSiz_ - poff_ < 4)
-                return boost::optional<ReplyCode>();
+                return {};
             pstate_ = Parsed5CR_DAddr;
             consumed += 4;
             asio::ip::address_v4::bytes_type v4o;
@@ -676,7 +676,7 @@ p4g_version:
             poff_ += 4;
         } else if (addr_type_ == AddrIPv6) {
             if (ibSiz_ - poff_ < 16)
-                return boost::optional<ReplyCode>();
+                return {};
             pstate_ = Parsed5CR_DAddr;
             consumed += 16;
             asio::ip::address_v6::bytes_type v6o;
@@ -688,7 +688,7 @@ p4g_version:
                 return RplAddrNotSupp;
         } else if (addr_type_ == AddrDNS) {
             if (ibSiz_ - poff_ < 1)
-                return boost::optional<ReplyCode>();
+                return {};
             pstate_ = Parsed5CR_DNSLen;
             consumed++;
             ptmp_ = static_cast<uint8_t>(sockbuf_[poff_++]);
@@ -705,7 +705,7 @@ p4g_version:
 parsed5cr_daddr:
     case Parsed5CR_DAddr: {
         if (ibSiz_ - poff_ < 2)
-            return boost::optional<ReplyCode>();
+            return {};
         pstate_ = Parsed_Finished;
         consumed += 2;
         uint16_t tmp;
@@ -736,12 +736,12 @@ parsed5cr_dnslen:
             poff_ += csiz;
         }
         if (ptmp_ > 0)
-            return boost::optional<ReplyCode>();
+            return {};
         goto parsed5cr_daddr;
     }
     default: throw std::logic_error("undefined parse state");
     }
-    return boost::optional<ReplyCode>();
+    return {};
 }
 
 static const auto loopback_addr_v4 = asio::ip::address_v4::from_string("127.0.0.0");
