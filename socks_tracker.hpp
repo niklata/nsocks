@@ -40,6 +40,7 @@ public:
     ephTrackerVec& operator=(const ephTrackerVec &) = delete;
     ~ephTrackerVec()
     {
+        std::lock_guard<std::mutex> wl(lock_);
         std::error_code ec;
         swapTimer_.cancel(ec);
         for (std::size_t j = 0; j < 2; ++j)
@@ -66,6 +67,7 @@ private:
             auto j = i.lock();
             if (j) j->expire_timeout_nobind();
         }
+        vec_[x].clear();
     }
     // Must be called holding lock_.
     void setTimer() {
@@ -78,11 +80,11 @@ private:
                                   timer_set_ = false;
                                   if (error)
                                       return;
+                                  const auto hcurrent = hidx_;
                                   const auto hnext = hidx_ ^ 1;
                                   vec_cancel(hnext);
-                                  vec_[hnext].clear();
                                   hidx_ = hnext;
-                                  if (!vec_[hidx_].empty())
+                                  if (!vec_[hcurrent].empty())
                                       setTimer();
                               });
     }
