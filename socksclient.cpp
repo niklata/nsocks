@@ -444,7 +444,9 @@ void SocksInit::read_greet()
              read_greet();
              return;
 ec_err:
-             if (ec != asio::error::eof && ec != asio::error::operation_aborted) {
+             if (ec == asio::error::operation_aborted) {
+                 return;
+             } else if (ec != asio::error::eof) {
                  logfmt("read_greet() error: {}\n", std::system_error(ec).what());
              }
              terminate();
