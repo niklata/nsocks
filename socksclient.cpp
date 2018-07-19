@@ -179,20 +179,8 @@ void pipe_close_raw(std::size_t p_len,
 static inline void close_paired_sockets(asio::ip::tcp::socket &a, asio::ip::tcp::socket &b)
 {
     std::error_code ec;
-    auto ao = a.is_open();
-    auto bo = b.is_open();
-    if (ao)
-        a.cancel(ec);
-    if (bo)
-        b.cancel(ec);
-    if (ao)
-        a.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-    if (bo)
-        b.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-    if (ao)
-        a.close(ec);
-    if (bo)
-        b.close(ec);
+    a.close(ec);
+    b.close(ec);
 }
 
 std::vector<std::pair<asio::ip::address, unsigned int>> g_dst_deny_masks;
@@ -403,6 +391,7 @@ void SocksInit::expire_timeout()
 
 void SocksInit::expire_timeout_nobind()
 {
+    logfmt("SocketInit: timed out\n");
     auto sfd = shared_from_this();
     strand_.post([self{std::move(sfd)}]() {
         if (!self->is_bind_listen())
@@ -412,10 +401,10 @@ void SocksInit::expire_timeout_nobind()
 
 void SocksInit::terminate()
 {
-    close_paired_sockets(remote_socket_, client_socket_);
     std::error_code ec;
     if (bound_)
         bound_->acceptor_.cancel(ec);
+    close_paired_sockets(remote_socket_, client_socket_);
 }
 
 void SocksInit::read_greet()
