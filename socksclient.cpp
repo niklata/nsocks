@@ -712,10 +712,10 @@ parsed5cr_daddr:
         poff_ += 2;
     }
 parsed_finished:
-    case Parsed_Finished: {
         ibSiz_ = 0;
         poff_ = 0;
         dispatch_connrq();
+    case Parsed_Finished: {
         return RplSuccess;
     }
 parsed5cr_dnslen:
