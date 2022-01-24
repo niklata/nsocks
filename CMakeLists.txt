@@ -78,7 +78,7 @@ ENDMACRO(COMPARE_VERSION_STRINGS)
 ####################################
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -std=gnu99 -fno-strict-overflow -pedantic -Wall -Wextra -Wimplicit-fallthrough=0 -Wformat=2 -Wformat-nonliteral -Wformat-security -Wpointer-arith -Wno-unused-parameter")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=gnu++1z -fno-strict-overflow -pedantic -Wall -Wextra -Wimplicit-fallthrough=0 -Wformat-security -Wpointer-arith -Wno-unused-parameter")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=gnu++1z -fno-strict-overflow -pedantic -Wall -Wextra -Wimplicit-fallthrough=0 -Wformat-security -Wpointer-arith -Wno-unused-parameter -DASIO_STANDALONE")
 
 if (WIN32)
   set(OSNAME "Win32")
@@ -123,7 +123,6 @@ include_directories("${PROJECT_SOURCE_DIR}"
 add_subdirectory(ncmlib)
 add_subdirectory(fmt)
 
-include_directories ( ${Boost_INCLUDE_DIRS} )
 find_package(Threads)
 
 set(NSOCKS_SRCS
