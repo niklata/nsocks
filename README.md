@@ -3,6 +3,44 @@ Copyright (C) 2013-2017 Nicholas J. Kain.
 
 License: Two-clause BSD.
 
+# nsocks is OBSOLETE and UNMAINTAINED, use muonsocks instead
+
+## Postmortem
+
+ASIO has (as of 2017) an issue where DNS lookups are all queued to a single
+thread.  This can create noticeable delays when the SOCKS5 server is performing
+DNS lookups on behalf of a client and the lookup is slow.  ASIO's flexible
+design makes it possible to work around this issue without modifying ASIO
+itself, but it is rather ugly to do so.  A thread-per-connection model simply
+doesn't have this issue, as blocking lookups can be used on the connection
+threads.
+
+The traditional single-threaded async-readiness loop server that works so well
+for web servers is not such a great win for proxy servers.  Proxy servers
+need to have two buffers that are kept small to prevent bufferbloat.  This
+is a natural fit to the thread-per-connection model, since we essentially
+want something very similar to blocking synchronous i/o, except where the
+thread-per-connection can service both halves of the duplex connection
+concurrently.
+
+splice(), at least when used with ASIO, never provided performance gains that
+made the significant increase in code complexity worthwhile.  It's quite
+possible that performance gains might be more significant without the overhead
+of ASIO, but even in that case, buffer management is made much more complex by
+having to splice through two different pipes for a duplex connection, and to
+recycle pipes so as to mitigate the overhead of creating and destroying pipes
+all the time.  Further, nsocks fell back to recv/send for short or slow
+read/write patterns, which mitigated low-performance cases of splice(), but
+added significant complexity.
+
+The sheer complexity of nsocks made it hard to verify correct behavior in all
+possible corner-cases, and the performance gains from such a complex model just
+didn't exist.
+
+muonsocks implements a very simple thread-per-connection model, using simple
+send/recv and a low-overhead poll() loop, but provides great performance
+and is very robust and easy to maintain.
+
 ## Introduction
 
 nsocks is a SOCKS5 or SOCKS4 proxying daemon that is designed for
